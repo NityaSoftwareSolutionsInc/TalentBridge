@@ -10,6 +10,7 @@ import {
 import { audit } from "./audit";
 import { prisma } from "./db";
 import { integrations } from "@/integrations";
+import { jnpHttpConfigured } from "@/integrations/jobsNProfilesHttp";
 import type { Session } from "./auth";
 import { canSeePoAmounts } from "./rbac";
 import { tenantSettings } from "./settings";
@@ -832,16 +833,28 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
     kind: PersonKind.candidate,
     name: profile.name,
     title: profile.title,
+    secondaryTitle: profile.secondaryTitle || "",
     email: profile.email,
     phone: profile.phone,
     emailNormalized,
     phoneNormalized,
     location: profile.location,
+    preferredLocation: profile.preferredLocation || profile.location || "",
+    linkedIn: profile.linkedIn || "",
     source: "JobsNProfiles",
     ownerId: session.userId,
     skills: profile.skills,
     experienceYears: profile.experienceYears,
     availability: profile.availability,
+    noticePeriod: profile.noticePeriod || "",
+    citizenship: profile.citizenship || "",
+    workAuthorization: profile.workAuthorization || "",
+    willingToRelocate: profile.willingToRelocate || "",
+    employmentType: profile.employmentType || "",
+    currentRate: profile.currentRate || "",
+    expectedRate: profile.expectedRate || "",
+    timezone: profile.timezone || "",
+    visaExpiry: profile.visaExpiry ? new Date(profile.visaExpiry) : null,
     portalCandidateId,
   };
 
@@ -911,7 +924,31 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
 
 export async function createPerson(
   session: Session,
-  input: { name: string; kind: "candidate" | "client_person" | "vendor_person"; email?: string; phone?: string; title?: string },
+  input: {
+    name: string;
+    kind: "candidate" | "client_person" | "vendor_person";
+    email?: string;
+    phone?: string;
+    title?: string;
+    secondaryTitle?: string;
+    location?: string;
+    linkedIn?: string;
+    availability?: string;
+    experienceYears?: number | string;
+    skills?: string | string[];
+    citizenship?: string;
+    workAuthorization?: string;
+    visaExpiry?: string;
+    willingToRelocate?: string;
+    preferredLocation?: string;
+    noticePeriod?: string;
+    employmentType?: string;
+    currentRate?: string;
+    expectedRate?: string;
+    timezone?: string;
+    /** Resume file name / label for POC (binary storage later). */
+    resumeName?: string;
+  },
 ) {
   const kind =
     input.kind === "candidate"
@@ -919,20 +956,77 @@ export async function createPerson(
       : input.kind === "vendor_person"
         ? PersonKind.vendor_person
         : PersonKind.client_person;
+
+  const skills = Array.isArray(input.skills)
+    ? input.skills.map((s) => String(s).trim()).filter(Boolean)
+    : String(input.skills || "")
+        .split(/[,;]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+  const resumeName = String(input.resumeName || "").trim();
+  const title = String(input.title || "").trim();
+  const experienceYears =
+    input.experienceYears != null && input.experienceYears !== ""
+      ? Number(input.experienceYears) || 0
+      : 0;
+
   const person = await prisma.person.create({
     data: {
       tenantId: session.tenantId,
       kind,
-      name: input.name,
+      name: String(input.name || "").trim(),
       email: input.email || "",
       phone: input.phone || "",
       emailNormalized: normalizeEmail(input.email),
       phoneNormalized: normalizePhone(input.phone),
-      title: input.title || "",
+      title,
+      secondaryTitle: input.secondaryTitle || "",
+      location: input.location || "",
+      preferredLocation: input.preferredLocation || input.location || "",
+      linkedIn: input.linkedIn || "",
+      availability: input.availability || "",
+      noticePeriod: input.noticePeriod || "",
+      experienceYears,
+      skills,
+      citizenship: input.citizenship || "",
+      workAuthorization: input.workAuthorization || "",
+      visaExpiry: input.visaExpiry ? new Date(input.visaExpiry) : null,
+      willingToRelocate: input.willingToRelocate || "",
+      employmentType: input.employmentType || "",
+      currentRate: input.currentRate || "",
+      expectedRate: input.expectedRate || "",
+      timezone: input.timezone || "",
+      lastResume: resumeName,
       ownerId: session.userId,
       source: "manual",
     },
   });
+
+  if (kind === PersonKind.candidate && (title || skills.length)) {
+    await prisma.titleIndex.create({
+      data: {
+        tenantId: session.tenantId,
+        personId: person.id,
+        currentTitle: title,
+        previousTitles: input.secondaryTitle ? [String(input.secondaryTitle).trim()].filter(Boolean) : [],
+        resumeTitles: title ? [title] : [],
+        skills,
+      },
+    });
+  }
+
+  if (resumeName) {
+    await prisma.storedFile.create({
+      data: {
+        tenantId: session.tenantId,
+        personId: person.id,
+        kind: "resume",
+        name: resumeName,
+      },
+    });
+  }
+
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
@@ -956,6 +1050,7 @@ export async function updatePerson(
     linkedIn?: string;
     availability?: string;
     experienceYears?: number | string;
+    skills?: string | string[];
     citizenship?: string;
     workAuthorization?: string;
     visaExpiry?: string;
@@ -972,6 +1067,15 @@ export async function updatePerson(
   if (!existing) throw new Error("Contact not found");
   const nextEmail = input.email ?? existing.email;
   const nextPhone = input.phone ?? existing.phone;
+  const skills =
+    input.skills === undefined
+      ? undefined
+      : Array.isArray(input.skills)
+        ? input.skills.map((s) => String(s).trim()).filter(Boolean)
+        : String(input.skills || "")
+            .split(/[,;]/)
+            .map((s) => s.trim())
+            .filter(Boolean);
   const person = await prisma.person.update({
     where: { id: personId },
     data: {
@@ -988,6 +1092,7 @@ export async function updatePerson(
       experienceYears: input.experienceYears != null && input.experienceYears !== ("" as unknown)
         ? Number(input.experienceYears) || existing.experienceYears
         : existing.experienceYears,
+      ...(skills !== undefined ? { skills } : {}),
       citizenship: input.citizenship ?? existing.citizenship,
       workAuthorization: input.workAuthorization ?? existing.workAuthorization,
       visaExpiry:
@@ -1005,6 +1110,31 @@ export async function updatePerson(
       timezone: input.timezone ?? existing.timezone,
     },
   });
+
+  if (existing.kind === PersonKind.candidate) {
+    const nextTitle = input.title ?? existing.title;
+    const nextSkills = skills ?? existing.skills;
+    const secondary = String(input.secondaryTitle ?? existing.secondaryTitle ?? "").trim();
+    await prisma.titleIndex.upsert({
+      where: { personId: person.id },
+      create: {
+        tenantId: session.tenantId,
+        personId: person.id,
+        currentTitle: nextTitle,
+        previousTitles: secondary ? [secondary] : [],
+        resumeTitles: nextTitle ? [nextTitle] : [],
+        skills: nextSkills,
+      },
+      update: {
+        currentTitle: nextTitle,
+        previousTitles: secondary ? [secondary] : [],
+        resumeTitles: nextTitle ? [nextTitle] : [],
+        skills: nextSkills,
+        lastIndexedAt: new Date(),
+      },
+    });
+  }
+
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
@@ -1236,6 +1366,7 @@ export async function settingsPayload(session: Session) {
       })
     : [];
   const actorName = new Map(actors.map((a) => [a.id, a.name]));
+  const jnpLive = jnpHttpConfigured();
 
   return {
     users: userRows.map((u) => ({
@@ -1320,9 +1451,12 @@ export async function settingsPayload(session: Session) {
         { name: "AUTH_JWT_SECRET", present: Boolean(process.env.AUTH_JWT_SECRET || process.env.STUB_AUTH_SECRET) },
         { name: "SENDGRID_API_KEY", present: Boolean(process.env.SENDGRID_API_KEY) },
         { name: "SENDGRID_FROM_EMAIL", present: Boolean(process.env.SENDGRID_FROM_EMAIL) },
+        { name: "JNP_API_BASE_URL", present: Boolean(process.env.JNP_API_BASE_URL) },
+        { name: "JNP_API_KEY", present: Boolean(process.env.JNP_API_KEY) },
       ],
-      adapterStatus:
-        "JobsNProfiles, VioTalk and Outlook adapters are stubbed. Credentials stay in the secrets vault — this screen never collects API keys.",
+      adapterStatus: jnpLive
+        ? "JobsNProfiles uses the live HTTP adapter (JNP_API_BASE_URL + JNP_API_KEY). VioTalk and Outlook remain stubbed. Credentials stay in the secrets vault — this screen never collects API keys."
+        : "JobsNProfiles is on fixture stub until JNP_API_BASE_URL and JNP_API_KEY are set. VioTalk and Outlook are stubbed. Credentials stay in the secrets vault — this screen never collects API keys.",
     },
   };
 }

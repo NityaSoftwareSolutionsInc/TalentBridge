@@ -4,12 +4,25 @@ export type JnpProfile = {
   email: string;
   phone: string;
   title: string;
+  secondaryTitle?: string;
   previousTitles: string[];
   resumeTitles: string[];
   skills: string[];
   location: string;
+  preferredLocation?: string;
   experienceYears: number;
   availability: string;
+  noticePeriod?: string;
+  linkedIn?: string;
+  citizenship?: string;
+  workAuthorization?: string;
+  willingToRelocate?: string;
+  employmentType?: string;
+  currentRate?: string;
+  expectedRate?: string;
+  /** ISO date string when known; usually unset from JNP. */
+  visaExpiry?: string | null;
+  timezone?: string;
 };
 
 export interface JobsNProfilesAdapter {

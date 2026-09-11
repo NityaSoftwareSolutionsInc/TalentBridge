@@ -1,9 +1,9 @@
-import { jobsNProfilesStub } from "./jobsNProfiles";
+import { createJobsNProfilesAdapter } from "./jobsNProfiles";
 import { outlookStub } from "./outlook";
 import { vioTalkStub } from "./vioTalk";
 
 export const integrations = {
-  jobsNProfiles: jobsNProfilesStub,
+  jobsNProfiles: createJobsNProfilesAdapter(),
   vioTalk: vioTalkStub,
   outlook: outlookStub,
 };

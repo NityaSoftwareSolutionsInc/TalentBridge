@@ -320,7 +320,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const contactTags = ((record?.tags as string[]) || []).filter((t) => t && t !== record?.status);
   const avail = availabilityBadge(record?.availability, record?.status);
   const canSeeRates = Boolean(session?.permissions.includes("submit") || session?.permissions.includes("po"));
-  const jnpUrl = record?.portalCandidateId ? `https://jobs.nprofiles.example/candidates/${String(record.portalCandidateId)}` : "";
+  const jnpProfileBase = (process.env.NEXT_PUBLIC_JNP_PROFILE_BASE_URL || "https://jobs.nprofiles.example/candidates").replace(
+    /\/$/,
+    "",
+  );
+  const jnpUrl = record?.portalCandidateId ? `${jnpProfileBase}/${String(record.portalCandidateId)}` : "";
   const relatedPeople = (() => {
     const rows: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[] = [];
     for (const s of ((record?.submissions as { clientPerson?: { id?: string; name?: string; title?: string } }[]) || [])) {
@@ -1930,24 +1934,138 @@ function CreateForm({
   onClose: () => void;
   onSave: (vals: Record<string, unknown>) => Promise<void>;
 }) {
-  const [name, setName] = useState("");
   const kind =
     moduleKey === "vendors" ? "vendor_person" : moduleKey === "clients" ? "client_person" : "candidate";
+  const isCandidate = kind === "candidate";
   const label =
     kind === "vendor_person" ? "Vendor person" : kind === "client_person" ? "Client person" : "Candidate";
+  const [busy, setBusy] = useState(false);
+  const [vals, setVals] = useState({
+    name: "",
+    title: "",
+    secondaryTitle: "",
+    email: "",
+    phone: "",
+    location: "",
+    linkedIn: "",
+    timezone: "",
+    availability: "",
+    experienceYears: "",
+    skills: "",
+    citizenship: "",
+    workAuthorization: "",
+    visaExpiry: "",
+    willingToRelocate: "",
+    preferredLocation: "",
+    noticePeriod: "",
+    employmentType: "",
+    currentRate: "",
+    expectedRate: "",
+    resumeName: "",
+  });
+  const set = (key: keyof typeof vals) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setVals((prev) => ({ ...prev, [key]: e.target.value }));
+
   return (
     <form
       className="space-y-3"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        onSave({ action: "create_person", name, kind });
+        setBusy(true);
+        try {
+          await onSave({
+            action: "create_person",
+            kind,
+            ...vals,
+            preferredLocation: vals.preferredLocation || vals.location,
+          });
+        } finally {
+          setBusy(false);
+        }
       }}
     >
       <h2 className="text-lg font-semibold">Add {label}</h2>
-      <input className="w-full border rounded px-2 py-2" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
-      <div className="flex gap-2">
-        <button className={btnPrimary}>Create</button>
-        <button type="button" className={btnGhost} onClick={onClose}>
+      <Label>Name</Label>
+      <FieldInput value={vals.name} onChange={set("name")} required />
+      <Label>Title</Label>
+      <FieldInput value={vals.title} onChange={set("title")} placeholder={isCandidate ? "Primary title" : "Role"} />
+      {isCandidate ? (
+        <>
+          <Label>Secondary title</Label>
+          <FieldInput value={vals.secondaryTitle} onChange={set("secondaryTitle")} />
+        </>
+      ) : null}
+      <Label>Email</Label>
+      <FieldInput type="email" value={vals.email} onChange={set("email")} />
+      <Label>Phone</Label>
+      <FieldInput value={vals.phone} onChange={set("phone")} />
+      <Label>Current location</Label>
+      <FieldInput value={vals.location} onChange={set("location")} placeholder="City, ST" />
+      {isCandidate ? (
+        <>
+          <Label>Skills</Label>
+          <FieldInput value={vals.skills} onChange={set("skills")} placeholder="Java, Spring Boot, AWS" />
+          <Label>Experience (years)</Label>
+          <FieldInput type="number" min={0} value={vals.experienceYears} onChange={set("experienceYears")} />
+          <Label>Time zone</Label>
+          <FieldInput value={vals.timezone} onChange={set("timezone")} placeholder="PT / CT / ET" />
+          <Label>Citizenship</Label>
+          <FieldInput value={vals.citizenship} onChange={set("citizenship")} placeholder="United States, India, …" />
+          <Label>Work authorization</Label>
+          <FieldSelect className="w-full" value={vals.workAuthorization} onChange={set("workAuthorization")}>
+            <option value="">Select</option>
+            {WORK_AUTH_OPTIONS.map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </FieldSelect>
+          <Label>Visa / EAD expiry</Label>
+          <FieldInput type="date" value={vals.visaExpiry} onChange={set("visaExpiry")} />
+          <Label>Willing to relocate</Label>
+          <FieldSelect className="w-full" value={vals.willingToRelocate} onChange={set("willingToRelocate")}>
+            <option value="">Select</option>
+            {RELOCATE_OPTIONS.map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </FieldSelect>
+          <Label>Preferred location</Label>
+          <FieldInput value={vals.preferredLocation} onChange={set("preferredLocation")} />
+          <Label>Availability</Label>
+          <FieldInput value={vals.availability} onChange={set("availability")} placeholder="Available / Immediate" />
+          <Label>Notice period</Label>
+          <FieldInput value={vals.noticePeriod} onChange={set("noticePeriod")} placeholder="2 weeks" />
+          <Label>Employment type</Label>
+          <FieldSelect className="w-full" value={vals.employmentType} onChange={set("employmentType")}>
+            <option value="">Select</option>
+            {EMPLOYMENT_TYPE_OPTIONS.map((o) => (
+              <option key={o} value={o}>{o}</option>
+            ))}
+          </FieldSelect>
+          <Label>Current rate</Label>
+          <FieldInput value={vals.currentRate} onChange={set("currentRate")} placeholder="$75/hr" />
+          <Label>Expected rate</Label>
+          <FieldInput value={vals.expectedRate} onChange={set("expectedRate")} placeholder="$85/hr" />
+          <Label>LinkedIn</Label>
+          <FieldInput value={vals.linkedIn} onChange={set("linkedIn")} />
+          <Label>Resume</Label>
+          <input
+            type="file"
+            accept=".pdf,.doc,.docx"
+            className="w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              setVals((prev) => ({ ...prev, resumeName: file?.name || "" }));
+            }}
+          />
+          {vals.resumeName ? (
+            <p className="text-xs text-slate-500">Will attach as {vals.resumeName} (name on record; file binary upload comes later).</p>
+          ) : (
+            <p className="text-xs text-slate-500">Optional. Stores the resume file name on this candidate for POC.</p>
+          )}
+        </>
+      ) : null}
+      <div className="flex gap-2 pt-1">
+        <button className={btnPrimary} disabled={busy}>{busy ? "Creating…" : "Create"}</button>
+        <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>
           Cancel
         </button>
       </div>
@@ -1975,6 +2093,7 @@ function EditForm({
     timezone: String(record?.timezone || ""),
     availability: String(record?.availability || ""),
     experienceYears: String(record?.experienceYears || ""),
+    skills: Array.isArray(record?.skills) ? (record?.skills as string[]).join(", ") : String(record?.skills || ""),
     citizenship: String(record?.citizenship || ""),
     workAuthorization: String(record?.workAuthorization || ""),
     visaExpiry: record?.visaExpiry ? new Date(String(record.visaExpiry)).toISOString().slice(0, 10) : "",
@@ -2004,6 +2123,10 @@ function EditForm({
         <>
           <Label>Secondary title</Label>
           <FieldInput value={vals.secondaryTitle} onChange={set("secondaryTitle")} />
+          <Label>Skills</Label>
+          <FieldInput value={vals.skills} onChange={set("skills")} placeholder="Java, Spring Boot, AWS" />
+          <Label>Experience (years)</Label>
+          <FieldInput type="number" min={0} value={vals.experienceYears} onChange={set("experienceYears")} />
         </>
       ) : null}
       <Label>Email</Label>
