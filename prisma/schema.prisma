@@ -666,6 +666,26 @@ model AuditEvent {
   @@schema("talentbridge")
 }
 
+/// Global Admin (Admin-Talent-Bridge) actions — not tenant-scoped workspace audit.
+model PlatformAuditEvent {
+  id         String   @id @default(uuid())
+  actorId    String   @map("actor_id")
+  /// Optional related tenant for create/enable/invite ops.
+  tenantId   String?  @map("tenant_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  before     String   @default("")
+  after      String   @default("")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([tenantId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("platform_audit_events")
+  @@schema("talentbridge")
+}
+
 model TitleIndex {
   id               String   @id @default(uuid())
   tenantId         String   @map("tenant_id")

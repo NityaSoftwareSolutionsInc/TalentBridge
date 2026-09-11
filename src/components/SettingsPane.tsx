@@ -198,6 +198,8 @@ export function SettingsPane({
       if (auditFilter === "wrap-up" && e.action !== "wrap_up") return false;
       if (auditFilter === "submit" && e.action !== "submit_profile") return false;
       if (auditFilter === "ownership" && !e.action.startsWith("ownership")) return false;
+      if (auditFilter === "jnp" && e.action !== "jnp_sync") return false;
+      if (auditFilter === "person" && !["create_person", "update_person"].includes(e.action)) return false;
       if (
         auditFilter === "role-map" &&
         !["admin_create_user", "admin_update_user", "admin_upsert_viotalk_map", "admin_upsert_mailbox_map"].includes(
@@ -797,6 +799,8 @@ export function SettingsPane({
                 <Label>Filter</Label>
                 <FieldSelect value={auditFilter} onChange={(e) => setAuditFilter(e.target.value)}>
                   <option value="all">All events</option>
+                  <option value="person">Create / update person</option>
+                  <option value="jnp">JNP sync</option>
                   <option value="wrap-up">Wrap-up</option>
                   <option value="submit">Submit</option>
                   <option value="ownership">Ownership</option>

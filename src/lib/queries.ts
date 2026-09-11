@@ -17,6 +17,63 @@ import { tenantSettings } from "./settings";
 import { appBaseUrl, issuePasswordEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
 import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
+
+function personAuditFields(p: {
+  name?: string | null;
+  kind?: string | null;
+  title?: string | null;
+  secondaryTitle?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  location?: string | null;
+  preferredLocation?: string | null;
+  linkedIn?: string | null;
+  availability?: string | null;
+  noticePeriod?: string | null;
+  experienceYears?: number | null;
+  skills?: string[] | null;
+  citizenship?: string | null;
+  workAuthorization?: string | null;
+  visaExpiry?: Date | string | null;
+  willingToRelocate?: string | null;
+  employmentType?: string | null;
+  currentRate?: string | null;
+  expectedRate?: string | null;
+  timezone?: string | null;
+  lastResume?: string | null;
+  source?: string | null;
+  portalCandidateId?: string | null;
+  ownerId?: string | null;
+}) {
+  return {
+    name: p.name || "",
+    kind: p.kind || "",
+    title: p.title || "",
+    secondaryTitle: p.secondaryTitle || "",
+    email: p.email || "",
+    phone: p.phone || "",
+    location: p.location || "",
+    preferredLocation: p.preferredLocation || "",
+    linkedIn: p.linkedIn || "",
+    availability: p.availability || "",
+    noticePeriod: p.noticePeriod || "",
+    experienceYears: p.experienceYears ?? 0,
+    skills: p.skills || [],
+    citizenship: p.citizenship || "",
+    workAuthorization: p.workAuthorization || "",
+    visaExpiry: p.visaExpiry ? new Date(p.visaExpiry).toISOString().slice(0, 10) : null,
+    willingToRelocate: p.willingToRelocate || "",
+    employmentType: p.employmentType || "",
+    currentRate: p.currentRate || "",
+    expectedRate: p.expectedRate || "",
+    timezone: p.timezone || "",
+    lastResume: p.lastResume || "",
+    source: p.source || "",
+    portalCandidateId: p.portalCandidateId || null,
+    ownerId: p.ownerId || "",
+  };
+}
+
 export type ModuleKey =
   | "dashboard"
   | "candidates"
@@ -825,8 +882,25 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
         payload: JSON.stringify({ existingId: collision.id, portalCandidateId }),
       },
     });
+    await audit({
+      tenantId: session.tenantId,
+      actorId: session.userId,
+      action: "jnp_sync",
+      entityType: "person",
+      entityId: collision.id,
+      after: {
+        status: "collision",
+        portalCandidateId,
+        existingId: collision.id,
+        existingOwnerId: collision.ownerId,
+        email: profile.email,
+        phone: profile.phone,
+      },
+    });
     return { status: "collision" as const, existingId: collision.id, existingOwnerId: collision.ownerId };
   }
+
+  const before = existingByPortal ? personAuditFields(existingByPortal) : undefined;
 
   const data = {
     tenantId: session.tenantId,
@@ -916,6 +990,21 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
       externalId: portalCandidateId,
       lastSyncedAt: new Date(),
       updatedBy: session.userId,
+    },
+  });
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "jnp_sync",
+    entityType: "person",
+    entityId: person.id,
+    before,
+    after: {
+      status: "upserted",
+      created: !existingByPortal,
+      portalCandidateId,
+      profile: personAuditFields(person),
     },
   });
 
@@ -1033,6 +1122,11 @@ export async function createPerson(
     action: "create_person",
     entityType: "person",
     entityId: person.id,
+    after: {
+      ...personAuditFields(person),
+      resumeAttached: Boolean(resumeName),
+      resumeName: resumeName || null,
+    },
   });
   return person;
 }
@@ -1141,6 +1235,8 @@ export async function updatePerson(
     action: "update_person",
     entityType: "person",
     entityId: person.id,
+    before: personAuditFields(existing),
+    after: personAuditFields(person),
   });
   return person;
 }
