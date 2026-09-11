@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ChevronDown, Search, SlidersHorizontal, X } from "lucide-react";
-import { cn, FieldSelect, moduleLabel } from "./workspace-ui";
+import { cn, FieldSelect, FilterChip, moduleLabel } from "./workspace-ui";
 import { LOCATION_OPTIONS, WORK_AUTH_OPTIONS } from "@/lib/candidate-fields";
 
 export type ListFilters = {
@@ -14,7 +14,7 @@ export type ListFilters = {
   owner: string;
   source: string;
   availability: string;
-  lastContact: string;
+  lastOutreach: string;
   excludeRequirementId: string;
   workAuthorization: string;
   sort: string;
@@ -29,7 +29,7 @@ const FILTER_KEYS = [
   "owner",
   "source",
   "availability",
-  "lastContact",
+  "lastOutreach",
   "excludeRequirementId",
   "workAuthorization",
 ] as const;
@@ -43,15 +43,15 @@ const CHIP_LABEL: Record<(typeof FILTER_KEYS)[number], string> = {
   owner: "Recruiter",
   source: "Source",
   availability: "Availability",
-  lastContact: "Last contact",
+  lastOutreach: "Last outreach",
   excludeRequirementId: "Exclude submitted",
   workAuthorization: "Work auth",
 };
 
 const textControl =
-  "h-8 w-full min-w-0 rounded-md border border-slate-200 bg-white px-2.5 text-[12px] text-slate-800 outline-none hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15";
+  "h-8 w-full min-w-0 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[12px] text-[var(--color-text)] outline-none hover:border-[var(--color-border-strong)] focus:border-[var(--color-focus)] focus:ring-2 focus:ring-[var(--color-focus-ring)]";
 
-const selectControl = "h-8 text-[12px] text-slate-800";
+const selectControl = "h-8 text-[12px] text-[var(--color-text)]";
 
 export function sortRecords<T extends Record<string, unknown>>(rows: T[], sort: string): T[] {
   const copy = [...rows];
@@ -72,7 +72,7 @@ export function sortRecords<T extends Record<string, unknown>>(rows: T[], sort: 
       return aT - bT;
     });
   } else {
-    copy.sort((a, b) => time(b.lastContactAt) - time(a.lastContactAt));
+    copy.sort((a, b) => time(b.lastOutreachAt) - time(a.lastOutreachAt));
   }
   return copy;
 }
@@ -101,27 +101,27 @@ export function ListToolbar({
   const isContacts = ["candidates", "clients", "vendors"].includes(moduleKey);
   const isCandidates = moduleKey === "candidates";
   const active = FILTER_KEYS.filter((key) => Boolean(filters[key]));
-  const extraCount = (["title", "experience", "source", "lastContact", "excludeRequirementId"] as const).filter(
+  const extraCount = (["title", "experience", "source", "lastOutreach", "excludeRequirementId"] as const).filter(
     (key) => Boolean(filters[key]),
   ).length;
 
   return (
-    <div className="border-b border-slate-200 bg-white">
+    <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="px-3.5 pt-3 pb-3 space-y-2.5">
         <div className="flex items-center gap-2 min-h-7">
-          <h2 className="font-semibold text-[15px] leading-none text-slate-900">{moduleLabel(moduleKey)}</h2>
+          <h2 className="font-semibold text-[15px] leading-none text-[var(--color-text)]">{moduleLabel(moduleKey)}</h2>
           {moduleKey !== "settings" ? (
-            <span className="shrink-0 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600">
+            <span className="shrink-0 inline-flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--color-text-muted)]">
               {total}
             </span>
           ) : null}
         </div>
 
         <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--color-text-muted)] pointer-events-none" />
           <DebouncedText
             id="list-search"
-            className="w-full h-9 rounded-md border border-slate-200 bg-white pl-8 pr-8 text-[13px] text-slate-800 placeholder:text-slate-400 outline-none hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+            className="w-full h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-8 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none hover:border-[var(--color-border-strong)] focus:border-[var(--color-focus)] focus:ring-2 focus:ring-[var(--color-focus-ring)]"
             placeholder={searchPlaceholder(moduleKey)}
             value={filters.q}
             onCommit={(v) => onFilter("q", v)}
@@ -131,7 +131,7 @@ export function ListToolbar({
               type="button"
               title="Clear search"
               aria-label="Clear search"
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
               onClick={() => onFilter("q", "")}
             >
               <X className="h-3.5 w-3.5" />
@@ -231,20 +231,20 @@ export function ListToolbar({
                 type="button"
                 onClick={onToggleExtra}
                 className={cn(
-                  "inline-flex items-center gap-1 h-8 px-2 rounded-md text-[12px] font-medium border transition-colors cursor-pointer shrink-0",
+                  "inline-flex items-center gap-1 h-8 px-2 rounded-[var(--radius-md)] text-[12px] font-medium border transition-colors cursor-pointer shrink-0",
                   extraOpen || extraCount
                     ? "border-blue-200 bg-blue-50 text-blue-700"
-                    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",
+                    : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-surface-muted)]",
                 )}
               >
                 <SlidersHorizontal className="h-3.5 w-3.5" />
                 More filters
                 {extraCount ? (
-                  <span className="min-w-4 h-4 px-1 rounded-full bg-blue-600 text-[10px] leading-4 text-white text-center">
+                  <span className="min-w-4 h-4 px-1 rounded-full bg-[var(--color-accent)] text-[10px] leading-4 text-white text-center">
                     {extraCount}
                   </span>
                 ) : null}
-                <ChevronDown className={cn("h-3.5 w-3.5 text-slate-400 transition-transform", extraOpen && "rotate-180")} />
+                <ChevronDown className={cn("h-3.5 w-3.5 text-[var(--color-text-muted)] transition-transform", extraOpen && "rotate-180")} />
               </button>
             ) : null}
             <FieldSelect
@@ -259,7 +259,7 @@ export function ListToolbar({
               <option value="followup">Next follow-up</option>
             </FieldSelect>
             {active.length > 0 ? (
-              <button type="button" className="text-[12px] font-medium text-blue-600 hover:text-blue-800 cursor-pointer shrink-0" onClick={onClear}>
+              <button type="button" className="text-[12px] font-medium text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] cursor-pointer shrink-0" onClick={onClear}>
                 Clear
               </button>
             ) : null}
@@ -267,7 +267,7 @@ export function ListToolbar({
         ) : null}
 
         {isCandidates && extraOpen ? (
-          <div className="rounded-md border border-slate-200 bg-slate-50 p-2.5 grid grid-cols-2 gap-x-2 gap-y-2">
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-2.5 grid grid-cols-2 gap-x-2 gap-y-2">
             <FilterField label="Title" className="col-span-2">
               <DebouncedText
                 className={textControl}
@@ -291,8 +291,8 @@ export function ListToolbar({
                 <option value="manual">Manual</option>
               </FieldSelect>
             </FilterField>
-            <FilterField label="Last contact" className="col-span-2">
-              <FieldSelect className={selectControl} value={filters.lastContact} onChange={(e) => onFilter("lastContact", e.target.value)}>
+            <FilterField label="Last outreach" className="col-span-2">
+              <FieldSelect className={selectControl} value={filters.lastOutreach} onChange={(e) => onFilter("lastOutreach", e.target.value)}>
                 <option value="">Any time</option>
                 <option value="7">7+ days ago</option>
                 <option value="14">14+ days ago</option>
@@ -308,7 +308,7 @@ export function ListToolbar({
                 <option value="">None</option>
                 {requirements.map((r) => (
                   <option key={String(r.id)} value={String(r.id)}>
-                    {String((r as { account?: { name?: string } }).account?.name || "")} —{" "}
+                    {String((r as { organization?: { name?: string } }).organization?.name || "")} —{" "}
                     {String((r as { title?: string }).title)}
                   </option>
                 ))}
@@ -322,19 +322,12 @@ export function ListToolbar({
             {active
               .filter((key) => key !== "q")
               .map((key) => (
-              <button
-                key={key}
-                type="button"
-                title={`Remove ${CHIP_LABEL[key]} filter`}
-                onClick={() => onFilter(key, "")}
-                className="inline-flex items-center gap-1 max-w-full rounded-md bg-slate-100 pl-1.5 pr-1 py-0.5 text-[11px] text-slate-700 hover:bg-slate-200"
-              >
-                <span className="truncate">
-                  <span className="text-slate-500">{CHIP_LABEL[key]}:</span> {chipValue(key, filters, users, requirements)}
-                </span>
-                <X className="h-3 w-3 shrink-0 text-slate-400" />
-              </button>
-            ))}
+                <FilterChip
+                  key={key}
+                  label={`${CHIP_LABEL[key]}: ${chipValue(key, filters, users, requirements)}`}
+                  onRemove={() => onFilter(key, "")}
+                />
+              ))}
           </div>
         ) : null}
       </div>
@@ -353,7 +346,7 @@ function FilterField({
 }) {
   return (
     <div className={cn("min-w-0", className)}>
-      <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1">{label}</label>
+      <label className="block text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-1">{label}</label>
       {children}
     </div>
   );
@@ -394,9 +387,9 @@ function DebouncedText({
 }
 
 function searchPlaceholder(moduleKey: string) {
-  if (moduleKey === "clients") return "Search client contacts...";
+  if (moduleKey === "clients") return "Search client people...";
   if (moduleKey === "candidates") return "Search candidates...";
-  if (moduleKey === "vendors") return "Search vendor contacts...";
+  if (moduleKey === "vendors") return "Search vendor people...";
   if (moduleKey === "dashboard" || moduleKey === "reports") return "Filter risks...";
   return "Search...";
 }
@@ -416,6 +409,6 @@ function chipValue(
     return String((req as { title?: string } | undefined)?.title || "Requirement");
   }
   if (key === "experience") return `${raw}+ yrs`;
-  if (key === "lastContact") return `${raw}+ days`;
+  if (key === "lastOutreach") return `${raw}+ days`;
   return raw;
 }

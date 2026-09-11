@@ -1,12 +1,68 @@
 @import "tailwindcss";
 
+/*
+  TalentBridge enterprise design tokens (Phase 1).
+  Dense, restrained SaaS — slate + single accent. No decorative gradients.
+*/
+
 @theme {
   --font-sans: var(--font-inter), Inter, ui-sans-serif, system-ui, sans-serif;
-  --color-canvas: #f3f5f8;
-  --color-sidebar: #0f172a;
+
+  /* Surfaces */
+  --color-canvas: #eef1f5;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8fafc;
+  --color-sidebar: #0b1f3a;
+  --color-sidebar-hover: rgba(255, 255, 255, 0.08);
   --color-sidebar-muted: #94a3b8;
+  --color-sidebar-accent: #1d4ed8;
+
+  /* Text */
+  --color-text: #0f172a;
+  --color-text-secondary: #334155;
+  --color-text-muted: #64748b;
+  --color-text-inverse: #f8fafc;
+
+  /* Borders / focus */
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+  --color-focus: #2563eb;
+  --color-focus-ring: rgba(37, 99, 235, 0.18);
+
+  /* Accent + status */
   --color-accent: #2563eb;
   --color-accent-hover: #1d4ed8;
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fef2f2;
+  --color-danger-border: #fecaca;
+  --color-success: #047857;
+  --color-success-bg: #ecfdf5;
+  --color-warning: #b45309;
+  --color-warning-bg: #fffbeb;
+
+  /* Radius / shadow */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+
+  /* Spacing (reference) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+}
+
+:root {
+  --tb-font-page: 15px;
+  --tb-font-section: 13px;
+  --tb-font-body: 13px;
+  --tb-font-meta: 11px;
+  --tb-line-body: 18px;
+  --tb-control-h: 32px;
 }
 
 html,
@@ -16,11 +72,11 @@ body {
 
 body {
   margin: 0;
-  color: #0f172a;
+  color: var(--color-text);
   background: var(--color-canvas);
   font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 20px;
+  font-size: var(--tb-font-body);
+  line-height: var(--tb-line-body);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -30,6 +86,11 @@ body {
 
 ::selection {
   background: #dbeafe;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
 }
 
 input,
@@ -68,8 +129,48 @@ select:not([multiple])::-ms-expand {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--color-border-strong);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
+}
+
+/* Utility classes bound to tokens */
+.tb-surface {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.tb-page-title {
+  font-size: var(--tb-font-page);
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-text);
+}
+
+.tb-section-title {
+  font-size: var(--tb-font-section);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.tb-meta {
+  font-size: var(--tb-font-meta);
+  color: var(--color-text-muted);
+}
+
+.tb-skeleton {
+  background: linear-gradient(90deg, #e2e8f0 0%, #f1f5f9 50%, #e2e8f0 100%);
+  background-size: 200% 100%;
+  animation: tb-shimmer 1.2s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes tb-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
 }

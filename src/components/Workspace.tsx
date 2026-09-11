@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { availabilityBadge, Avatar, btnGhost, btnPrimary, Button, Card, CardHeader, cn, EmptyState, FieldInput, FieldSelect, IconBtn, IconButton, IconChip, IconOnly, Label, LinkedInIcon, MenuItem, NAV_ITEMS, shortDate, Tag, tagTone, TextLink, timeZoneHint, WhatsAppIcon } from "./workspace-ui";
+import { availabilityBadge, Avatar, btnGhost, btnPrimary, Button, Card, CardHeader, cn, EmptyState, FieldInput, FieldSelect, IconBtn, IconButton, IconChip, IconOnly, InlineError, Label, LinkedInIcon, LoadingSkeleton, MenuItem, shortDate, Tag, tagTone, Tabs, TextLink, timeZoneHint, WhatsAppIcon } from "./workspace-ui";
+import { AppShell } from "./AppShell";
 import { SettingsPane, CreateUserForm, inviteStatusMeta } from "./SettingsPane";
 import { DashList, DashPane } from "./DashboardPane";
 import { ListPager } from "./ListPager";
@@ -10,7 +11,6 @@ import { ListToolbar, sortRecords } from "./ListToolbar";
 import { paginate, parsePageSize, readStoredPageSize, storePageSize } from "@/lib/paging";
 import { EMPLOYMENT_TYPE_OPTIONS, RELOCATE_OPTIONS, WORK_AUTH_OPTIONS } from "@/lib/candidate-fields";
 import {
-  Bell,
   Building2,
   CalendarDays,
   ChevronDown,
@@ -18,20 +18,14 @@ import {
   ExternalLink,
   FileText,
   Hash,
-  HelpCircle,
   Lock,
-  LogOut,
   Mail,
   MapPin,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Phone,
   Plus,
   RefreshCw,
-  Search,
-  Settings,
   Share2,
   Star,
   UserRound,
@@ -61,11 +55,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [record, setRecord] = useState<Record<string, unknown> | null>(null);
   const [dash, setDash] = useState<Record<string, unknown> | null>(null);
   const [tasks, setTasks] = useState<Record<string, unknown>[]>([]);
-  const [activities, setActivities] = useState<Record<string, unknown>[]>([]);
+  const [activityEvents, setActivityEvents] = useState<Record<string, unknown>[]>([]);
   const [requirements, setRequirements] = useState<Record<string, unknown>[]>([]);
   const [users, setUsers] = useState<Record<string, unknown>[]>([]);
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
-  const [globalHits, setGlobalHits] = useState<Record<string, { id: string; name: string; module?: string; contactId?: string; type?: string }[]> | null>(null);
+  const [globalHits, setGlobalHits] = useState<Record<string, { id: string; name: string; module?: string; personId?: string; type?: string }[]> | null>(null);
   const [error, setError] = useState("");
   const [drawer, setDrawer] = useState<Drawer>("none");
   const [tab, setTab] = useState("Overview");
@@ -108,7 +102,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       owner: params.get("owner") || "",
       source: params.get("source") || "",
       availability: params.get("availability") || "",
-      lastContact: params.get("lastContact") || "",
+      lastOutreach: params.get("lastOutreach") || "",
       excludeRequirementId: params.get("excludeRequirementId") || "",
       workAuthorization: params.get("workAuthorization") || "",
       sort: params.get("sort") || "",
@@ -135,7 +129,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       "owner",
       "source",
       "availability",
-      "lastContact",
+      "lastOutreach",
       "excludeRequirementId",
       "workAuthorization",
       "sort",
@@ -150,7 +144,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     moduleKey === "tasks" || moduleKey === "calendar"
       ? tasks
       : moduleKey === "communications"
-        ? activities
+        ? activityEvents
         : moduleKey === "dashboard" || moduleKey === "reports"
           ? (((dash?.risks as unknown[]) || []) as Record<string, unknown>[]).filter((row) => {
               const q = filters.q.trim().toLowerCase();
@@ -177,7 +171,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     router.replace(`/${moduleKey}?${next.toString()}`);
   };
 
-  const select = (id: string, type?: "contact" | "account") => {
+  const select = (id: string, type?: "person" | "organization") => {
     const next = new URLSearchParams(params.toString());
     next.set("id", id);
     if (type) next.set("type", type);
@@ -196,7 +190,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     if (data.list) setList(data.list);
     if (data.dashboard) setDash(data.dashboard);
     if (data.tasks) setTasks(data.tasks);
-    if (data.activities) setActivities(data.activities);
+    if (data.activityEvents) setActivityEvents(data.activityEvents);
     if (data.requirements) setRequirements(data.requirements);
     if (data.users) setUsers(data.users);
     if (data.settings || data.maps || data.forbidden) setSettings(data);
@@ -224,7 +218,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     if (!["candidates", "clients", "vendors"].includes(moduleKey)) return;
     const next = new URLSearchParams(params.toString());
     next.set("id", String(list[0].id));
-    next.set("type", "contact");
+    next.set("type", "person");
     router.replace(`/${moduleKey}?${next.toString()}`);
   }, [list, selectedId, moduleKey, params, router]);
 
@@ -233,7 +227,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       if (!selectedId || moduleKey === "settings") setRecord(null);
       return;
     }
-    const type = params.get("type") || "contact";
+    const type = params.get("type") || "person";
     fetch(`/api/record?type=${type}&id=${selectedId}`)
       .then((r) => r.json())
       .then((d) => {
@@ -257,7 +251,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       if (!res.ok) throw new Error(data.error || "Failed");
       await load();
       if (selectedId) {
-        const type = params.get("type") || (record?.type === "account" ? "account" : "contact");
+        const type = params.get("type") || (record?.type === "organization" ? "organization" : "person");
         const rec = await fetch(`/api/record?type=${type}&id=${selectedId}`).then((r) => r.json());
         setRecord(rec.record);
       }
@@ -272,7 +266,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
 
   async function onCall() {
     if (!selectedId) return;
-    const data = await act({ action: "call", contactId: selectedId });
+    const data = await act({ action: "call", personId: selectedId });
     if (data) {
       setCallActivityId(data.activityId);
       setProposed(data.proposedFollowUp || "");
@@ -301,29 +295,27 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     setGlobalHits(data.results);
   }
 
-  const dnc = Boolean(record?.doNotContact);
+  const dnc = Boolean(record?.doNotReach);
   const blockEmail = dnc || Boolean(record?.doNotEmail);
   const blockSms = dnc || Boolean(record?.doNotSms);
   const callBlocked = dnc || !session?.vioTalkMapped;
   const callWhy = !session?.vioTalkMapped
     ? "No VioTalk agent mapping. Users with no mapping cannot use VioTalk Call."
     : dnc
-      ? "Do Not Contact is on — outbound call disabled."
+      ? "Do not reach is on — outbound call disabled."
       : "Call with VioTalk";
   const submitBlocked = blockEmail || !session?.mailbox;
   const submitWhy = !session?.mailbox
     ? "No mailbox mapped for Outlook send"
     : blockEmail
-      ? "Do Not Contact / Do Not Email is on — outbound email disabled."
+      ? "Do not reach / Do Not Email is on — outbound email disabled."
       : "Submit Profile";
-  const isAdmin = Boolean(session?.permissions.includes("admin") || session?.role === "admin");
-  const navItems = NAV_ITEMS.filter((item) => item.key !== "settings" || !session || isAdmin);
   const isCandidate = record?.kind === "candidate";
-  const isAccount = record?.type === "account";
+  const isOrganization = record?.type === "organization";
   const company = ((record?.companies as { id: string; name: string; role?: string; industry?: string; location?: string }[]) || [])[0];
-  const peopleOnAccount = (record?.people as { contact: { id: string; name: string; title: string; status?: string }; roleOnAccount?: string }[]) || [];
-  const internalNotes = ((record?.activities as Record<string, unknown>[]) || []).filter((a) => a.kind === "internal_note");
-  const files = (record?.documents as { name: string }[]) || [];
+  const peopleOnOrganization = (record?.people as { person: { id: string; name: string; title: string; status?: string }; roleOnOrganization?: string }[]) || [];
+  const internalNotes = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => a.kind === "internal_note");
+  const files = (record?.files as { name: string }[]) || [];
   const upcoming = (record?.upcoming as { id: string; title: string; dueAt?: string }[]) || [];
   const contactTags = ((record?.tags as string[]) || []).filter((t) => t && t !== record?.status);
   const avail = availabilityBadge(record?.availability, record?.status);
@@ -331,219 +323,59 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const jnpUrl = record?.portalCandidateId ? `https://jobs.nprofiles.example/candidates/${String(record.portalCandidateId)}` : "";
   const relatedPeople = (() => {
     const rows: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[] = [];
-    for (const s of ((record?.submissions as { clientContact?: { id?: string; name?: string; title?: string } }[]) || [])) {
-      if (s.clientContact?.name) {
+    for (const s of ((record?.submissions as { clientPerson?: { id?: string; name?: string; title?: string } }[]) || [])) {
+      if (s.clientPerson?.name) {
         rows.push({
-          id: s.clientContact.id,
-          name: s.clientContact.name,
-          title: s.clientContact.title || "Hiring Manager",
+          id: s.clientPerson.id,
+          name: s.clientPerson.name,
+          title: s.clientPerson.title || "Hiring Manager",
           badge: "Submitted",
           tone: "purple",
         });
       }
     }
-    for (const p of peopleOnAccount) {
-      rows.push({ name: p.contact.name, title: p.contact.title, badge: p.roleOnAccount || "Related", tone: "amber", id: p.contact.id });
+    for (const p of peopleOnOrganization) {
+      rows.push({ name: p.person.name, title: p.person.title, badge: p.roleOnOrganization || "Related", tone: "amber", id: p.person.id });
     }
     return rows.filter((row, i, all) => all.findIndex((r) => r.name === row.name) === i).slice(0, 8);
   })();
 
-  return (
-    <div className="h-screen flex bg-[#eef2f7] text-slate-800">
-      {menu !== "none" ? <button type="button" aria-label="Close menu" className="fixed inset-0 z-20 cursor-default bg-transparent" onClick={() => setMenu("none")} /> : null}
-      <aside
-        className={cn(
-          "shrink-0 bg-[#0b1f3a] text-white flex flex-col transition-[width] duration-200 ease-out overflow-visible",
-          navCollapsed ? "w-[68px]" : "w-[232px]",
-        )}
-      >
-        <div className={cn("flex items-center border-b border-white/10", navCollapsed ? "flex-col gap-2 px-1.5 py-3" : "px-3 py-4 gap-2")}>
-          <span className="relative h-8 w-8 shrink-0" aria-hidden>
-            <span className="absolute left-0.5 top-1.5 h-4 w-4 rounded-full bg-sky-400/90" />
-            <span className="absolute right-0.5 top-1.5 h-4 w-4 rounded-full bg-blue-500/90" />
-            <span className="absolute left-2 top-3.5 h-4 w-4 rounded-full bg-indigo-400/80" />
-          </span>
-          {!navCollapsed ? (
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] uppercase tracking-wider text-blue-200">TalentBridge</div>
-              <div className="text-sm font-semibold leading-tight">Contact Manager</div>
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={toggleNav}
-            title={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-label={navCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-            aria-expanded={!navCollapsed}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-blue-200 hover:bg-white/10 hover:text-white cursor-pointer shrink-0"
-          >
-            {navCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-          </button>
-        </div>
-        <nav className={cn("flex-1 overflow-auto", navCollapsed ? "p-1.5 space-y-1" : "p-2 space-y-0.5")}>
-          {navItems.map((item) => {
-            const count = item.badge ? badges[item.badge] : 0;
-            const active = moduleKey === item.key;
-            const Icon = item.icon;
-            return (
-              <a
-                key={item.key}
-                href={`/${item.key}`}
-                title={navCollapsed ? item.label : undefined}
-                className={cn(
-                  "flex items-center rounded-lg text-sm cursor-pointer transition-colors",
-                  navCollapsed ? "justify-center h-10" : "gap-2 px-3 py-2",
-                  active ? "bg-blue-600 text-white" : "text-slate-200 hover:bg-white/10 hover:text-white",
-                )}
-              >
-                <span className="relative shrink-0">
-                  <Icon className="h-4 w-4" />
-                  {navCollapsed && count ? (
-                    <span className="absolute -top-1.5 -right-2 min-w-4 h-4 px-0.5 rounded-full bg-red-500 text-[9px] leading-4 text-white text-center">
-                      {count}
-                    </span>
-                  ) : null}
-                </span>
-                {!navCollapsed ? <span className="flex-1 truncate">{item.label}</span> : null}
-                {!navCollapsed && count ? (
-                  <span className="min-w-5 h-5 px-1 rounded-full bg-red-500 text-[10px] flex items-center justify-center">
-                    {count}
-                  </span>
-                ) : null}
-              </a>
-            );
-          })}
-        </nav>
-        <div className={cn("border-t border-white/10 text-xs relative z-30", navCollapsed ? "p-1.5" : "p-3")}>
-          <button
-            type="button"
-            title="Help & Support"
-            className={cn(
-              "w-full flex items-center rounded-md text-left text-blue-200 hover:bg-white/10 hover:text-white cursor-pointer",
-              navCollapsed ? "justify-center h-10" : "gap-2 px-2 py-2",
-            )}
-            onClick={() => setMenu(menu === "help" ? "none" : "help")}
-          >
-            <HelpCircle className="h-4 w-4 shrink-0" />
-            {!navCollapsed ? "Help & Support" : null}
-          </button>
-          {menu === "help" ? (
-            <div
-              className={cn(
-                "z-30 rounded-md border border-slate-200 bg-white text-slate-800 shadow-lg p-3",
-                navCollapsed ? "absolute left-full bottom-16 ml-2 w-56" : "absolute bottom-24 left-3 right-3",
-              )}
-            >
-              <div className="font-medium text-sm mb-1">POC help</div>
-              <p className="text-xs text-slate-600">Every call, email or meeting needs wrap-up: Next Action, No Action Required, or Closed.</p>
-            </div>
-          ) : null}
-          <div
-            className={cn(
-              "w-full flex items-center rounded-md text-left",
-              navCollapsed ? "justify-center h-10 mt-1" : "gap-2 px-2 py-2 mt-1",
-            )}
-            title={session?.name || "Account"}
-          >
-            <Avatar name={session?.name || "User"} size={navCollapsed ? 28 : 32} />
-            {!navCollapsed ? (
-              <div className="min-w-0">
-                <div className="font-medium truncate">{session?.name}</div>
-                <div className="text-blue-200 truncate">{session?.title}</div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </aside>
+  const primaryAction =
+    moduleKey === "settings" ? (
+      <Button onClick={() => setDrawer("create-user")}>
+        <Plus className="h-4 w-4" />
+        Add user
+      </Button>
+    ) : ["candidates", "clients", "vendors"].includes(moduleKey) ? (
+      <Button onClick={() => setDrawer("create")}>
+        <Plus className="h-4 w-4" />
+        Add {moduleKey === "candidates" ? "Candidate" : moduleKey === "vendors" ? "Vendor person" : "Client person"}
+      </Button>
+    ) : undefined;
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center gap-2 px-5 py-2.5 border-b bg-white shrink-0">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-            <input
-              className="w-full rounded-lg border border-slate-200 bg-slate-50/80 pl-9 pr-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 outline-none hover:border-slate-300 focus:bg-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-              placeholder="Search candidates, clients, companies, conversations and documents."
-              onChange={(e) => searchGlobal(e.target.value)}
-            />
-            {globalHits ? (
-              <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto text-xs border rounded-md p-2 space-y-1 bg-white shadow">
-                {Object.entries(globalHits).map(([group, rows]) =>
-                  rows?.length ? (
-                    <div key={group}>
-                      <div className="uppercase text-slate-500">{group}</div>
-                      {rows.map((row) => (
-                        <button
-                          key={String(row.id)}
-                          className="block w-full text-left hover:bg-slate-50 hover:text-blue-700 rounded px-2 py-1 cursor-pointer"
-                          onClick={() => {
-                            setGlobalHits(null);
-                            router.push(`/${row.module}?id=${row.contactId || row.id}&type=${row.type || "contact"}`);
-                          }}
-                        >
-                          {String(row.name)}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null,
-                )}
-              </div>
-            ) : null}
-          </div>
+  return (
+    <>
+      <AppShell
+        moduleKey={moduleKey}
+        session={session}
+        badges={badges}
+        navCollapsed={navCollapsed}
+        onToggleNav={toggleNav}
+        menu={menu}
+        onMenuChange={(next) => setMenu(next as typeof menu)}
+        globalHits={globalHits}
+        onSearchGlobal={searchGlobal}
+        onClearHits={() => setGlobalHits(null)}
+        onNavigate={(href) => router.push(href)}
+        onSignOut={signOut}
+        primaryAction={primaryAction}
+      >
+        <section className="w-[260px] lg:w-[300px] xl:w-[360px] shrink-0 bg-[var(--color-surface)] border-r border-[var(--color-border)] flex flex-col">
           {moduleKey === "settings" ? (
-            <Button onClick={() => setDrawer("create-user")}>
-              <Plus className="h-4 w-4" />
-              Add user
-            </Button>
-          ) : ["candidates", "clients", "vendors"].includes(moduleKey) ? (
-            <Button onClick={() => setDrawer("create")}>
-              <Plus className="h-4 w-4" />
-              Add {moduleKey === "candidates" ? "Candidate" : moduleKey === "vendors" ? "Vendor Contact" : "Client Contact"}
-            </Button>
-          ) : null}
-          <div className="relative">
-            <IconButton
-              icon={Bell}
-              label="Notifications"
-              badge={badges.communications || undefined}
-              onClick={() => setMenu(menu === "bell" ? "none" : "bell")}
-            />
-            {menu === "bell" ? (
-              <div className="absolute right-0 mt-1 z-30 w-64 rounded-md border border-slate-200 bg-white shadow-lg p-2">
-                <MenuItem icon={Bell} onClick={() => { setMenu("none"); router.push("/communications"); }}>
-                  Open Communications ({badges.communications})
-                </MenuItem>
-                <MenuItem icon={FileText} onClick={() => { setMenu("none"); router.push("/tasks"); }}>
-                  Open Tasks ({badges.tasks})
-                </MenuItem>
-              </div>
-            ) : null}
-          </div>
-          <div className="relative">
-            <button
-              type="button"
-              className="rounded-full cursor-pointer hover:ring-2 hover:ring-blue-200"
-              title={session?.name || "Account"}
-              onClick={() => setMenu(menu === "user" ? "none" : "user")}
-            >
-              <Avatar name={session?.name || "U"} size={32} />
-            </button>
-            {menu === "user" ? (
-              <div className="absolute right-0 mt-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
-                {isAdmin ? <MenuItem icon={Settings} onClick={() => { setMenu("none"); router.push("/settings"); }}>Settings</MenuItem> : null}
-                <MenuItem icon={LogOut} onClick={signOut}>
-                  Log out
-                </MenuItem>
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex-1 flex min-w-0 min-h-0">
-        <section className="w-[260px] lg:w-[300px] xl:w-[360px] shrink-0 bg-white border-r border-slate-200 flex flex-col">
-          {moduleKey === "settings" ? (
-            <div className="px-3.5 pt-3 pb-3 border-b border-slate-200 bg-white">
+            <div className="px-3.5 pt-3 pb-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
               <div className="flex items-center gap-2 min-h-7">
-                <h2 className="font-semibold text-[15px] leading-none text-slate-900">Users</h2>
-                <span className="shrink-0 inline-flex items-center rounded-md bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600">
+                <h2 className="font-semibold text-[15px] leading-none text-[var(--color-text)]">Users</h2>
+                <span className="shrink-0 inline-flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--color-text-muted)]">
                   {((settings?.users as unknown[]) || []).length}
                 </span>
               </div>
@@ -566,14 +398,14 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               <DashList dash={dash ? { ...dash, risks: pageSlice.items } : dash} onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)} />
             ) : moduleKey === "tasks" || moduleKey === "calendar" ? (
               pageSlice.items.map((t) => (
-                <button key={String(t.id)} onClick={() => t.contactId && router.push(`/candidates?id=${t.contactId}&type=contact`)} className="w-full text-left px-4 py-3 border-b hover:bg-slate-50 cursor-pointer">
+                <button key={String(t.id)} onClick={() => t.personId && router.push(`/candidates?id=${t.personId}&type=person`)} className="w-full text-left px-4 py-3 border-b hover:bg-slate-50 cursor-pointer">
                   <div className="text-sm font-medium">{String(t.title)}</div>
                   <div className="text-xs text-slate-500">{t.dueAt ? shortDate(t.dueAt) : "No due date"}</div>
                 </button>
               ))
             ) : moduleKey === "communications" ? (
               pageSlice.items.map((a) => (
-                <button key={String(a.id)} onClick={() => a.contactId && router.push(`/candidates?id=${a.contactId}&type=contact`)} className="w-full text-left px-4 py-3 border-b hover:bg-slate-50 cursor-pointer">
+                <button key={String(a.id)} onClick={() => a.personId && router.push(`/candidates?id=${a.personId}&type=person`)} className="w-full text-left px-4 py-3 border-b hover:bg-slate-50 cursor-pointer">
                   <div className="text-sm font-medium">{String(a.summary)}</div>
                   <div className="text-xs text-slate-500">Unworked · wrap-up required</div>
                 </button>
@@ -589,7 +421,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     type="button"
                     onClick={() => select(u.id)}
                     className={`w-full text-left px-3 py-3 border-b flex gap-3 items-start cursor-pointer ${
-                      selected ? "bg-[#e8f1ff] border-l-4 border-l-blue-600" : "hover:bg-slate-50 border-l-4 border-l-transparent"
+                      selected ? "bg-blue-50 border-l-4 border-l-[var(--color-accent)]" : "hover:bg-[var(--color-surface-muted)] border-l-4 border-l-transparent"
                     }`}
                   >
                     <Avatar name={u.name} size={40} />
@@ -619,11 +451,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 return (
                 <div
                   key={String(row.id)}
-                  className={`border-b flex items-stretch ${selected ? "bg-[#e8f1ff] border-l-4 border-l-blue-600" : "hover:bg-slate-50 border-l-4 border-l-transparent"}`}
+                  className={`border-b flex items-stretch ${selected ? "bg-blue-50 border-l-4 border-l-[var(--color-accent)]" : "hover:bg-[var(--color-surface-muted)] border-l-4 border-l-transparent"}`}
                 >
                 <button
                   type="button"
-                  onClick={() => select(String(row.id), "contact")}
+                  onClick={() => select(String(row.id), "person")}
                   className="flex-1 min-w-0 text-left px-3 py-3 flex gap-3 cursor-pointer transition-colors"
                 >
                   <Avatar name={String(row.name)} size={40} />
@@ -636,7 +468,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           <Tag tone={rowAvail.tone}>{rowAvail.label}</Tag>
                         </div>
                       ) : (
-                        <div className="text-[11px] text-slate-500 shrink-0">{shortDate(row.lastContactAt, true)}</div>
+                        <div className="text-[11px] text-slate-500 shrink-0">{shortDate(row.lastOutreachAt, true)}</div>
                       )}
                     </div>
                     {row.title || row.companyName ? (
@@ -653,11 +485,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                         </span>
                         <span className="inline-flex items-center gap-1 shrink-0">
                           <Phone className="h-3 w-3" />
-                          {shortDate(row.lastContactAt, true) || "—"}
+                          {shortDate(row.lastOutreachAt, true) || "—"}
                         </span>
                         <span className="inline-flex items-center gap-1 shrink-0">
                           <CalendarDays className="h-3 w-3" />
-                          {shortDate(row.nextActionDueAt, true) || shortDate(row.lastContactAt, true) || "—"}
+                          {shortDate(row.nextActionDueAt, true) || shortDate(row.lastOutreachAt, true) || "—"}
                         </span>
                       </div>
                     ) : (
@@ -686,7 +518,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     title="Open relationships"
                     className="self-end mb-3 mr-2 inline-flex h-7 w-7 items-center justify-center rounded-md text-blue-600 hover:bg-blue-50 cursor-pointer"
                     onClick={() => {
-                      select(String(row.id), "contact");
+                      select(String(row.id), "person");
                       setTab("Relationships");
                     }}
                   >
@@ -703,8 +535,20 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
           ) : null}
         </section>
 
-        <section className="flex-1 overflow-auto bg-[#f4f6fa]">
-          {error ? <div className="m-4 rounded bg-red-50 text-red-700 px-3 py-2 text-sm">{error}</div> : null}
+        <section className="flex-1 overflow-auto bg-[var(--color-canvas)]">
+          {error ? (
+            <div className="m-4">
+              <InlineError
+                title="Something went wrong"
+                reason={error}
+                secondaryAction={
+                  <Button variant="ghost" onClick={() => setError("")}>
+                    Dismiss
+                  </Button>
+                }
+              />
+            </div>
+          ) : null}
           {moduleKey === "settings" ? (
             <SettingsPane
               data={settings}
@@ -714,12 +558,23 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               onAction={act}
             />
           ) : !record && moduleKey !== "dashboard" && moduleKey !== "reports" ? (
-            <div className="p-10 text-slate-500">Select a record. Filters stay when you open, call, or submit.</div>
+            busy ? (
+              <div className="p-6">
+                <LoadingSkeleton rows={8} />
+              </div>
+            ) : (
+              <div className="p-8">
+                <EmptyState
+                  title="Select a record"
+                  hint="Filters stay when you open, call, or submit. Pick someone from the list to work the next action."
+                />
+              </div>
+            )
           ) : moduleKey === "dashboard" || moduleKey === "reports" ? (
             <DashPane dash={dash} onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)} />
           ) : (
             <div className="min-h-full">
-              <div className="bg-white">
+              <div className="bg-[var(--color-surface)]">
                 <header className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3">
                   <div className="flex flex-col gap-4 sm:flex-row">
                     <Avatar name={String(record?.name || "")} size={72} />
@@ -751,7 +606,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           ) : (
                             <Tag tone="green">{String(record?.status || "Active")}</Tag>
                           )}
-                          {dnc ? <Tag tone="red">Do Not Contact</Tag> : null}
+                          {dnc ? <Tag tone="red">Do not reach</Tag> : null}
                           <Button variant="secondary" onClick={() => setDrawer("edit")}>
                             <Pencil className="h-3.5 w-3.5" />
                             Edit
@@ -762,7 +617,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                               Open JobsNProfiles
                             </Button>
                           ) : company?.id ? (
-                            <Button variant="secondary" onClick={() => select(company.id, "account")}>
+                            <Button variant="secondary" onClick={() => select(company.id, "organization")}>
                               <Building2 className="h-3.5 w-3.5" />
                               View Company
                             </Button>
@@ -777,7 +632,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                                 {isCandidate ? <MenuItem icon={CloudUpload} disabled={submitBlocked} title={submitWhy} onClick={() => { setMenu("none"); setDrawer("submit"); }}>Submit Profile</MenuItem> : null}
                                 {isCandidate ? <MenuItem icon={RefreshCw} onClick={() => { setMenu("none"); setDrawer("jnp"); }}>JNP sync</MenuItem> : null}
                                 {company?.id && isCandidate ? (
-                                  <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "account"); }}>View Company</MenuItem>
+                                  <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem>
                                 ) : null}
                               </div>
                             ) : null}
@@ -820,7 +675,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           ) : null}
                           {isCandidate ? (
                             <IconChip icon={Phone} tone="blue" disabled={callBlocked} onClick={onCall} title={callWhy}>
-                              {shortDate(record?.lastContactAt, true) || "Call"}
+                              {shortDate(record?.lastOutreachAt, true) || "Call"}
                             </IconChip>
                           ) : null}
                           <IconChip icon={CalendarDays} onClick={() => setDrawer("wrap")} title={String(record?.nextAction || "Follow-up")}>
@@ -833,7 +688,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   {dnc || blockEmail || blockSms ? (
                     <div className="mt-3 rounded-md bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-800">
                       {dnc
-                        ? "Do Not Contact is on. VioTalk Call, WhatsApp and Send Email are disabled."
+                        ? "Do not reach is on. VioTalk Call, WhatsApp and Send Email are disabled."
                         : [
                             blockEmail ? "Do Not Email" : null,
                             blockSms ? "Do Not SMS" : null,
@@ -846,12 +701,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
                       <div className="font-semibold">Existing relationship — never auto-merge</div>
                       <p>
-                        Owner {(record.owner as { name?: string })?.name} · Last contact {shortDate(record.lastContactAt)} · Next action {String(record.nextAction || "—")}
-                        {record?.activeRequirements ? ` · Active reqs ${String(record.activeRequirements)}` : ""} · Recent activity {String(((record?.activities as unknown[]) || []).length)}.
+                        Owner {(record.owner as { name?: string })?.name} · Last outreach {shortDate(record.lastOutreachAt)} · Next action {String(record.nextAction || "—")}
+                        {record?.activeRequirements ? ` · Active reqs ${String(record.activeRequirements)}` : ""} · Recent activity {String(((record?.activityEvents as unknown[]) || []).length)}.
                       </p>
                       <div className="mt-2 flex gap-3">
-                        <TextLink onClick={() => act({ action: "ownership_request", contactId: selectedId, type: "collaboration", note: "Need to collaborate" })}>Request Collaboration</TextLink>
-                        <TextLink onClick={() => act({ action: "ownership_request", contactId: selectedId, type: "transfer", note: "Need transfer" })}>Request Transfer</TextLink>
+                        <TextLink onClick={() => act({ action: "ownership_request", personId: selectedId, type: "collaboration", note: "Need to collaborate" })}>Request Collaboration</TextLink>
+                        <TextLink onClick={() => act({ action: "ownership_request", personId: selectedId, type: "transfer", note: "Need transfer" })}>Request Transfer</TextLink>
                       </div>
                     </div>
                   ) : null}
@@ -864,21 +719,22 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 ) : null}
 
                 <Tabs
-                  tabs={
-                    isAccount
-                      ? ["Overview", "Contacts", "Requirements", "Candidates Submitted", "Interviews", "Placements", "Communication", "Tasks", "MSA/PO", "Documents"]
+                  items={
+                    isOrganization
+                      ? ["Overview", "People", "Requirements", "Candidates Submitted", "Interviews", "Placements", "Communication", "Tasks", "MSA/PO", "Files"]
                       : isCandidate
-                        ? ["Overview", "Skills/Profile", "Requirements", "Submissions", "Interviews", "Placements", "Communication", "Tasks", "Notes", "Documents", "Relationships", "Activity"]
+                        ? ["Overview", "Skills/Profile", "Requirements", "Submissions", "Interviews", "Placements", "Communication", "Tasks", "Notes", "Files", "Relationships", "Activity"]
                         : ["Overview", "Communication", "Notes", "Meetings", "Files", "Relationships", "Activity"]
                   }
-                  current={tab}
+                  value={tab}
                   onChange={setTab}
+                  getLabel={tabLabel}
                 />
               </div>
 
               <div className="p-4 sm:p-5 space-y-4">
 
-                {tab === "Overview" && !isAccount ? (
+                {tab === "Overview" && !isOrganization ? (
                   isCandidate ? (
                   <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
                     <div className="min-w-0 space-y-4">
@@ -895,7 +751,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Quick Actions" />
                         <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail} onClick={() => setDrawer("note")} label="Send Email" title={blockEmail ? "Do Not Contact / Do Not Email" : ""} />
+                          <IconBtn disabled={blockEmail} onClick={() => setDrawer("note")} label="Send Email" title={blockEmail ? "Do not reach / Do Not Email" : ""} />
                           <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
                           <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
                           <IconBtn onClick={() => setDrawer("wrap")} label="Schedule Meeting" />
@@ -910,7 +766,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                               <div className="absolute left-0 bottom-full mb-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
                                 <MenuItem icon={RefreshCw} onClick={() => { setMenu("none"); setDrawer("jnp"); }}>JNP sync</MenuItem>
                                 <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
-                                {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "account"); }}>View Company</MenuItem> : null}
+                                {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem> : null}
                               </div>
                             ) : null}
                           </div>
@@ -940,7 +796,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           </div>
                         </Card>
                         <Card>
-                          <CardHeader title={`Related Contacts (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
+                          <CardHeader title={`Related people (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
                           <div className="px-2 pb-2">
                             {relatedPeople.map((p) => (
                               <div key={p.name} className="flex items-center gap-2 w-full rounded-md px-2 py-1.5">
@@ -989,7 +845,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             ["Relationship Tier", contactTags.includes("Strategic") ? "Strategic" : company?.role || "—"],
                             ["Source", record?.source],
                             ["Owner", (record?.owner as { name?: string })?.name],
-                            ["Last Contact", shortDate(record?.lastContactAt)],
+                            ["Last outreach", shortDate(record?.lastOutreachAt)],
                             ["Next Action", record?.nextAction],
                           ].map(([k, v]) => (
                             <div key={String(k)} className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2">
@@ -1011,7 +867,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                         <button
                           type="button"
                           className="w-full text-left rounded-lg border border-slate-200 bg-white p-4 flex gap-3 items-center hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer"
-                          onClick={() => select(company.id, "account")}
+                          onClick={() => select(company.id, "organization")}
                         >
                           <div className="h-10 w-10 rounded-lg bg-slate-800 text-white flex items-center justify-center text-xs font-bold">
                             {String(company.name).slice(0, 2).toUpperCase()}
@@ -1030,7 +886,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Quick Actions" />
                         <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail} onClick={() => setDrawer("note")} label="Send Email" title={blockEmail ? "Do Not Contact / Do Not Email" : ""} />
+                          <IconBtn disabled={blockEmail} onClick={() => setDrawer("note")} label="Send Email" title={blockEmail ? "Do not reach / Do Not Email" : ""} />
                           <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
                           <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
                           <IconBtn onClick={() => setDrawer("wrap")} label="Schedule Meeting" />
@@ -1041,7 +897,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             {menu === "qa-more" ? (
                               <div className="absolute left-0 bottom-full mb-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
                                 <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
-                                {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "account"); }}>View Company</MenuItem> : null}
+                                {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem> : null}
                               </div>
                             ) : null}
                           </div>
@@ -1084,7 +940,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           </div>
                         </Card>
                         <Card>
-                          <CardHeader title={`Related Contacts (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
+                          <CardHeader title={`Related people (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
                           <div className="px-2 pb-2">
                             {relatedPeople.map((p) => (
                               <div key={p.name} className="flex items-center gap-2 w-full rounded-md px-2 py-1.5">
@@ -1118,27 +974,26 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   <RecordTabs
                     tab={tab}
                     record={record}
-                    isAccount={isAccount}
+                    isOrganization={isOrganization}
                     isCandidate={isCandidate}
                     relatedPeople={relatedPeople}
-                    canAddRequirement={Boolean(isAccount && ["sales", "operations", "admin"].includes(session?.role || ""))}
+                    canAddRequirement={Boolean(isOrganization && ["sales", "operations", "admin"].includes(session?.role || ""))}
                     jnpUrl={jnpUrl}
                     onAddRequirement={() => setDrawer("req")}
                     onAddNote={() => setDrawer("note")}
                     onSubmit={() => setDrawer("submit")}
-                    onOpenPerson={(id) => router.push(`/clients?id=${id}&type=contact`)}
+                    onOpenPerson={(id) => router.push(`/clients?id=${id}&type=person`)}
                   />
                 )}
               </div>
             </div>
           )}
         </section>
-        </div>
-      </div>
+      </AppShell>
 
       {drawer !== "none" ? (
-        <div className="fixed inset-0 bg-black/40 flex justify-end" onClick={() => setDrawer("none")}>
-          <div className="w-[420px] bg-white h-full p-5 overflow-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-40 bg-slate-900/30 flex justify-end" onClick={() => setDrawer("none")}>
+          <div className="w-[420px] bg-[var(--color-surface)] h-full p-5 overflow-auto border-l border-[var(--color-border)] shadow-[var(--shadow-md)]" onClick={(e) => e.stopPropagation()}>
             {drawer === "wrap" ? (
               <WrapForm
                 busy={busy}
@@ -1147,7 +1002,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 onSave={async (vals) => {
                   await act({
                     action: "wrap_up",
-                    contactId: selectedId,
+                    personId: selectedId,
                     activityId: callActivityId,
                     ...vals,
                   });
@@ -1174,7 +1029,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               <NoteForm
                 onClose={() => setDrawer("none")}
                 onSave={async (body, visibility) => {
-                  await act({ action: "note", contactId: selectedId, body, visibility });
+                  await act({ action: "note", personId: selectedId, body, visibility });
                   setProposed("Follow up on this note");
                   setDrawer("wrap");
                 }}
@@ -1186,7 +1041,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 onSave={async (portalCandidateId) => {
                   const data = await act({ action: "jnp_sync", portalCandidateId });
                   if (data?.status === "collision") setError("Collision — existing relationship shown. Never auto-merge.");
-                  if (data?.contactId) select(String(data.contactId));
+                  if (data?.personId) select(String(data.personId));
                   setDrawer("none");
                 }}
               />
@@ -1196,7 +1051,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 users={users}
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
-                  await act({ action: "create_requirement", accountId: selectedId, ...vals });
+                  await act({ action: "create_requirement", organizationId: selectedId, ...vals });
                   setDrawer("none");
                 }}
               />
@@ -1208,7 +1063,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 onSave={async (vals) => {
                   const data = await act(vals);
                   if (data?.id) {
-                    select(String(data.id), "contact");
+                    select(String(data.id), "person");
                   }
                   setDrawer("none");
                 }}
@@ -1230,7 +1085,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 record={record}
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
-                  await act({ action: "update_contact", contactId: selectedId, ...vals });
+                  await act({ action: "update_person", personId: selectedId, ...vals });
                   setDrawer("none");
                 }}
               />
@@ -1238,43 +1093,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function Tabs({ tabs, current, onChange }: { tabs: string[]; current: string; onChange: (t: string) => void }) {
-  return (
-    <nav className="border-t border-slate-200" aria-label="Record sections">
-      <div
-        role="tablist"
-        className="flex overflow-x-auto px-2 sm:px-3 [scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent]"
-      >
-        {tabs.map((t) => {
-          const active = current === t;
-          return (
-            <button
-              key={t}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => onChange(t)}
-              className={cn(
-                "relative shrink-0 h-10 px-3 text-[13px] font-medium whitespace-nowrap cursor-pointer transition-colors",
-                active ? "text-blue-700" : "text-slate-600 hover:text-slate-900",
-              )}
-            >
-              {tabLabel(t)}
-              <span
-                className={cn(
-                  "absolute left-3 right-3 bottom-0 h-[3px]",
-                  active ? "bg-blue-600" : "bg-transparent",
-                )}
-              />
-            </button>
-          );
-        })}
-      </div>
-    </nav>
+    </>
   );
 }
 
@@ -1397,7 +1216,7 @@ function CandidateDetailsCard({
 function Candidate360Header({ record }: { record: Record<string, unknown> | null }) {
   const items = [
     ["Owner", (record?.owner as { name?: string } | undefined)?.name || "—"],
-    ["Last contact", shortDate(record?.lastContactAt) || "—"],
+    ["Last outreach", shortDate(record?.lastOutreachAt) || "—"],
     ["Next action", String(record?.nextAction || "—")],
     ["Status", String(record?.availability || record?.status || "—")],
     ["Active reqs", String(record?.activeRequirements ?? 0)],
@@ -1420,7 +1239,7 @@ function Candidate360Header({ record }: { record: Record<string, unknown> | null
 function RecordTabs({
   tab,
   record,
-  isAccount,
+  isOrganization,
   isCandidate,
   relatedPeople,
   canAddRequirement,
@@ -1432,7 +1251,7 @@ function RecordTabs({
 }: {
   tab: string;
   record: Record<string, unknown> | null;
-  isAccount: boolean;
+  isOrganization: boolean;
   isCandidate: boolean;
   relatedPeople: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[];
   canAddRequirement: boolean;
@@ -1442,7 +1261,7 @@ function RecordTabs({
   onSubmit: () => void;
   onOpenPerson: (id: string) => void;
 }) {
-  if (tab === "Overview" && isAccount) {
+  if (tab === "Overview" && isOrganization) {
     return (
       <Card>
         <CardHeader title="Overview" />
@@ -1459,7 +1278,7 @@ function RecordTabs({
     return (
       <RequirementsPane
         record={record}
-        isAccount={isAccount}
+        isOrganization={isOrganization}
         canAdd={canAddRequirement}
         onAdd={onAddRequirement}
       />
@@ -1486,10 +1305,10 @@ function RecordTabs({
   if (tab === "Notes") {
     return <Timeline record={record} mode="notes" onAddNote={onAddNote} />;
   }
-  if (tab === "Files" || tab === "Documents") {
-    return <DocumentsPane record={record} />;
+  if (tab === "Files") {
+    return <FilesPane record={record} />;
   }
-  if (tab === "Relationships" || tab === "Contacts") {
+  if (tab === "Relationships" || tab === "People") {
     return <RelationshipsPane record={record} relatedPeople={relatedPeople} onOpen={onOpenPerson} />;
   }
   if (tab === "MSA/PO") {
@@ -1561,26 +1380,26 @@ function SkillsProfilePane({ record, jnpUrl }: { record: Record<string, unknown>
 
 function RequirementsPane({
   record,
-  isAccount,
+  isOrganization,
   canAdd,
   onAdd,
 }: {
   record: Record<string, unknown> | null;
-  isAccount: boolean;
+  isOrganization: boolean;
   canAdd: boolean;
   onAdd: () => void;
 }) {
-  const accountReqs = (record?.requirements as { id: string; title: string; status?: string; location?: string; openedAt?: string; hiringManager?: { name?: string } }[]) || [];
-  const fromSubs = ((record?.submissions as { id: string; stage?: string; account?: { name?: string }; requirement?: { id?: string; title?: string; status?: string; location?: string } }[]) || []).map((s) => ({
+  const organizationReqs = (record?.requirements as { id: string; title: string; status?: string; location?: string; openedAt?: string; hiringManager?: { name?: string } }[]) || [];
+  const fromSubs = ((record?.submissions as { id: string; stage?: string; organization?: { name?: string }; requirement?: { id?: string; title?: string; status?: string; location?: string } }[]) || []).map((s) => ({
     id: s.requirement?.id || s.id,
     title: s.requirement?.title || "Requirement",
-    client: s.account?.name || "—",
+    client: s.organization?.name || "—",
     status: s.requirement?.status || "open",
     location: s.requirement?.location || "",
     stage: s.stage || "Submitted",
   }));
-  const rows = isAccount
-    ? accountReqs.map((r) => ({
+  const rows = isOrganization
+    ? organizationReqs.map((r) => ({
         id: r.id,
         title: r.title,
         client: String(record?.name || ""),
@@ -1592,7 +1411,7 @@ function RequirementsPane({
   return (
     <Card>
       <CardHeader
-        title={isAccount ? "Requirements" : "Requirements this candidate is on"}
+        title={isOrganization ? "Requirements" : "Requirements this candidate is on"}
         action={canAdd ? <TextLink onClick={onAdd}>+ Add Requirement</TextLink> : undefined}
       />
       {rows.length ? (
@@ -1615,7 +1434,7 @@ function RequirementsPane({
       ) : (
         <EmptyState
           title="No requirements yet"
-          hint={isAccount ? "Add a Requirement on this Client. Jobs are not a left-nav module." : "Submit Profile against a Client job to attach a requirement here."}
+          hint={isOrganization ? "Add a Requirement on this Client. Jobs are not a left-nav module." : "Submit Profile against a Client job to attach a requirement here."}
         />
       )}
     </Card>
@@ -1639,8 +1458,8 @@ function SubmissionsPane({
     source?: string;
     candidate?: { name?: string };
     requirement?: { title?: string };
-    account?: { name?: string };
-    clientContact?: { name?: string };
+    organization?: { name?: string };
+    clientPerson?: { name?: string };
   }[]) || [];
   return (
     <Card>
@@ -1666,10 +1485,10 @@ function SubmissionsPane({
                 <tr key={s.id} className="align-top">
                   {!isCandidate ? <td className="px-4 py-3">{s.candidate?.name || "—"}</td> : null}
                   <td className="px-4 py-3">
-                    <div className="font-medium">{s.account?.name || "—"}</div>
+                    <div className="font-medium">{s.organization?.name || "—"}</div>
                     <div className="text-xs text-slate-500">{s.requirement?.title || "—"}</div>
                   </td>
-                  <td className="px-4 py-3">{s.clientContact?.name || "—"}</td>
+                  <td className="px-4 py-3">{s.clientPerson?.name || "—"}</td>
                   <td className="px-4 py-3"><Tag tone="purple">{s.stage || "Submitted"}</Tag></td>
                   <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{shortDate(s.sentAt)}</td>
                   <td className="px-4 py-3 text-slate-500">{s.resumeVersion || "—"}</td>
@@ -1691,7 +1510,7 @@ function InterviewsPane({ record }: { record: Record<string, unknown> | null }) 
     scheduledAt?: string;
     outcome?: string;
     candidate?: { name?: string };
-    account?: { name?: string };
+    organization?: { name?: string };
     requirement?: { title?: string };
   }[]) || [];
   return (
@@ -1705,7 +1524,7 @@ function InterviewsPane({ record }: { record: Record<string, unknown> | null }) 
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{i.requirement?.title || "Interview"}</div>
                 <div className="text-xs text-slate-500">
-                  {[i.candidate?.name, i.account?.name, shortDate(i.scheduledAt)].filter(Boolean).join(" · ")}
+                  {[i.candidate?.name, i.organization?.name, shortDate(i.scheduledAt)].filter(Boolean).join(" · ")}
                 </div>
               </div>
               <Tag tone={i.outcome === "pending" ? "amber" : i.outcome === "passed" ? "green" : "slate"}>{i.outcome || "pending"}</Tag>
@@ -1727,7 +1546,7 @@ function PlacementsPane({ record }: { record: Record<string, unknown> | null }) 
     endDate?: string;
     followUp?: string;
     candidate?: { name?: string };
-    account?: { name?: string };
+    organization?: { name?: string };
     requirement?: { title?: string };
   }[]) || [];
   return (
@@ -1740,7 +1559,7 @@ function PlacementsPane({ record }: { record: Record<string, unknown> | null }) 
               <div className="min-w-0">
                 <div className="text-sm font-medium">{p.candidate?.name || p.requirement?.title || "Placement"}</div>
                 <div className="text-xs text-slate-500">
-                  {[p.account?.name, p.requirement?.title, p.followUp].filter(Boolean).join(" · ")}
+                  {[p.organization?.name, p.requirement?.title, p.followUp].filter(Boolean).join(" · ")}
                 </div>
                 <div className="text-xs text-slate-400 mt-1">
                   {shortDate(p.startDate)}
@@ -1790,8 +1609,8 @@ function TasksPane({ record }: { record: Record<string, unknown> | null }) {
   );
 }
 
-function DocumentsPane({ record }: { record: Record<string, unknown> | null }) {
-  const files = (record?.documents as { id?: string; name: string; kind?: string; createdAt?: string }[]) || [];
+function FilesPane({ record }: { record: Record<string, unknown> | null }) {
+  const files = (record?.files as { id?: string; name: string; kind?: string; createdAt?: string }[]) || [];
   const resume = String(record?.lastResume || "");
   const rows = files.length
     ? files
@@ -1800,7 +1619,7 @@ function DocumentsPane({ record }: { record: Record<string, unknown> | null }) {
       : [];
   return (
     <Card>
-      <CardHeader title="Documents" />
+      <CardHeader title="Files" />
       {rows.length ? (
         <ul className="divide-y">
           {rows.map((d) => (
@@ -1814,7 +1633,7 @@ function DocumentsPane({ record }: { record: Record<string, unknown> | null }) {
           ))}
         </ul>
       ) : (
-        <EmptyState title="No documents" hint="Resumes and files on this record appear here. JobsNProfiles remains the profile source." />
+        <EmptyState title="No files" hint="Resumes and files on this record appear here. JobsNProfiles remains the profile source." />
       )}
     </Card>
   );
@@ -1829,14 +1648,14 @@ function RelationshipsPane({
   relatedPeople: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[];
   onOpen: (id: string) => void;
 }) {
-  const people = (record?.people as { contact: { id: string; name: string; title: string }; roleOnAccount?: string }[]) || [];
+  const people = (record?.people as { person: { id: string; name: string; title: string }; roleOnOrganization?: string }[]) || [];
   const rows = relatedPeople.length
     ? relatedPeople
     : people.map((p) => ({
-        id: p.contact.id,
-        name: p.contact.name,
-        title: p.contact.title,
-        badge: p.roleOnAccount || "Related",
+        id: p.person.id,
+        name: p.person.name,
+        title: p.person.title,
+        badge: p.roleOnOrganization || "Related",
         tone: "amber" as const,
       }));
   return (
@@ -1862,7 +1681,7 @@ function RelationshipsPane({
           ))}
         </ul>
       ) : (
-        <EmptyState title="No related contacts" hint="Hiring managers and other people linked through submissions show here. Staff users are not contacts." />
+        <EmptyState title="No related people" hint="Hiring managers and other people linked through submissions show here. Staff users are not people records." />
       )}
     </Card>
   );
@@ -1898,7 +1717,7 @@ function Timeline({
   embedded?: boolean;
 }) {
   const [channel, setChannel] = useState("All");
-  const items = ((record?.activities as Record<string, unknown>[]) || []).filter((a) => {
+  const items = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => {
     const kind = String(a.kind);
     if (mode === "notes") return kind === "note" || kind === "internal_note";
     if (mode === "communication") {
@@ -2038,12 +1857,12 @@ function SubmitForm({
 }: {
   requirements: Record<string, unknown>[];
   onClose: () => void;
-  onSave: (v: { requirementId: string; clientContactId: string; message: string; resumeName: string }) => Promise<void>;
+  onSave: (v: { requirementId: string; clientPersonId: string; message: string; resumeName: string }) => Promise<void>;
 }) {
   const [requirementId, setRequirementId] = useState(String(requirements[0]?.id || ""));
   const selectedReq = requirements.find((r) => String(r.id) === requirementId);
   const hiringManager = selectedReq?.hiringManager as { id?: string; name?: string } | undefined;
-  const [clientContactId, setClientContactId] = useState(String(hiringManager?.id || ""));
+  const [clientPersonId, setClientPersonId] = useState(String(hiringManager?.id || ""));
   const [resumeName, setResumeName] = useState("resume.pdf");
   const [message, setMessage] = useState("Please find the attached profile for your open requirement.");
   return (
@@ -2053,14 +1872,14 @@ function SubmitForm({
         e.preventDefault();
         onSave({
           requirementId,
-          clientContactId: clientContactId || String(hiringManager?.id || ""),
+          clientPersonId: clientPersonId || String(hiringManager?.id || ""),
           message,
           resumeName,
         });
       }}
     >
       <h2 className="text-lg font-semibold">Submit Profile</h2>
-      <p className="text-xs text-slate-500">Select a Client job + client contact. Compose here. Send via Outlook. No template catalog. Creates a Submission ID.</p>
+      <p className="text-xs text-slate-500">Select a Client job + Client person. Compose here. Send via Outlook. No template catalog. Creates a Submission ID.</p>
       <label className="block text-sm">
         Requirement
         <FieldSelect
@@ -2070,20 +1889,20 @@ function SubmitForm({
             setRequirementId(e.target.value);
             const next = requirements.find((r) => String(r.id) === e.target.value);
             const hm = next?.hiringManager as { id?: string } | undefined;
-            setClientContactId(String(hm?.id || ""));
+            setClientPersonId(String(hm?.id || ""));
           }}
           required
         >
           {requirements.map((r) => (
             <option key={String(r.id)} value={String(r.id)}>
-              {String((r.account as { name?: string } | undefined)?.name || "")} — {String(r.title)}
+              {String((r.organization as { name?: string } | undefined)?.name || "")} — {String(r.title)}
             </option>
           ))}
         </FieldSelect>
       </label>
       <label className="block text-sm">
-        Client contact
-        <FieldSelect wrapClassName="mt-1" value={clientContactId} onChange={(e) => setClientContactId(e.target.value)} required>
+        Client person
+        <FieldSelect wrapClassName="mt-1" value={clientPersonId} onChange={(e) => setClientPersonId(e.target.value)} required>
           {hiringManager?.id ? <option value={hiringManager.id}>{hiringManager.name || "Hiring manager"}</option> : <option value="">No hiring manager on this job</option>}
         </FieldSelect>
       </label>
@@ -2115,13 +1934,13 @@ function CreateForm({
   const kind =
     moduleKey === "vendors" ? "vendor_person" : moduleKey === "clients" ? "client_person" : "candidate";
   const label =
-    kind === "vendor_person" ? "Vendor Contact" : kind === "client_person" ? "Client Contact" : "Candidate";
+    kind === "vendor_person" ? "Vendor person" : kind === "client_person" ? "Client person" : "Candidate";
   return (
     <form
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave({ action: "create_contact", name, kind });
+        onSave({ action: "create_person", name, kind });
       }}
     >
       <h2 className="text-lg font-semibold">Add {label}</h2>

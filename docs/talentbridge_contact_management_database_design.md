@@ -1,7 +1,7 @@
 # TalentBridge Contact Management Database Design
 
-> **Status vs product.** This is a **normalization reference**, not the live TalentBridge schema.
-> Source of truth for the hub: [`prisma/schema.prisma`](../prisma/schema.prisma) and [`schema-er-diagram.md`](schema-er-diagram.md).
+> **Status vs product.** This is a **normalization reference** for deeper CRM shapes (contact methods, profiles, etc.).
+> Live hub schema uses the same core vocabulary (`people`, `organizations`, `activity_events`, `files`) — see [`prisma/schema.prisma`](../prisma/schema.prisma) and [`schema-er-diagram.md`](schema-er-diagram.md).
 > TalentBridge **owns** Requirements, Submissions, Interviews, Placements, Tasks, MSA/PO — JobsNProfiles is one-way profiles only.
 > Adopted ideas (channel DNC, normalized match fields, external entity links) are tracked in [schema-er-diagram.md §8](schema-er-diagram.md#8-adoption-from-contact-design-reference).
 
@@ -11,9 +11,9 @@ This document defines a normalized, low-redundancy database design for a contact
 
 The portal manages:
 
-- Candidate contacts
-- Client contacts
-- Vendor contacts
+- Candidate people
+- Client people
+- Vendor people
 - Companies / organizations
 - Calls
 - Call transcripts
@@ -44,7 +44,7 @@ PERSON
   ├── CONTACT ROLES
   ├── ORGANIZATION AFFILIATIONS
   ├── CANDIDATE PROFILE         optional
-  ├── CLIENT CONTACT PROFILE    optional
+  ├── Client person PROFILE    optional
   └── VENDOR CONTACT PROFILE    optional
 
 ORGANIZATION
@@ -433,10 +433,10 @@ CREATE TABLE candidate_profiles (
     desired_rate_max            DECIMAL(12,2),
     rate_unit                   VARCHAR(20),
 
-    last_contacted_at           TIMESTAMP,
+    last_outreach_at           TIMESTAMP,
     next_followup_at            TIMESTAMP,
 
-    do_not_contact              BOOLEAN DEFAULT FALSE,
+    do_not_reach              BOOLEAN DEFAULT FALSE,
     do_not_email                BOOLEAN DEFAULT FALSE,
     do_not_sms                  BOOLEAN DEFAULT FALSE,
 
@@ -489,12 +489,12 @@ CREATE TABLE client_profiles (
 
 ---
 
-# 10. client_contact_profiles
+# 10. client_person_profiles
 
 Information specific to an individual client stakeholder.
 
 ```sql
-CREATE TABLE client_contact_profiles (
+CREATE TABLE client_person_profiles (
     person_id               BIGINT PRIMARY KEY,
 
     relationship_tier       VARCHAR(40),
@@ -508,7 +508,7 @@ CREATE TABLE client_contact_profiles (
     preferred_contact_time   VARCHAR(80),
 
     first_contact_date      DATE,
-    last_contacted_at       TIMESTAMP,
+    last_outreach_at       TIMESTAMP,
     next_followup_at        TIMESTAMP,
 
     notes                   TEXT,
@@ -587,7 +587,7 @@ CREATE TABLE vendor_contact_profiles (
     specialties_summary         TEXT,
 
     first_contact_date          DATE,
-    last_contacted_at           TIMESTAMP,
+    last_outreach_at           TIMESTAMP,
     next_followup_at            TIMESTAMP,
 
     notes                       TEXT,
@@ -646,7 +646,7 @@ CREATE TABLE address_links (
 
 # 14. communications
 
-Use one communication model for candidate, client, and vendor contacts.
+Use one communication model for candidate, client, and vendor people.
 
 Do not create:
 
@@ -1160,7 +1160,7 @@ Acme Technologies
 
 # 25. users
 
-Internal users/recruiters are separate from external CRM contacts.
+Internal users/recruiters are separate from external CRM people.
 
 ```sql
 CREATE TABLE users (
@@ -1180,7 +1180,7 @@ CREATE TABLE users (
 );
 ```
 
-Do not automatically store recruiters in `people` unless the product explicitly needs them as CRM contacts.
+Do not automatically store recruiters in `people` unless the product explicitly needs them as CRM people.
 
 ---
 
@@ -1336,7 +1336,7 @@ With this model:
 - Candidate, client-contact, and vendor-contact behavior is represented through roles and profile extension tables.
 - Company relationships are stored once through affiliations.
 - Calls, emails, meetings, notes, tasks, tags, and files use shared generic models.
-- Candidate-to-client recruiting relationships do not leak into this contact database.
+- Candidate-to-client recruiting relationships do not leak into this people database.
 - ATS-specific data remains isolated in jobsnprofiles.com.
 - Historical employment and representation changes are preserved through dated affiliation records.
 
@@ -1513,7 +1513,7 @@ The actual jobsnprofiles.com URL format should be generated from its real routin
 
 ## 31.4 Candidate Profile Deep Link
 
-The Candidate Contact screen can expose an action such as:
+The Person screen can expose an action such as:
 
 ```text
 Alex Carter
@@ -1679,7 +1679,7 @@ label             = Leadership Resume
 is_primary        = false
 ```
 
-The Candidate Contact UI could display:
+The Person UI could display:
 
 ```text
 Jobs & Profiles
@@ -1733,7 +1733,7 @@ The contact portal should fetch ATS information when needed or send the user to 
 
 # 34. Optional Read-Only ATS Summary
 
-It can still be useful for the Contact screen to display a small amount of jobsnprofiles.com information.
+It can still be useful for the Person screen to display a small amount of jobsnprofiles.com information.
 
 For example:
 
@@ -1979,7 +1979,7 @@ Recommended semantics:
 Unlink
     Removes relationship between the two records.
 
-Delete Contact
+Delete Person
     Follows TalentBridge's own deletion/archive policy.
 
 Delete ATS Candidate
@@ -2075,7 +2075,7 @@ person_contact_roles
 candidate_profiles
 
 client_profiles
-client_contact_profiles
+client_person_profiles
 
 vendor_profiles
 vendor_contact_profiles

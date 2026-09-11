@@ -21,6 +21,7 @@ import {
   Settings,
   StickyNote,
   UserRound,
+  X,
 } from "lucide-react";
 
 export function cn(...parts: Array<string | false | null | undefined>) {
@@ -38,19 +39,20 @@ export function initials(name: string) {
 
 export function Avatar({
   name,
-  size = 36,
+  size = 32,
   className = "",
 }: {
   name: string;
   size?: number;
   className?: string;
 }) {
-  const colors = ["#1d4ed8", "#0f766e", "#7c3aed", "#b45309", "#be123c"];
+  const colors = ["#1d4ed8", "#0f766e", "#334155", "#b45309", "#be123c"];
   const i = name.split("").reduce((n, c) => n + c.charCodeAt(0), 0) % colors.length;
   return (
     <span
       className={cn("inline-flex items-center justify-center rounded-full text-white font-semibold shrink-0", className)}
       style={{ width: size, height: size, background: colors[i], fontSize: Math.max(11, size * 0.34) }}
+      aria-hidden
     >
       {initials(name || "?")}
     </span>
@@ -68,7 +70,7 @@ export function Badge({
     slate: "bg-slate-100 text-slate-700 ring-slate-200",
     green: "bg-emerald-50 text-emerald-800 ring-emerald-100",
     blue: "bg-sky-50 text-sky-800 ring-sky-100",
-    purple: "bg-violet-50 text-violet-800 ring-violet-100",
+    purple: "bg-slate-100 text-slate-800 ring-slate-200",
     amber: "bg-amber-50 text-amber-800 ring-amber-100",
     red: "bg-red-50 text-red-700 ring-red-100",
   };
@@ -80,6 +82,9 @@ export function Badge({
 }
 
 export const Tag = Badge;
+
+const controlFocus =
+  "outline-none focus:border-[var(--color-focus)] focus:ring-2 focus:ring-[var(--color-focus-ring)]";
 
 export function Button({
   children,
@@ -99,10 +104,13 @@ export function Button({
   title?: string;
 }) {
   const styles = {
-    primary: "bg-blue-600 text-white hover:bg-blue-700 border-transparent",
-    secondary: "bg-white text-slate-700 hover:bg-slate-50 hover:border-blue-300 border-slate-200",
-    ghost: "bg-transparent text-slate-600 hover:bg-slate-100 border-transparent",
-    danger: "bg-white text-red-700 hover:bg-red-50 border-red-200",
+    primary:
+      "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)] border-transparent shadow-[var(--shadow-sm)]",
+    secondary:
+      "bg-[var(--color-surface)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-muted)] border-[var(--color-border)]",
+    ghost: "bg-transparent text-[var(--color-text-secondary)] hover:bg-slate-100 border-transparent",
+    danger:
+      "bg-[var(--color-surface)] text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] border-[var(--color-danger-border)]",
   };
   return (
     <button
@@ -111,7 +119,7 @@ export function Button({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-md border px-3 h-8 text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none",
+        "inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] border px-3 h-8 text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none",
         styles[variant],
         className,
       )}
@@ -146,9 +154,9 @@ export function IconButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "relative inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 transition-colors cursor-pointer",
-        "hover:bg-slate-100 hover:text-slate-900",
-        active && "bg-blue-50 text-blue-700",
+        "relative inline-flex h-8 w-8 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-secondary)] transition-colors cursor-pointer",
+        "hover:bg-slate-100 hover:text-[var(--color-text)]",
+        active && "bg-blue-50 text-[var(--color-accent)]",
         "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent",
         className,
       )}
@@ -175,8 +183,8 @@ export function TextLink({
   className?: string;
 }) {
   const styles = cn(
-    "text-[13px] font-medium text-blue-600 underline-offset-2 decoration-blue-600 cursor-pointer",
-    "hover:text-blue-800 hover:underline",
+    "text-[13px] font-medium text-[var(--color-accent)] underline-offset-2 cursor-pointer",
+    "hover:text-[var(--color-accent-hover)] hover:underline",
     className,
   );
   if (href) {
@@ -193,15 +201,40 @@ export function TextLink({
   );
 }
 
-export function FieldInput({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+export function FieldInput({
+  className,
+  label,
+  error,
+  required,
+  id,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & {
+  label?: string;
+  error?: string;
+  required?: boolean;
+}) {
+  const inputId = id || props.name;
   return (
-    <input
-      {...props}
-      className={cn(
-        "h-8 w-full rounded-md border border-slate-200 bg-white px-2.5 text-[13px] text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15",
-        className,
-      )}
-    />
+    <div className="min-w-0">
+      {label ? (
+        <Label htmlFor={inputId} required={required}>
+          {label}
+        </Label>
+      ) : null}
+      <input
+        {...props}
+        id={inputId}
+        required={required}
+        aria-invalid={error ? true : undefined}
+        className={cn(
+          "h-8 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]",
+          controlFocus,
+          error && "border-[var(--color-danger)]",
+          className,
+        )}
+      />
+      {error ? <p className="mt-1 text-[11px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
   );
 }
 
@@ -209,61 +242,360 @@ export function FieldSelect({
   className,
   wrapClassName,
   children,
+  label,
+  error,
+  required,
+  id,
   ...props
-}: React.SelectHTMLAttributes<HTMLSelectElement> & { wrapClassName?: string }) {
+}: React.SelectHTMLAttributes<HTMLSelectElement> & {
+  wrapClassName?: string;
+  label?: string;
+  error?: string;
+  required?: boolean;
+}) {
+  const selectId = id || props.name;
   return (
-    <span className={cn("relative inline-flex min-w-0", wrapClassName ?? "w-full")}>
-      <select
+    <div className={cn("min-w-0", wrapClassName)}>
+      {label ? (
+        <Label htmlFor={selectId} required={required}>
+          {label}
+        </Label>
+      ) : null}
+      <span className="relative inline-flex min-w-0 w-full">
+        <select
+          {...props}
+          id={selectId}
+          required={required}
+          aria-invalid={error ? true : undefined}
+          className={cn(
+            "h-8 w-full min-w-0 appearance-none rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-2.5 pr-7 text-[13px] text-[var(--color-text-secondary)] cursor-pointer hover:border-[var(--color-border-strong)]",
+            controlFocus,
+            error && "border-[var(--color-danger)]",
+            className,
+          )}
+        >
+          {children}
+        </select>
+        <ChevronDown
+          aria-hidden
+          className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-muted)]"
+        />
+      </span>
+      {error ? <p className="mt-1 text-[11px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
+  );
+}
+
+export function FieldTextarea({
+  className,
+  label,
+  error,
+  required,
+  id,
+  ...props
+}: React.TextareaHTMLAttributes<HTMLTextAreaElement> & {
+  label?: string;
+  error?: string;
+  required?: boolean;
+}) {
+  const areaId = id || props.name;
+  return (
+    <div className="min-w-0">
+      {label ? (
+        <Label htmlFor={areaId} required={required}>
+          {label}
+        </Label>
+      ) : null}
+      <textarea
         {...props}
+        id={areaId}
+        required={required}
+        aria-invalid={error ? true : undefined}
         className={cn(
-          "h-8 w-full min-w-0 appearance-none rounded-md border border-slate-200 bg-white pl-2.5 pr-7 text-[13px] text-slate-700 outline-none cursor-pointer hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15",
+          "w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-2 text-[13px] text-[var(--color-text)]",
+          controlFocus,
+          error && "border-[var(--color-danger)]",
           className,
         )}
-      >
-        {children}
-      </select>
-      <ChevronDown
-        aria-hidden
-        className="pointer-events-none absolute right-1.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400"
       />
-    </span>
+      {error ? <p className="mt-1 text-[11px] text-[var(--color-danger)]">{error}</p> : null}
+    </div>
   );
 }
 
-export function FieldTextarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function Label({
+  children,
+  htmlFor,
+  required,
+}: {
+  children: React.ReactNode;
+  htmlFor?: string;
+  required?: boolean;
+}) {
   return (
-    <textarea
-      {...props}
-      className={cn(
-        "w-full rounded-md border border-slate-200 bg-white px-2.5 py-2 text-[13px] text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15",
-        className,
-      )}
-    />
+    <label htmlFor={htmlFor} className="block text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)] mb-1">
+      {children}
+      {required ? <span className="text-[var(--color-danger)]"> *</span> : null}
+    </label>
   );
-}
-
-export function Label({ children }: { children: React.ReactNode }) {
-  return <label className="block text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">{children}</label>;
 }
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <div className={cn("rounded-lg border border-slate-200 bg-white", className)}>{children}</div>;
+  return (
+    <div className={cn("rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]", className)}>
+      {children}
+    </div>
+  );
 }
 
 export function CardHeader({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-100">
-      <h3 className="text-[13px] font-semibold text-slate-900">{title}</h3>
+    <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--color-border)]">
+      <h3 className="tb-section-title">{title}</h3>
       {action}
     </div>
   );
 }
 
-export function EmptyState({ title, hint }: { title: string; hint?: string }) {
+export function EmptyState({
+  title,
+  hint,
+  action,
+}: {
+  title: string;
+  hint?: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="px-4 py-10 text-center">
-      <div className="text-[13px] font-medium text-slate-700">{title}</div>
-      {hint ? <div className="mt-1 text-xs text-slate-500">{hint}</div> : null}
+      <div className="text-[13px] font-medium text-[var(--color-text-secondary)]">{title}</div>
+      {hint ? <div className="mt-1 text-xs text-[var(--color-text-muted)] max-w-sm mx-auto">{hint}</div> : null}
+      {action ? <div className="mt-3 flex justify-center gap-2">{action}</div> : null}
+    </div>
+  );
+}
+
+export function LoadingSkeleton({ rows = 6, className }: { rows?: number; className?: string }) {
+  return (
+    <div className={cn("space-y-2 p-3", className)} aria-busy="true" aria-label="Loading">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="tb-skeleton h-8 w-full" />
+      ))}
+    </div>
+  );
+}
+
+export function InlineError({
+  title,
+  reason,
+  onRetry,
+  secondaryAction,
+}: {
+  title: string;
+  reason?: string;
+  onRetry?: () => void;
+  secondaryAction?: React.ReactNode;
+}) {
+  return (
+    <div
+      role="alert"
+      className="rounded-[var(--radius-md)] border border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] px-3 py-2.5 text-[13px]"
+    >
+      <div className="font-semibold text-[var(--color-danger)]">{title}</div>
+      {reason ? <p className="mt-1 text-[var(--color-text-secondary)]">{reason}</p> : null}
+      {(onRetry || secondaryAction) && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {onRetry ? (
+            <Button variant="danger" onClick={onRetry}>
+              Retry
+            </Button>
+          ) : null}
+          {secondaryAction}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function Alert({
+  tone = "info",
+  children,
+  className,
+}: {
+  tone?: "info" | "success" | "warning" | "danger";
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const map = {
+    info: "border-sky-200 bg-sky-50 text-sky-900",
+    success: "border-emerald-200 bg-[var(--color-success-bg)] text-[var(--color-success)]",
+    warning: "border-amber-200 bg-[var(--color-warning-bg)] text-[var(--color-warning)]",
+    danger: "border-[var(--color-danger-border)] bg-[var(--color-danger-bg)] text-[var(--color-danger)]",
+  };
+  return (
+    <div role="status" className={cn("rounded-[var(--radius-md)] border px-3 py-2 text-[13px]", map[tone], className)}>
+      {children}
+    </div>
+  );
+}
+
+export function FilterChip({
+  label,
+  onRemove,
+}: {
+  label: string;
+  onRemove?: () => void;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1 max-w-full rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] pl-2 pr-1 py-0.5 text-[11px] font-medium text-[var(--color-text-secondary)]">
+      <span className="truncate">{label}</span>
+      {onRemove ? (
+        <button
+          type="button"
+          aria-label={`Remove filter ${label}`}
+          onClick={onRemove}
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[var(--radius-sm)] hover:bg-slate-200"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      ) : null}
+    </span>
+  );
+}
+
+export function Tabs({
+  items,
+  value,
+  onChange,
+  getLabel,
+}: {
+  items: string[];
+  value: string;
+  onChange: (v: string) => void;
+  getLabel?: (item: string) => string;
+}) {
+  return (
+    <nav aria-label="Sections">
+      <div
+        role="tablist"
+        className="flex gap-0.5 overflow-x-auto border-b border-[var(--color-border)] px-2 [scrollbar-width:thin]"
+      >
+        {items.map((item) => {
+          const active = item === value;
+          return (
+            <button
+              key={item}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => onChange(item)}
+              className={cn(
+                "shrink-0 px-2.5 py-2 text-[12px] font-medium border-b-2 -mb-px transition-colors whitespace-nowrap",
+                active
+                  ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]",
+              )}
+            >
+              {getLabel ? getLabel(item) : item}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+export function PageHeader({
+  title,
+  breadcrumbs,
+  primaryAction,
+  secondaryActions,
+  meta,
+}: {
+  title: string;
+  breadcrumbs?: React.ReactNode;
+  primaryAction?: React.ReactNode;
+  secondaryActions?: React.ReactNode;
+  meta?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-2 px-4 py-2.5 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+      <div className="min-w-0">
+        {breadcrumbs ? <div className="tb-meta mb-0.5">{breadcrumbs}</div> : null}
+        <h1 className="tb-page-title truncate">{title}</h1>
+        {meta ? <div className="mt-0.5 text-[12px] text-[var(--color-text-muted)]">{meta}</div> : null}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {secondaryActions}
+        {primaryAction}
+      </div>
+    </div>
+  );
+}
+
+export function DataTable({
+  columns,
+  children,
+  className,
+}: {
+  columns: { key: string; label: string; className?: string }[];
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("overflow-auto border border-[var(--color-border)] rounded-[var(--radius-md)] bg-[var(--color-surface)]", className)}>
+      <table className="min-w-full text-left text-[13px]">
+        <thead className="sticky top-0 z-10 bg-[var(--color-surface-muted)] border-b border-[var(--color-border)]">
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                scope="col"
+                className={cn("px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]", col.className)}
+              >
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--color-border)]">{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+export function Drawer({
+  open,
+  title,
+  onClose,
+  children,
+  footer,
+  widthClass = "w-full max-w-md",
+}: {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  widthClass?: string;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end">
+      <button type="button" aria-label="Close drawer" className="absolute inset-0 bg-slate-900/30 cursor-default" onClick={onClose} />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={cn("relative z-10 h-full bg-[var(--color-surface)] shadow-[var(--shadow-md)] border-l border-[var(--color-border)] flex flex-col", widthClass)}
+      >
+        <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--color-border)]">
+          <h2 className="tb-section-title">{title}</h2>
+          <IconButton icon={X} label="Close" onClick={onClose} />
+        </div>
+        <div className="flex-1 overflow-auto p-4">{children}</div>
+        {footer ? <div className="border-t border-[var(--color-border)] px-4 py-3 flex justify-end gap-2">{footer}</div> : null}
+      </aside>
     </div>
   );
 }
@@ -287,9 +619,9 @@ export function ActionBtn({
       title={title || label}
       disabled={disabled}
       onClick={onClick}
-      className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 h-8 text-[12px] font-medium text-slate-700 cursor-pointer hover:bg-slate-50 hover:border-blue-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
+      className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 h-8 text-[12px] font-medium text-[var(--color-text-secondary)] cursor-pointer hover:bg-[var(--color-surface-muted)] hover:border-[var(--color-border-strong)] disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
     >
-      <Icon className="h-3.5 w-3.5 text-slate-500" />
+      <Icon className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
       {label}
     </button>
   );
@@ -393,7 +725,7 @@ export function IconChip({
     green: "text-emerald-700 hover:bg-emerald-50",
   };
   const className = cn(
-    "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] cursor-pointer transition-colors",
+    "inline-flex items-center gap-1.5 rounded-[var(--radius-md)] px-2 py-1 text-[12px] cursor-pointer transition-colors",
     tones[tone],
     disabled && "opacity-40 cursor-not-allowed hover:bg-transparent",
   );
@@ -435,21 +767,21 @@ export function IconBtn({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group flex w-full min-h-[58px] flex-col items-center justify-center gap-1 rounded-lg border border-slate-200 bg-slate-50/60 px-1.5 py-2 cursor-pointer transition-all",
-        "hover:border-blue-400 hover:bg-blue-50 hover:shadow-sm active:scale-[0.99]",
-        "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-slate-200 disabled:hover:bg-slate-50/60 disabled:hover:shadow-none disabled:active:scale-100",
+        "group flex w-full min-h-[52px] flex-col items-center justify-center gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1.5 py-1.5 cursor-pointer transition-colors",
+        "hover:border-[var(--color-accent)] hover:bg-blue-50",
+        "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)] disabled:hover:bg-[var(--color-surface-muted)]",
         className,
       )}
     >
       <span
         className={cn(
-          "flex h-7 w-7 items-center justify-center rounded-full text-white shadow-sm",
-          green ? "bg-emerald-500 group-disabled:bg-slate-300" : "bg-blue-600 group-hover:bg-blue-700 group-disabled:bg-slate-300",
+          "flex h-6 w-6 items-center justify-center rounded-full text-white",
+          green ? "bg-emerald-500 group-disabled:bg-slate-300" : "bg-[var(--color-accent)] group-disabled:bg-slate-300",
         )}
       >
         <Icon className="h-3.5 w-3.5" />
       </span>
-      <span className="text-[10px] leading-tight text-center font-medium text-slate-600">{label}</span>
+      <span className="text-[10px] leading-tight text-center font-medium text-[var(--color-text-secondary)]">{label}</span>
     </button>
   );
 }
@@ -473,9 +805,9 @@ export function MenuItem({
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-slate-700 cursor-pointer hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+      className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-[var(--color-text-secondary)] cursor-pointer hover:bg-[var(--color-surface-muted)] disabled:opacity-40 disabled:cursor-not-allowed"
     >
-      {Icon ? <Icon className="h-4 w-4 text-slate-500" /> : null}
+      {Icon ? <Icon className="h-4 w-4 text-[var(--color-text-muted)]" /> : null}
       {children}
     </button>
   );
@@ -496,9 +828,9 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Records",
     items: [
-      { key: "clients", label: "Client Contacts", icon: Building2 },
-      { key: "vendors", label: "Vendor Contacts", icon: ClipboardList },
-      { key: "candidates", label: "Candidate Contacts", icon: UserRound },
+      { key: "clients", label: "Clients", icon: Building2 },
+      { key: "vendors", label: "Vendors", icon: ClipboardList },
+      { key: "candidates", label: "Candidates", icon: UserRound },
     ],
   },
   {
@@ -526,13 +858,13 @@ export const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
 
 export function moduleLabel(moduleKey: string) {
   const map: Record<string, string> = {
-    candidates: "Candidate Contacts",
-    clients: "Client Contacts",
-    vendors: "Vendor Contacts",
+    candidates: "Candidates",
+    clients: "Clients",
+    vendors: "Vendors",
     communications: "Communications",
     tasks: "Tasks",
     calendar: "Calendar",
-    dashboard: "Today’s Risks",
+    dashboard: "Dashboard",
     reports: "Reports",
     "msa-po": "MSA & PO",
     settings: "Settings",
@@ -568,7 +900,7 @@ export function tagTone(tag: string): "slate" | "green" | "blue" | "purple" | "a
   if (t === "primary" || t.includes("decision") || t.includes("strategic")) return "purple";
   if (t.includes("engineering") || t.includes("tech") || t.includes("product")) return "blue";
   if (t.includes("high") || t.includes("talent") || t.includes("finance") || t.includes("pending")) return "amber";
-  if (t.includes("risk") || t.includes("dnc") || t.includes("expired")) return "red";
+  if (t.includes("risk") || t.includes("dnc") || t.includes("reach") || t.includes("expired")) return "red";
   return "slate";
 }
 
@@ -593,7 +925,9 @@ export function humanize(value: string) {
   return value.replaceAll("_", " ");
 }
 
+/** @deprecated Prefer Button variant="primary" */
 export const btnPrimary =
-  "inline-flex items-center justify-center rounded-md bg-blue-600 px-3 h-8 text-[13px] font-medium text-white cursor-pointer hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed";
+  "inline-flex items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-accent)] px-3 h-8 text-[13px] font-medium text-white cursor-pointer hover:bg-[var(--color-accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed";
+/** @deprecated Prefer Button variant="ghost" */
 export const btnGhost =
-  "inline-flex items-center justify-center rounded-md px-3 h-8 text-[13px] text-slate-600 cursor-pointer hover:bg-slate-100";
+  "inline-flex items-center justify-center rounded-[var(--radius-md)] px-3 h-8 text-[13px] text-[var(--color-text-secondary)] cursor-pointer hover:bg-slate-100";

@@ -1,12 +1,13 @@
 import {
-  AccountRoleKind,
-  ContactKind,
+  OrganizationRoleKind,
+  PersonKind,
   ExceptionKind,
   PrismaClient,
   RequirementStatus,
   TbRole,
   WrapUpOutcome,
 } from "@prisma/client";
+import { hashPassword } from "../src/lib/password";
 
 const prisma = new PrismaClient();
 
@@ -14,10 +15,20 @@ async function main() {
   await prisma.$executeRawUnsafe(`CREATE SCHEMA IF NOT EXISTS talentbridge`);
 
   await prisma.tenant.deleteMany();
+  await prisma.platformAdmin.deleteMany();
+
+  await prisma.platformAdmin.create({
+    data: {
+      email: "global.admin@talentbridge.example",
+      name: "Global Admin",
+      passwordHash: await hashPassword("ChangeMe123!"),
+    },
+  });
 
   const northstar = await prisma.tenant.create({
     data: {
       name: "Northstar Staffing",
+      enabled: true,
       settings: { create: {} },
     },
   });
@@ -25,6 +36,7 @@ async function main() {
   const ghost = await prisma.tenant.create({
     data: {
       name: "Ghost Corp",
+      enabled: true,
       settings: { create: {} },
     },
   });
@@ -110,10 +122,10 @@ async function main() {
     },
   });
 
-  await prisma.contact.create({
+  await prisma.person.create({
     data: {
       tenantId: ghost.id,
-      kind: ContactKind.candidate,
+      kind: PersonKind.candidate,
       name: "Secret Other-Tenant Candidate",
       email: "secret@ghost.example",
       ownerId: ghostUser.id,
@@ -121,31 +133,31 @@ async function main() {
     },
   });
 
-  const acme = await prisma.account.create({
+  const acme = await prisma.organization.create({
     data: {
       tenantId: northstar.id,
       name: "Acme Technologies",
       industry: "Software",
       location: "San Francisco, CA",
       ownerId: james.id,
-      lastContactAt: daysAgo(25),
-      roles: { create: { role: AccountRoleKind.client } },
+      lastOutreachAt: daysAgo(25),
+      roles: { create: { role: OrganizationRoleKind.client } },
     },
   });
 
-  const apex = await prisma.account.create({
+  const apex = await prisma.organization.create({
     data: {
       tenantId: northstar.id,
       name: "Apex Supply Partners",
       industry: "Staffing vendor",
       location: "Dallas, TX",
       ownerId: james.id,
-      lastContactAt: daysAgo(4),
-      roles: { create: { role: AccountRoleKind.vendor } },
+      lastOutreachAt: daysAgo(4),
+      roles: { create: { role: OrganizationRoleKind.vendor } },
     },
   });
 
-  const dual = await prisma.account.create({
+  const dual = await prisma.organization.create({
     data: {
       tenantId: northstar.id,
       name: "Harbor Logistics",
@@ -153,15 +165,15 @@ async function main() {
       location: "Chicago, IL",
       ownerId: james.id,
       roles: {
-        create: [{ role: AccountRoleKind.client }, { role: AccountRoleKind.vendor }],
+        create: [{ role: OrganizationRoleKind.client }, { role: OrganizationRoleKind.vendor }],
       },
     },
   });
 
-  const jennifer = await prisma.contact.create({
+  const jennifer = await prisma.person.create({
     data: {
       tenantId: northstar.id,
-      kind: ContactKind.client_person,
+      kind: PersonKind.client_person,
       stage: "Customer",
       name: "Jennifer Lawson",
       title: "Head of Talent Acquisition",
@@ -172,18 +184,18 @@ async function main() {
       linkedIn: "linkedin.com/in/jenniferlawson",
       source: "Referral",
       ownerId: james.id,
-      lastContactAt: daysAgo(2),
+      lastOutreachAt: daysAgo(2),
       nextAction: "Follow up on Q2 hiring plan",
       nextActionDueAt: daysFromNow(1),
       skills: ["Decision Maker", "Tech", "Strategic", "High Value"],
-      accounts: { create: { accountId: acme.id, roleOnAccount: "Primary" } },
+      affiliations: { create: { organizationId: acme.id, roleOnOrganization: "Primary" } },
     },
   });
 
-  const michael = await prisma.contact.create({
+  const michael = await prisma.person.create({
     data: {
       tenantId: northstar.id,
-      kind: ContactKind.client_person,
+      kind: PersonKind.client_person,
       stage: "Customer",
       name: "Michael Grant",
       title: "Engineering Manager",
@@ -191,9 +203,9 @@ async function main() {
       phone: "+1-415-555-0111",
       location: "San Francisco, CA",
       ownerId: james.id,
-      lastContactAt: daysAgo(10),
+      lastOutreachAt: daysAgo(10),
       skills: ["Decision Maker", "Engineering"],
-      accounts: { create: { accountId: acme.id, roleOnAccount: "Hiring Manager" } },
+      affiliations: { create: { organizationId: acme.id, roleOnOrganization: "Hiring Manager" } },
     },
   });
 
@@ -207,27 +219,27 @@ async function main() {
     { name: "James Carter", title: "Engineering Lead", location: "Austin, TX", tag: "Engineering", days: 22 },
   ];
   for (const person of extraClients) {
-    await prisma.contact.create({
+    await prisma.person.create({
       data: {
         tenantId: northstar.id,
-        kind: ContactKind.client_person,
+        kind: PersonKind.client_person,
         stage: "Customer",
         name: person.name,
         title: person.title,
         email: `${person.name.toLowerCase().replace(" ", ".")}@acme.example`,
         location: person.location,
         ownerId: james.id,
-        lastContactAt: daysAgo(person.days),
+        lastOutreachAt: daysAgo(person.days),
         skills: [person.tag],
-        accounts: { create: { accountId: acme.id, roleOnAccount: person.tag } },
+        affiliations: { create: { organizationId: acme.id, roleOnOrganization: person.tag } },
       },
     });
   }
 
-  const anil = await prisma.contact.create({
+  const anil = await prisma.person.create({
     data: {
       tenantId: northstar.id,
-      kind: ContactKind.candidate,
+      kind: PersonKind.candidate,
       stage: "Lead",
       name: "Anil Reddy",
       title: "Senior Java Developer",
@@ -241,7 +253,7 @@ async function main() {
       availability: "2 weeks",
       lastResume: "Anil_Reddy_Java.pdf",
       portalCandidateId: "JNP-104582",
-      lastContactAt: daysAgo(1),
+      lastOutreachAt: daysAgo(1),
       nextAction: "Submit to Acme Java Developer",
       nextActionDueAt: daysFromNow(3),
       linkedIn: "linkedin.com/in/anilreddy",
@@ -268,10 +280,10 @@ async function main() {
     },
   });
 
-  const maya = await prisma.contact.create({
+  const maya = await prisma.person.create({
     data: {
       tenantId: northstar.id,
-      kind: ContactKind.candidate,
+      kind: PersonKind.candidate,
       stage: "Lead",
       name: "Maya Chen",
       title: "DevOps Engineer",
@@ -285,7 +297,7 @@ async function main() {
       availability: "Immediate",
       lastResume: "Maya_Chen_DevOps.pdf",
       portalCandidateId: "JNP-204901",
-      lastContactAt: daysAgo(8),
+      lastOutreachAt: daysAgo(8),
       citizenship: "United States",
       workAuthorization: "US Citizen",
       willingToRelocate: "No",
@@ -307,10 +319,10 @@ async function main() {
     },
   });
 
-  const priyaCandidate = await prisma.contact.create({
+  const priyaCandidate = await prisma.person.create({
     data: {
       tenantId: northstar.id,
-      kind: ContactKind.candidate,
+      kind: PersonKind.candidate,
       name: "Diego Alvarez",
       title: "Java Engineer",
       email: "diego.alvarez@example.com",
@@ -343,25 +355,25 @@ async function main() {
     },
   });
 
-  const vendorContact = await prisma.contact.create({
+  const vendorContact = await prisma.person.create({
     data: {
       tenantId: northstar.id,
-      kind: ContactKind.vendor_person,
+      kind: PersonKind.vendor_person,
       name: "Rita Kapoor",
       title: "Account Manager",
       email: "rita.kapoor@apex.example",
       phone: "+1-214-555-0166",
       location: "Dallas, TX",
       ownerId: james.id,
-      lastContactAt: daysAgo(3),
-      accounts: { create: { accountId: apex.id, roleOnAccount: "Primary" } },
+      lastOutreachAt: daysAgo(3),
+      affiliations: { create: { organizationId: apex.id, roleOnOrganization: "Primary" } },
     },
   });
 
   const javaReq = await prisma.requirement.create({
     data: {
       tenantId: northstar.id,
-      accountId: acme.id,
+      organizationId: acme.id,
       title: "Java Developer",
       skills: ["Java", "Spring Boot", "AWS"],
       location: "San Francisco / Remote",
@@ -377,7 +389,7 @@ async function main() {
   const devopsReq = await prisma.requirement.create({
     data: {
       tenantId: northstar.id,
-      accountId: acme.id,
+      organizationId: acme.id,
       title: "DevOps Engineer",
       skills: ["Kubernetes", "AWS"],
       location: "Seattle",
@@ -395,8 +407,8 @@ async function main() {
       tenantId: northstar.id,
       candidateId: anil.id,
       requirementId: javaReq.id,
-      accountId: acme.id,
-      clientContactId: jennifer.id,
+      organizationId: acme.id,
+      clientPersonId: jennifer.id,
       recruiterId: sarah.id,
       bdmId: james.id,
       stage: "Client Review",
@@ -411,7 +423,7 @@ async function main() {
     data: {
       tenantId: northstar.id,
       candidateId: anil.id,
-      accountId: acme.id,
+      organizationId: acme.id,
       requirementId: javaReq.id,
       submissionId: submission.id,
       scheduledAt: daysAgo(1),
@@ -419,17 +431,17 @@ async function main() {
     },
   });
 
-  const placed = await prisma.contact.create({
+  const placed = await prisma.person.create({
     data: {
       tenantId: northstar.id,
-      kind: ContactKind.candidate,
+      kind: PersonKind.candidate,
       name: "Noah Patel",
       title: "Platform Engineer",
       email: "noah.patel@example.com",
       ownerId: sarah.id,
       skills: ["Go", "Kubernetes"],
       lastResume: "Noah_Patel.pdf",
-      lastContactAt: daysAgo(20),
+      lastOutreachAt: daysAgo(20),
       citizenship: "United States",
       workAuthorization: "US Citizen",
       willingToRelocate: "Yes",
@@ -444,7 +456,7 @@ async function main() {
     data: {
       tenantId: northstar.id,
       candidateId: placed.id,
-      accountId: acme.id,
+      organizationId: acme.id,
       requirementId: javaReq.id,
       ownerId: sarah.id,
       startDate: daysAgo(10),
@@ -461,8 +473,8 @@ async function main() {
         title: "Follow up on Q2 hiring plan",
         dueAt: daysFromNow(1),
         ownerId: james.id,
-        contactId: jennifer.id,
-        accountId: acme.id,
+        personId: jennifer.id,
+        organizationId: acme.id,
         status: "open",
       },
       {
@@ -470,8 +482,8 @@ async function main() {
         title: "Callback promised today — Jennifer Lawson",
         dueAt: new Date(),
         ownerId: james.id,
-        contactId: jennifer.id,
-        accountId: acme.id,
+        personId: jennifer.id,
+        organizationId: acme.id,
         status: "open",
       },
       {
@@ -479,8 +491,8 @@ async function main() {
         title: "7-day candidate check-in — Noah Patel",
         dueAt: daysAgo(3),
         ownerId: sarah.id,
-        contactId: placed.id,
-        accountId: acme.id,
+        personId: placed.id,
+        organizationId: acme.id,
         status: "open",
       },
       {
@@ -488,14 +500,14 @@ async function main() {
         title: "Submit Anil Reddy to Acme Java Developer",
         dueAt: daysFromNow(3),
         ownerId: sarah.id,
-        contactId: anil.id,
-        accountId: acme.id,
+        personId: anil.id,
+        organizationId: acme.id,
         status: "open",
       },
     ],
   });
 
-  await prisma.activity.create({
+  await prisma.activityEvent.create({
     data: {
       tenantId: northstar.id,
       kind: "call",
@@ -504,8 +516,8 @@ async function main() {
       source: "viotalk",
       externalId: "vt-call-seed-1",
       actorId: sarah.id,
-      contactId: anil.id,
-      accountId: acme.id,
+      personId: anil.id,
+      organizationId: acme.id,
       requirementId: javaReq.id,
       wrapUp: WrapUpOutcome.next_action,
       recordingRef: "rec:vt-call-seed-1",
@@ -515,7 +527,7 @@ async function main() {
     },
   });
 
-  await prisma.activity.create({
+  await prisma.activityEvent.create({
     data: {
       tenantId: northstar.id,
       kind: "email",
@@ -524,8 +536,8 @@ async function main() {
       source: "outlook",
       externalId: "outlook-seed-sub-1",
       actorId: sarah.id,
-      contactId: anil.id,
-      accountId: acme.id,
+      personId: anil.id,
+      organizationId: acme.id,
       requirementId: javaReq.id,
       submissionId: submission.id,
       wrapUp: WrapUpOutcome.next_action,
@@ -533,7 +545,7 @@ async function main() {
     },
   });
 
-  await prisma.activity.create({
+  await prisma.activityEvent.create({
     data: {
       tenantId: northstar.id,
       kind: "email",
@@ -541,47 +553,47 @@ async function main() {
       body: "Thread with Jennifer Lawson on Q2 headcount.",
       source: "outlook",
       actorId: james.id,
-      contactId: jennifer.id,
-      accountId: acme.id,
+      personId: jennifer.id,
+      organizationId: acme.id,
       createdAt: daysAgo(2),
     },
   });
 
-  await prisma.activity.create({
+  await prisma.activityEvent.create({
     data: {
       tenantId: northstar.id,
       kind: "call",
       summary: "12-minute call on Q2 hiring plan",
       source: "viotalk",
       actorId: james.id,
-      contactId: jennifer.id,
-      accountId: acme.id,
+      personId: jennifer.id,
+      organizationId: acme.id,
       wrapUp: WrapUpOutcome.next_action,
       createdAt: daysAgo(3),
     },
   });
 
-  await prisma.activity.create({
+  await prisma.activityEvent.create({
     data: {
       tenantId: northstar.id,
       kind: "internal_note",
       summary: "Positive feedback on last three Java profiles",
       body: "Jennifer wants two more seniors next week.",
       actorId: sarah.id,
-      contactId: jennifer.id,
-      accountId: acme.id,
+      personId: jennifer.id,
+      organizationId: acme.id,
       createdAt: daysAgo(4),
     },
   });
 
-  await prisma.activity.create({
+  await prisma.activityEvent.create({
     data: {
       tenantId: northstar.id,
       kind: "internal_note",
       summary: "Keep Jennifer as primary on Acme Q2",
       actorId: james.id,
-      contactId: jennifer.id,
-      accountId: acme.id,
+      personId: jennifer.id,
+      organizationId: acme.id,
       createdAt: daysAgo(5),
     },
   });
@@ -589,7 +601,7 @@ async function main() {
   await prisma.msaDocument.create({
     data: {
       tenantId: northstar.id,
-      accountId: acme.id,
+      organizationId: acme.id,
       number: "MSA-ACME-2025",
       status: "active",
       expiresAt: daysFromNow(20),
@@ -599,7 +611,7 @@ async function main() {
   await prisma.purchaseOrder.create({
     data: {
       tenantId: northstar.id,
-      accountId: acme.id,
+      organizationId: acme.id,
       number: "PO-8891",
       status: "low",
       ceiling: 250000,
@@ -610,33 +622,33 @@ async function main() {
   await prisma.msaDocument.create({
     data: {
       tenantId: northstar.id,
-      accountId: apex.id,
+      organizationId: apex.id,
       number: "MSA-APEX-2026",
       status: "active",
       expiresAt: daysFromNow(120),
     },
   });
 
-  await prisma.document.createMany({
+  await prisma.storedFile.createMany({
     data: [
       {
         tenantId: northstar.id,
         kind: "resume",
         name: "Anil_Reddy_Java.pdf",
-        contactId: anil.id,
+        personId: anil.id,
       },
       {
         tenantId: northstar.id,
         kind: "other",
         name: "Acme_Hiring_Plan_2025.pdf",
-        accountId: acme.id,
-        contactId: jennifer.id,
+        organizationId: acme.id,
+        personId: jennifer.id,
       },
       {
         tenantId: northstar.id,
         kind: "other",
         name: "Job_Requirements.pdf",
-        accountId: acme.id,
+        organizationId: acme.id,
       },
     ],
   });
@@ -662,7 +674,7 @@ async function main() {
   await prisma.provenance.create({
     data: {
       tenantId: northstar.id,
-      entityType: "contact",
+      entityType: "person",
       entityId: anil.id,
       field: "skills",
       sourceSystem: "JobsNProfiles",
@@ -692,6 +704,8 @@ async function main() {
   void elena;
 
   console.log("Seeded Northstar + Ghost tenants");
+  console.log("Platform Global Admin (Admin-Talent-Bridge):");
+  console.log("  global.admin@talentbridge.example / ChangeMe123!");
   console.log("Demo users:");
   console.log("  recruiter   sarah.mitchell@northstar.example");
   console.log("  sales       james.dalton@northstar.example");

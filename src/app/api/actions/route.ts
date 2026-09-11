@@ -12,8 +12,8 @@ import {
   adminUpsertMailboxMap,
   adminUpsertVioTalkMap,
   changeStage,
-  createAccount,
-  createContact,
+  createOrganization,
+  createPerson,
   createRequirement,
   decideOwnership,
   placeCall,
@@ -21,7 +21,7 @@ import {
   submitProfile,
   syncJnp,
   toggleDnc,
-  updateContact,
+  updatePerson,
   wrapUp,
 } from "@/lib/queries";
 
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
         return NextResponse.json(
           await wrapUp(session, {
             activityId: body.activityId as string | undefined,
-            contactId: String(body.contactId),
+            personId: String(body.personId),
             outcome: body.outcome as WrapUpOutcome,
             nextActionTitle: body.nextActionTitle as string | undefined,
             dueAt: body.dueAt as string | undefined,
@@ -44,24 +44,24 @@ export async function POST(req: Request) {
           }),
         );
       case "call":
-        return NextResponse.json(await placeCall(session, String(body.contactId)));
+        return NextResponse.json(await placeCall(session, String(body.personId)));
       case "submit":
         return NextResponse.json(
           await submitProfile(session, {
             candidateId: String(body.candidateId),
             requirementId: String(body.requirementId),
-            clientContactId: String(body.clientContactId),
+            clientPersonId: String(body.clientPersonId),
             message: String(body.message || ""),
             resumeName: String(body.resumeName || ""),
           }),
         );
       case "stage":
-        return NextResponse.json(await changeStage(session, String(body.contactId), String(body.stage)));
+        return NextResponse.json(await changeStage(session, String(body.personId), String(body.stage)));
       case "ownership_request":
         return NextResponse.json(
           await requestOwnership(
             session,
-            String(body.contactId),
+            String(body.personId),
             body.type as OwnershipRequestType,
             String(body.note || ""),
           ),
@@ -70,9 +70,9 @@ export async function POST(req: Request) {
         return NextResponse.json(await decideOwnership(session, String(body.requestId), Boolean(body.accept)));
       case "jnp_sync":
         return NextResponse.json(await syncJnp(session, String(body.portalCandidateId)));
-      case "create_contact":
+      case "create_person":
         return NextResponse.json(
-          await createContact(session, {
+          await createPerson(session, {
             name: String(body.name),
             kind: body.kind as "candidate" | "client_person" | "vendor_person",
             email: body.email as string | undefined,
@@ -80,9 +80,9 @@ export async function POST(req: Request) {
             title: body.title as string | undefined,
           }),
         );
-      case "update_contact":
+      case "update_person":
         return NextResponse.json(
-          await updateContact(session, String(body.contactId), {
+          await updatePerson(session, String(body.personId), {
             name: body.name as string | undefined,
             title: body.title as string | undefined,
             email: body.email as string | undefined,
@@ -90,9 +90,9 @@ export async function POST(req: Request) {
             location: body.location as string | undefined,
           }),
         );
-      case "create_account":
+      case "create_organization":
         return NextResponse.json(
-          await createAccount(session, {
+          await createOrganization(session, {
             name: String(body.name),
             role: body.role as "client" | "vendor",
             industry: body.industry as string | undefined,
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
       case "create_requirement":
         return NextResponse.json(
           await createRequirement(session, {
-            accountId: String(body.accountId),
+            organizationId: String(body.organizationId),
             title: String(body.title),
             skills: String(body.skills || "")
               .split(",")
@@ -119,13 +119,13 @@ export async function POST(req: Request) {
         return NextResponse.json(
           await addNote(
             session,
-            String(body.contactId),
+            String(body.personId),
             String(body.body || ""),
             (body.visibility as "shared" | "internal") || "shared",
           ),
         );
       case "dnc":
-        return NextResponse.json(await toggleDnc(session, String(body.contactId), Boolean(body.on)));
+        return NextResponse.json(await toggleDnc(session, String(body.personId), Boolean(body.on)));
       case "admin_create_user":
         return NextResponse.json(
           await adminCreateUser(session, {

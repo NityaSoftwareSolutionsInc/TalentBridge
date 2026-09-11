@@ -23,13 +23,13 @@ P0 ships in the POC. P1 uses the same objects and SLA engine. P2 is intelligence
 | P0 | Submission as business object | Enables real submission / interview / placement tracking |
 | P0 | Unified communication timeline | Calls + email + WhatsApp + meetings + notes in context |
 | P0 | Mandatory next action | Core “nothing falls through the cracks” capability |
-| P0 | Candidate/contact ownership | Prevents duplicate effort; collaboration/transfer requests |
+| P0 | Candidate/person ownership | Prevents duplicate effort; collaboration/transfer requests |
 | P0 | Client 360 + Candidate 360 | Complete relationship picture for BDM, recruiter, ops, management |
 | P0 | Outlook integration | Hub-first send + outside-mail capture as connected activity |
 | P0 | VioTalk integration | Calls, recordings, transcripts and outcomes become operational data |
 | P0 | JobsNProfiles integration | Candidate/profile data without duplicating JNP |
 | P0 | SLA / aging engine | Neglected requirements, submissions, interviews, follow-ups, MSA |
-| P1 | Relationship intelligence | Last contact, next action, health, response time |
+| P1 | Relationship intelligence | Last outreach, next action, health, response time |
 | P1 | Vendor/supplier intelligence | Quality and performance of third parties |
 | P1 | Placement follow-up | Lightweight check-ins after placement — not VMS |
 | P1 | Source / data provenance | Where each field came from, sync status, manual override |
@@ -39,7 +39,7 @@ P0 ships in the POC. P1 uses the same objects and SLA engine. P2 is intelligence
 | P2 | Natural-language / semantic search | Operational questions and recruiter queries such as “senior Java with Spring Boot, AWS, available, not submitted to this req” |
 | P2 | Advanced relationship scoring | Client / candidate / vendor health scores |
 | P2 | Redeployment intelligence | Re-engage placed candidates before assignments end |
-| P0 | Candidate Search & Discovery (advanced filters) | Recruiter sourcing: title + skills + location + experience + owner + last contact; exclude already submitted; result context |
+| P0 | Candidate Search & Discovery (advanced filters) | Recruiter sourcing: title + skills + location + experience + owner + Last outreach; exclude already submitted; result context |
 | P1 | Related-title search + title taxonomy | Java Developer also finds Java Engineer / Backend Java / Senior Java; DevOps → SRE / Platform / Cloud |
 
 ## A.2 The gap this fills
@@ -59,7 +59,7 @@ Keep the primary recruiting lifecycle simple: Client → Requirement → Candida
 
 | Layer | Objects TalentBridge owns |
 | --- | --- |
-| PEOPLE | Candidates; Client Contacts; Vendor Contacts; Internal Users |
+| PEOPLE | Candidates; Client people; Vendor people; Internal Users |
 | COMPANIES | Clients; Vendors |
 | WORK | Requirements (Jobs); Submissions; Interviews; Placements |
 | COMMUNICATIONS | Calls; Email; WhatsApp; Meetings; Notes; Transcripts |
@@ -71,7 +71,7 @@ Keep the primary recruiting lifecycle simple: Client → Requirement → Candida
 | --- | --- | --- |
 | JobsNProfiles | Portal candidate profiles | One-way identity/skills in; never client submissions |
 | Outlook / Microsoft | Mailbox send and receive | Compose/send from TalentBridge; also capture mail sent outside |
-| VioTalk | Call placement, duration, recording ref, numbers | Click-to-call; one activity per call ID |
+| VioTalk | Call placement, duration, recording ref, numbers | Click-to-call; one activity event per call ID |
 
 ## A.4 POC vs architecture now
 
@@ -84,9 +84,10 @@ Keep the primary recruiting lifecycle simple: Client → Requirement → Candida
 | Rule | Meaning |
 | --- | --- |
 | Tenant scope | Every record, timeline, search hit, file, requirement, submission and audit event belongs to one tenant. |
+| Platform tenancy | Tenants are created by **Global Admin** in the separate **Admin-Talent-Bridge** app (not by tenant Administrator). Global Admin invites the first tenant Admin via SendGrid. A disabled tenant cannot sign in to TalentBridge. |
 | Modules | Core modules do not change: Candidates, Clients, Vendors. Also Dashboard, Calendar, Tasks, Communications, MSA & PO, Reports, Settings. Jobs/Requirements are work objects on the Client, not a core module. Sales flow on Client people: Lead → Suspect → Prospect → Customer (not extra menus). |
 | Candidate profiles | JobsNProfiles is a job portal. TalentBridge stores the CRM candidate plus work and engagement. |
-| Calling | VioTalk. Send contact ID + phone + signed-in user; upsert one activity by call ID. |
+| Calling | VioTalk. Send person ID + phone + signed-in user; upsert one activity event by call ID. |
 | Email | Outlook. Compose/send from TalentBridge; also ingest mail sent outside. No template catalog. |
 | Work master | TalentBridge owns Requirements, Submissions, Interviews, Placements, Tasks, MSA/PO and audit. |
 | Communication | Internal-only unified timeline. Not visible to candidates, clients or vendors. |

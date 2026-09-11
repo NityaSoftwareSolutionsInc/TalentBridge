@@ -5,7 +5,7 @@ Staffing relationship and operational intelligence hub — complete flow for dev
 
 Jobs N Profiles · 8 September 2026 · Single source for the development team
 
-> **How to use this document.** This is the whole development specification in one place: product principle, architecture, complete visual flows, modules, workspace behavior, integrations, privacy, POC scope, demonstration script, then the original developer questions with decisions at the end. TalentBridge in questions is Contact Manager in the product. Do not implement a contact database with integrations.
+> **How to use this document.** This is the whole development specification in one place: product principle, architecture, complete visual flows, modules, workspace behavior, integrations, privacy, POC scope, demonstration script, then the original developer questions with decisions at the end. TalentBridge in questions is Contact Manager in the product. Do not implement a people database with integrations as a separate CRM clone.
 
 Read in this order — the same flow as `Contact_Manager_Development_Specification 1.docx`:
 

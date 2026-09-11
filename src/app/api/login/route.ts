@@ -11,12 +11,15 @@ export async function POST(req: Request) {
   if (email && password) {
     const user = await prisma.user.findFirst({
       where: { email, enabled: true },
-      include: { memberships: true },
+      include: { memberships: true, tenant: true },
     });
     const role = user?.memberships[0]?.role;
     const ok = user && role && (await verifyPassword(password, user.passwordHash));
     if (!ok || !user || !role) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+    }
+    if (!user.tenant.enabled) {
+      return NextResponse.json({ error: "This organization is disabled" }, { status: 403 });
     }
     const token = await signSessionToken({ userId: user.id, tenantId: user.tenantId, role });
     const res = NextResponse.json({ ok: true });
@@ -28,9 +31,12 @@ export async function POST(req: Request) {
   if (!userId) return NextResponse.json({ error: "Email and password, or a demo user, are required" }, { status: 400 });
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { memberships: true },
+    include: { memberships: true, tenant: true },
   });
   if (!user || !user.enabled) return NextResponse.json({ error: "Unknown user" }, { status: 404 });
+  if (!user.tenant.enabled) {
+    return NextResponse.json({ error: "This organization is disabled" }, { status: 403 });
+  }
   const role = user.memberships[0]?.role;
   if (!role) return NextResponse.json({ error: "No role on user" }, { status: 403 });
 

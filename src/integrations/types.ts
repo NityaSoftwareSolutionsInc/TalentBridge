@@ -18,7 +18,7 @@ export interface JobsNProfilesAdapter {
 }
 
 export type VioTalkCallRequest = {
-  contactId: string;
+  personId: string;
   phone: string;
   userId: string;
 };

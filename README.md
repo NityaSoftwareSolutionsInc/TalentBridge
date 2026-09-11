@@ -25,7 +25,7 @@ Integrations (JobsNProfiles, VioTalk, Outlook) are **stub adapters** in `src/int
 1. Sign in as Sarah. Search Candidates (title `Java`, skills `Spring`). Open Anil Reddy — filters stay.
 2. Existing relationship banner appears if you are not the owner. Request Collaboration does not auto-merge.
 3. VioTalk Call → wrap-up **Next Action** creates a Task.
-4. Submit Profile: pick Java Developer requirement + client contact → stub Outlook send → Submission ID on candidate, job, and client.
+4. Submit Profile: pick Java Developer requirement + client person → stub Outlook send → Submission ID on candidate, job, and client.
 5. Sign in as James. Open Acme Technologies — Client 360, Requirements tab, MSA/PO (amounts visible with `po` permission).
 6. Sign in as Elena (leadership). PO amounts hidden; page still opens. Dashboard Today’s Risks click through to live records.
 7. Sign in as Ghost Admin — Northstar candidates do not appear.

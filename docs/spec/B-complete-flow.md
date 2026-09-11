@@ -34,10 +34,10 @@ A submission without a requirement cannot answer “for which job?” Submission
 
 1. Land on the Candidates module.
 2. Find the person; read JobsNProfiles profile context (one-way sync).
-3. If already owned, show the protection banner (owner, last contact, active requirement, recent activity) with Request Collaboration and Request Transfer. Do not auto-merge.
+3. If already owned, show the protection banner (owner, Last outreach, active requirement, recent activity) with Request Collaboration and Request Transfer. Do not auto-merge.
 4. VioTalk Call on the assigned number; profile stays visible; disposition required.
 5. Wrap-up: Next Action, No Action Required, or Closed.
-6. Submit Profile: select Requirement, client contact, attach resume, compose in the hub, send through Outlook.
+6. Submit Profile: select Requirement, client person, attach resume, compose in the hub, send through Outlook.
 7. Submission ID writes to candidate, requirement and client. Client reply can move stage. Continue to the next list card; filters survive.
 
 ![Figure 4. Recruiter / delivery journey including Submit against a Requirement.](figures/figure-05.png)
@@ -73,7 +73,7 @@ Preferred path: compose and send from TalentBridge through the signed-in user’
 
 ## B.9 Unified timeline
 
-Communication is the system of record for authorized internal users. The timeline shows what was said and what it caused, on the person, company, requirement and submission.
+Communication is the system of record for authorized internal users. The timeline shows what was said and what it caused, on the person, organization, requirement and submission.
 
 ![Figure 8. Example unified timeline from call to interview task.](figures/figure-09.png)
 
@@ -81,7 +81,7 @@ Communication is the system of record for authorized internal users. The timelin
 
 ## B.10 VioTalk
 
-TalentBridge sends contact ID + phone + signed-in user. VioTalk places the call on the assigned number. One activity keyed by VioTalk call ID. Recording / transcript / AI summary when permitted. Proposed follow-up becomes a Task after wrap-up. Not every TalentBridge role needs a VioTalk seat.
+TalentBridge sends person ID + phone + signed-in user. VioTalk places the call on the assigned number. One activity event keyed by VioTalk call ID. Recording / transcript / AI summary when permitted. Proposed follow-up becomes a Task after wrap-up. Not every TalentBridge role needs a VioTalk seat.
 
 ![Figure 9. VioTalk swimlane.](figures/figure-10.png)
 
@@ -89,7 +89,7 @@ TalentBridge sends contact ID + phone + signed-in user. VioTalk places the call 
 
 ## B.11 Candidate sync and ownership
 
-One-way: JobsNProfiles portal profile → upsert TalentBridge Candidate by portal candidate ID. Email/phone collisions go to duplicate review with an ownership banner. Never auto-merge. Never push TalentBridge contacts into JobsNProfiles.
+One-way: JobsNProfiles portal profile → upsert TalentBridge Candidate by portal candidate ID. Email/phone collisions go to duplicate review with an ownership banner. Never auto-merge. Never push TalentBridge people into JobsNProfiles.
 
 ![Figure 10. Sync flow and relationship-protection banner.](figures/figure-11.png)
 
@@ -103,7 +103,7 @@ One-way: JobsNProfiles portal profile → upsert TalentBridge Candidate by porta
 
 ## B.13 Client 360 and Vendor
 
-Opening a Client shows the whole relationship. Overview intelligence: Relationship Owner, Last Contact, Next Action, Open Requirements, Submissions, Interviews, Placements, Average Client Response Time, Requirement Aging, Relationship Health, MSA Status, PO Risk, Recent Commitments. Vendor remains a major module (contacts, candidates, submissions, agreements, rates, compliance) with performance metrics later.
+Opening a Client shows the whole relationship. Overview intelligence: Relationship Owner, Last outreach, Next Action, Open Requirements, Submissions, Interviews, Placements, Average Client Response Time, Requirement Aging, Relationship Health, MSA Status, PO Risk, Recent Commitments. Vendor remains a major module (people, candidates, submissions, agreements, rates, compliance) with performance metrics later.
 
 ![Figure 12. Client 360 tabs and Vendor work objects.](figures/figure-13.png)
 
@@ -149,7 +149,7 @@ POC demo must prove the hub in one sitting, not five disconnected integration de
 
 ## B.18 Candidate 360
 
-Give candidates the same operational depth as Client 360. Header: Owner, Last Contact, Next Action, Current Status, Active Requirements, Submissions, Interviews, Source (JobsNProfiles), Last Resume.
+Give candidates the same operational depth as Client 360. Header: Owner, Last outreach, Next Action, Current Status, Active Requirements, Submissions, Interviews, Source (JobsNProfiles), Last Resume.
 
 ![Figure 17. Candidate 360 workspace.](figures/figure-19.png)
 

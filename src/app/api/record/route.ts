@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
-import { getAccountWorkspace, getContactWorkspace } from "@/lib/queries";
+import { getOrganizationWorkspace, getPersonWorkspace } from "@/lib/queries";
 
 export async function GET(req: Request) {
   const session = await getSession();
@@ -9,8 +9,8 @@ export async function GET(req: Request) {
   const type = url.searchParams.get("type");
   const id = url.searchParams.get("id");
   if (!id) return NextResponse.json({ record: null });
-  if (type === "account") {
-    return NextResponse.json({ record: await getAccountWorkspace(session, id) });
+  if (type === "organization") {
+    return NextResponse.json({ record: await getOrganizationWorkspace(session, id) });
   }
-  return NextResponse.json({ record: await getContactWorkspace(session, id) });
+  return NextResponse.json({ record: await getPersonWorkspace(session, id) });
 }

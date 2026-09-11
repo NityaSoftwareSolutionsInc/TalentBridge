@@ -3,58 +3,60 @@
 Source of truth for the physical model: [`prisma/schema.prisma`](../prisma/schema.prisma).  
 PostgreSQL schema name: **`talentbridge`** (created by [`prisma/init.sql`](../prisma/init.sql)).
 
+Vocabulary matches [`talentbridge_contact_management_database_design.md`](talentbridge_contact_management_database_design.md) for people / organizations / activity events / files. Hub-owned work objects (requirements, submissions, interviews, placements) remain in TalentBridge.
+
 This document describes the POC tables, enums, and relationships for the Contact Manager hub (Candidates, Clients, Vendors — with Requirements and Submissions as work objects).
 
 ---
 
 ## 1. Overview ER diagram
 
-Core operational graph: tenant → people/accounts → requirements → submissions → interviews/placements, plus activity/task wrap-up.
+Core operational graph: tenant → people/organizations → requirements → submissions → interviews/placements, plus activity/task wrap-up.
 
 ```mermaid
 erDiagram
   tenants ||--o{ users : has
   tenants ||--o| tenant_settings : has
-  tenants ||--o{ accounts : has
-  tenants ||--o{ contacts : has
+  tenants ||--o{ organizations : has
+  tenants ||--o{ people : has
   tenants ||--o{ requirements : has
   tenants ||--o{ submissions : has
-  tenants ||--o{ activities : has
+  tenants ||--o{ activity_events : has
   tenants ||--o{ tasks : has
 
   users ||--o{ memberships : has
-  users ||--o{ contacts : owns
-  users ||--o{ accounts : owns
+  users ||--o{ people : owns
+  users ||--o{ organizations : owns
   users ||--o{ tasks : owns
   users ||--o{ requirements : "bdm"
 
-  accounts ||--o{ account_roles : has
-  accounts ||--o{ account_people : links
-  contacts ||--o{ account_people : links
-  contacts ||--o{ contact_co_owners : has
-  users ||--o{ contact_co_owners : co_owns
+  organizations ||--o{ organization_roles : has
+  organizations ||--o{ person_organization_affiliations : links
+  people ||--o{ person_organization_affiliations : links
+  people ||--o{ person_co_owners : has
+  users ||--o{ person_co_owners : co_owns
 
-  accounts ||--o{ requirements : has
-  contacts ||--o{ requirements : "hiring_manager"
+  organizations ||--o{ requirements : has
+  people ||--o{ requirements : "hiring_manager"
   requirements ||--o{ requirement_recruiters : has
   users ||--o{ requirement_recruiters : assigned
 
-  contacts ||--o{ submissions : "candidate"
-  contacts ||--o{ submissions : "client_contact"
+  people ||--o{ submissions : "candidate"
+  people ||--o{ submissions : "client_person"
   requirements ||--o{ submissions : has
-  accounts ||--o{ submissions : has
+  organizations ||--o{ submissions : has
 
   submissions ||--o{ interviews : has
   submissions ||--o{ placements : has
   requirements ||--o{ interviews : has
   requirements ||--o{ placements : has
-  contacts ||--o{ interviews : candidate
-  contacts ||--o{ placements : candidate
-  accounts ||--o{ interviews : has
-  accounts ||--o{ placements : has
+  people ||--o{ interviews : candidate
+  people ||--o{ placements : candidate
+  organizations ||--o{ interviews : has
+  organizations ||--o{ placements : has
 
-  activities ||--o{ tasks : "source_event"
-  activities ||--o{ insights : sources
+  activity_events ||--o{ tasks : "source_event"
+  activity_events ||--o{ insights : sources
 ```
 
 ---
@@ -68,6 +70,15 @@ erDiagram
   tenants {
     uuid id PK
     text name
+    boolean enabled
+    timestamptz created_at
+  }
+  platform_admins {
+    uuid id PK
+    text email UK
+    text name
+    text password_hash
+    boolean enabled
     timestamptz created_at
   }
   tenant_settings {
@@ -78,7 +89,7 @@ erDiagram
     int sla_requirement_no_sub_days
     int sla_submission_feedback_days
     int sla_interview_feedback_days
-    int sla_client_last_contact_days
+    int sla_client_last_outreach_days
     int sla_msa_expiry_days
     boolean recording_playback_allowed
   }
@@ -106,11 +117,11 @@ erDiagram
   users ||--o{ memberships : has
 ```
 
-### 2.2 Accounts (clients / vendors) & contacts
+### 2.2 Organizations (clients / vendors) & people
 
 ```mermaid
 erDiagram
-  accounts {
+  organizations {
     uuid id PK
     uuid tenant_id FK
     text name
@@ -118,18 +129,18 @@ erDiagram
     text location
     text status
     uuid owner_id FK
-    timestamptz last_contact_at
+    timestamptz last_outreach_at
     timestamptz created_at
   }
-  account_roles {
+  organization_roles {
     uuid id PK
-    uuid account_id FK
-    AccountRoleKind role
+    uuid organization_id FK
+    OrganizationRoleKind role
   }
-  contacts {
+  people {
     uuid id PK
     uuid tenant_id FK
-    ContactKind kind
+    PersonKind kind
     text stage
     text status
     text name
@@ -141,21 +152,21 @@ erDiagram
     text portal_candidate_id
     timestamptz created_at
   }
-  contact_co_owners {
+  person_co_owners {
     uuid id PK
-    uuid contact_id FK
+    uuid person_id FK
     uuid user_id FK
   }
-  account_people {
+  person_organization_affiliations {
     uuid id PK
-    uuid account_id FK
-    uuid contact_id FK
-    text role_on_account
+    uuid organization_id FK
+    uuid person_id FK
+    text role_on_organization
   }
   ownership_requests {
     uuid id PK
     uuid tenant_id FK
-    uuid contact_id FK
+    uuid person_id FK
     uuid requester_id FK
     uuid target_owner_id FK
     OwnershipRequestType type
@@ -164,22 +175,22 @@ erDiagram
   title_indexes {
     uuid id PK
     uuid tenant_id FK
-    uuid contact_id FK
+    uuid person_id FK
     text current_title
     text[] previous_titles
     text[] skills
   }
 
-  accounts ||--o{ account_roles : "client|vendor"
-  accounts ||--o{ account_people : people
-  contacts ||--o{ account_people : accounts
-  contacts ||--o{ contact_co_owners : co_owners
-  contacts ||--o| title_indexes : indexed
-  contacts ||--o{ ownership_requests : ownership
+  organizations ||--o{ organization_roles : "client|vendor"
+  organizations ||--o{ person_organization_affiliations : people
+  people ||--o{ person_organization_affiliations : organizations
+  people ||--o{ person_co_owners : co_owners
+  people ||--o| title_indexes : indexed
+  people ||--o{ ownership_requests : ownership
 ```
 
-`Contact.kind`: `candidate` | `client_person` | `vendor_person`  
-`AccountRole.role`: `client` | `vendor` (same account can hold both roles)
+`PersonKind`: `candidate` | `client_person` | `vendor_person`  
+`OrganizationRoleKind`: `client` | `vendor` (same organization can hold both roles)
 
 ### 2.3 Requirements, submissions, interviews, placements
 
@@ -188,7 +199,7 @@ erDiagram
   requirements {
     uuid id PK
     uuid tenant_id FK
-    uuid account_id FK
+    uuid organization_id FK
     text title
     text[] skills
     uuid hiring_manager_id FK
@@ -207,8 +218,8 @@ erDiagram
     uuid tenant_id FK
     uuid candidate_id FK
     uuid requirement_id FK
-    uuid account_id FK
-    uuid client_contact_id FK
+    uuid organization_id FK
+    uuid client_person_id FK
     uuid recruiter_id
     uuid bdm_id
     text stage
@@ -220,7 +231,7 @@ erDiagram
     uuid id PK
     uuid tenant_id FK
     uuid candidate_id FK
-    uuid account_id FK
+    uuid organization_id FK
     uuid requirement_id FK
     uuid submission_id FK
     timestamptz scheduled_at
@@ -230,7 +241,7 @@ erDiagram
     uuid id PK
     uuid tenant_id FK
     uuid candidate_id FK
-    uuid account_id FK
+    uuid organization_id FK
     uuid requirement_id FK
     uuid submission_id FK
     uuid owner_id
@@ -238,30 +249,30 @@ erDiagram
     text status
   }
 
-  accounts ||--o{ requirements : owns
+  organizations ||--o{ requirements : owns
   requirements ||--o{ requirement_recruiters : assigned
   requirements ||--o{ submissions : receives
-  contacts ||--o{ submissions : "as candidate"
-  contacts ||--o{ submissions : "as client contact"
+  people ||--o{ submissions : "as candidate"
+  people ||--o{ submissions : "as client person"
   submissions ||--o{ interviews : advances
   submissions ||--o{ placements : results_in
 ```
 
-Product rule: **Submissions are TalentBridge work objects** (not emails, not JobsNProfiles ATS records). Requirements live on the Client account — not a fourth left-nav module in POC.
+Product rule: **Submissions are TalentBridge work objects** (not emails, not JobsNProfiles ATS records). Requirements live on the Client organization — not a fourth left-nav module in POC.
 
-### 2.4 Activity, tasks, insights (next action)
+### 2.4 Activity events, tasks, insights (next action)
 
 ```mermaid
 erDiagram
-  activities {
+  activity_events {
     uuid id PK
     uuid tenant_id FK
     text kind
     text summary
     text source
     uuid actor_id FK
-    uuid contact_id FK
-    uuid account_id FK
+    uuid person_id FK
+    uuid organization_id FK
     uuid requirement_id FK
     uuid submission_id FK
     WrapUpOutcome wrap_up
@@ -278,8 +289,8 @@ erDiagram
     text priority
     timestamptz due_at
     uuid owner_id FK
-    uuid contact_id FK
-    uuid account_id FK
+    uuid person_id FK
+    uuid organization_id FK
     uuid requirement_id FK
     uuid submission_id FK
     uuid source_event_id FK
@@ -295,29 +306,31 @@ erDiagram
     text payload
   }
 
-  activities ||--o{ tasks : causes
-  activities ||--o{ insights : proposes
+  activity_events ||--o{ tasks : causes
+  activity_events ||--o{ insights : proposes
 ```
 
 `WrapUpOutcome`: `next_action` | `no_action_required` | `closed` — every important touch should land in one of these.
 
-### 2.5 Documents, commercial, integrations, audit
+### 2.5 Files, commercial, integrations, audit
+
+Prisma model for files table: `StoredFile` (avoids clash with browser `File`).
 
 ```mermaid
 erDiagram
-  documents {
+  files {
     uuid id PK
     uuid tenant_id FK
     text kind
     text name
     int version
-    uuid account_id FK
-    uuid contact_id FK
+    uuid organization_id FK
+    uuid person_id FK
   }
   msa_documents {
     uuid id PK
     uuid tenant_id FK
-    uuid account_id FK
+    uuid organization_id FK
     text number
     text status
     timestamptz expires_at
@@ -325,7 +338,7 @@ erDiagram
   purchase_orders {
     uuid id PK
     uuid tenant_id FK
-    uuid account_id FK
+    uuid organization_id FK
     text number
     text status
     decimal ceiling
@@ -371,10 +384,10 @@ erDiagram
     text mailbox
   }
 
-  accounts ||--o{ msa_documents : has
-  accounts ||--o{ purchase_orders : has
-  accounts ||--o{ documents : has
-  contacts ||--o{ documents : has
+  organizations ||--o{ msa_documents : has
+  organizations ||--o{ purchase_orders : has
+  organizations ||--o{ files : has
+  people ||--o{ files : has
   users ||--o| viotalk_agent_maps : maps
   users ||--o| mailbox_maps : maps
 ```
@@ -385,36 +398,37 @@ erDiagram
 
 All tables live in schema `talentbridge`. IDs are UUIDs unless noted.
 
-| Table | Purpose |
-|-------|---------|
-| `tenants` | Workspace / org root |
-| `tenant_settings` | Stages + SLA defaults per tenant |
-| `users` | People who log into the hub |
-| `memberships` | Role (`TbRole`) + permissions per user |
-| `accounts` | Client / vendor company records |
-| `account_roles` | `client` and/or `vendor` on an account |
-| `contacts` | Candidates, client people, vendor people |
-| `contact_co_owners` | Collaboration owners on a contact |
-| `account_people` | Contact ↔ account link + role on account |
-| `requirements` | Jobs / reqs on a client account |
-| `requirement_recruiters` | Recruiters assigned to a req |
-| `submissions` | Hub submission work object |
-| `interviews` | Interview events on a submission/req |
-| `placements` | Placement continuity after hire |
-| `activities` | Unified timeline events (mail, call, note, …) |
-| `tasks` | Next actions / follow-ups |
-| `insights` | AI-proposed actions (accept / dismiss) |
-| `documents` | Generic docs on account or contact |
-| `msa_documents` | MSA tracking on account |
-| `purchase_orders` | PO ceiling / utilization |
-| `provenance` | Field-level source system lineage |
-| `audit_events` | Mutable-action audit trail |
-| `title_indexes` | Candidate title / skills search index |
-| `ownership_requests` | Collaboration or transfer requests |
-| `exception_items` | Unmatched mail/call, duplicates, sync failures |
-| `viotalk_agent_maps` | User ↔ VioTalk agent / number |
-| `mailbox_maps` | User ↔ Outlook mailbox |
-| `external_entity_links` | Stable external system ids (e.g. JobsNProfiles candidate) |
+| Table | Prisma model | Purpose |
+|-------|--------------|---------|
+| `tenants` | `Tenant` | Workspace / org root (`enabled` gates TalentBridge login) |
+| `platform_admins` | `PlatformAdmin` | Global Admins for Admin-Talent-Bridge (no tenant_id) |
+| `tenant_settings` | `TenantSettings` | Stages + SLA defaults per tenant |
+| `users` | `User` | People who log into the hub |
+| `memberships` | `Membership` | Role (`TbRole`) + permissions per user |
+| `organizations` | `Organization` | Client / vendor company records |
+| `organization_roles` | `OrganizationRole` | `client` and/or `vendor` on an organization |
+| `people` | `Person` | Candidates, client people, vendor people |
+| `person_co_owners` | `PersonCoOwner` | Collaboration owners on a person |
+| `person_organization_affiliations` | `PersonOrganizationAffiliation` | Person ↔ organization link + role |
+| `requirements` | `Requirement` | Jobs / reqs on a client organization |
+| `requirement_recruiters` | `RequirementRecruiter` | Recruiters assigned to a req |
+| `submissions` | `Submission` | Hub submission work object |
+| `interviews` | `Interview` | Interview events on a submission/req |
+| `placements` | `Placement` | Placement continuity after hire |
+| `activity_events` | `ActivityEvent` | Unified timeline events (mail, call, note, …) |
+| `tasks` | `Task` | Next actions / follow-ups |
+| `insights` | `Insight` | AI-proposed actions (accept / dismiss) |
+| `files` | `StoredFile` | Generic docs on organization or person |
+| `msa_documents` | `MsaDocument` | MSA tracking on organization |
+| `purchase_orders` | `PurchaseOrder` | PO ceiling / utilization |
+| `provenance` | `Provenance` | Field-level source system lineage |
+| `audit_events` | `AuditEvent` | Mutable-action audit trail |
+| `title_indexes` | `TitleIndex` | Candidate title / skills search index |
+| `ownership_requests` | `OwnershipRequest` | Collaboration or transfer requests |
+| `exception_items` | `ExceptionItem` | Unmatched mail/call, duplicates, sync failures |
+| `viotalk_agent_maps` | `VioTalkAgentMap` | User ↔ VioTalk agent / number |
+| `mailbox_maps` | `MailboxMap` | User ↔ Outlook mailbox |
+| `external_entity_links` | `ExternalEntityLink` | Stable external system ids (e.g. JobsNProfiles candidate) |
 
 ---
 
@@ -423,8 +437,8 @@ All tables live in schema `talentbridge`. IDs are UUIDs unless noted.
 | Enum | Values |
 |------|--------|
 | `TbRole` | `recruiter`, `sales`, `operations`, `leadership`, `admin` |
-| `ContactKind` | `candidate`, `client_person`, `vendor_person` |
-| `AccountRoleKind` | `client`, `vendor` |
+| `PersonKind` | `candidate`, `client_person`, `vendor_person` |
+| `OrganizationRoleKind` | `client`, `vendor` |
 | `RequirementStatus` | `open`, `on_hold`, `filled`, `cancelled` |
 | `WrapUpOutcome` | `next_action`, `no_action_required`, `closed` |
 | `OwnershipRequestType` | `collaboration`, `transfer` |
@@ -441,51 +455,80 @@ Configurable stage lists (relationship / submission) live as string arrays on `t
 | From | To | Cardinality | Notes |
 |------|----|-------------|-------|
 | `Tenant` | almost everything | 1 → N | Soft multi-tenant root |
-| `User` | `Contact` / `Account` | 1 → N | Ownership |
-| `Account` | `Requirement` | 1 → N | Jobs on the client |
+| `User` | `Person` / `Organization` | 1 → N | Ownership |
+| `Organization` | `Requirement` | 1 → N | Jobs on the client |
 | `Requirement` | `Submission` | 1 → N | Hub work objects |
-| `Contact` (candidate) | `Submission` | 1 → N | Who was submitted |
-| `Contact` (client person) | `Submission` | 1 → N | Who received it |
+| `Person` (candidate) | `Submission` | 1 → N | Who was submitted |
+| `Person` (client person) | `Submission` | 1 → N | Who received it |
 | `Submission` | `Interview` / `Placement` | 1 → N | Optional FK |
-| `Activity` | `Task` / `Insight` | 1 → N | Wrap-up → next action |
+| `ActivityEvent` | `Task` / `Insight` | 1 → N | Wrap-up → next action |
 | `User` | `VioTalkAgentMap` / `MailboxMap` | 1 → 0..1 | Channel identity maps |
 
 External systems are **not** cloned into this schema:
 
 - **JobsNProfiles** → inbound candidate/job ids (`portal_candidate_id`, `portal_job_id`); never write client submissions back
 - **Outlook** → `mailbox_maps` + activity/email refs
-- **VioTalk** → `viotalk_agent_maps` + recording/transcript refs on `activities`
+- **VioTalk** → `viotalk_agent_maps` + recording/transcript refs on `activity_events`
 
 ---
 
-## 6. Indexes & uniqueness (from Prisma)
+## 6. Indexes & uniqueness (from Prisma + search SQL)
+
+### Uniqueness
 
 | Constraint | Columns |
 |------------|---------|
 | Unique | `users (tenant_id, email)` |
 | Unique | `memberships (tenant_id, user_id)` |
-| Unique | `account_roles (account_id, role)` |
-| Unique | `contact_co_owners (contact_id, user_id)` |
-| Unique | `account_people (account_id, contact_id)` |
+| Unique | `organization_roles (organization_id, role)` |
+| Unique | `person_co_owners (person_id, user_id)` |
+| Unique | `person_organization_affiliations (organization_id, person_id)` |
 | Unique | `requirement_recruiters (requirement_id, user_id)` |
-| Unique | `contacts.portal_candidate_id` |
-| Unique | `title_indexes.contact_id` |
+| Unique | `people.portal_candidate_id` |
+| Unique | `title_indexes.person_id` |
 | Unique | `viotalk_agent_maps.user_id`, `mailbox_maps.user_id` |
 | Unique | `tenant_settings.tenant_id` |
-| Index | `contacts (tenant_id, kind)` |
-| Index | `requirements (tenant_id, status)` |
-| Index | `submissions (tenant_id, stage)` |
-| Index | `activities (tenant_id, created_at)` |
-| Index | `tasks (tenant_id, status, due_at)` |
-| Index | `provenance (tenant_id, entity_type, entity_id)` |
-| Index | `audit_events (tenant_id, created_at)` |
+
+### Hot-path B-tree / GIN (Prisma)
+
+| Index | Why |
+|-------|-----|
+| `people (tenant_id, kind)` | Module lists |
+| `people (tenant_id, email_normalized)` / `(tenant_id, phone_normalized)` | JNP match |
+| `people (tenant_id, last_outreach_at)` | Sort + SLA |
+| `people (tenant_id, owner_id)` / `(tenant_id, source)` / `(tenant_id, stage)` / `(tenant_id, experience_years)` | Candidate Search filters |
+| `people.skills` GIN | Skills containment |
+| `organizations (tenant_id, last_outreach_at)` / `(tenant_id, owner_id)` / `(tenant_id, status)` | Client 360 / stale clients |
+| `requirements (tenant_id, status)` / `(tenant_id, organization_id, status)` / `(tenant_id, opened_at)` | Open jobs + aging |
+| `requirements.skills` GIN | Skill overlap |
+| `submissions (tenant_id, stage)` / `(tenant_id, requirement_id)` / `(tenant_id, candidate_id)` / `(tenant_id, organization_id, stage)` / `(tenant_id, sent_at)` | Pipeline + exclude-submitted |
+| `interviews (tenant_id, outcome, scheduled_at)` | Feedback SLA |
+| `activity_events (tenant_id, created_at)` / `(tenant_id, wrap_up, created_at)` / person+org timelines | Timeline + inbox |
+| `tasks (tenant_id, status, due_at)` / owner+person variants | Task inbox |
+| `title_indexes` GIN on `skills`, `previous_titles`, `resume_titles` | Title/skills discovery |
+| `files (tenant_id, person_id)` / `(tenant_id, organization_id)` | Record files |
+| `msa_documents (tenant_id, expires_at)` | MSA risk |
+| `purchase_orders (tenant_id, status)` | PO risk |
+| `exception_items (tenant_id, status, created_at)` | Exception queue |
+| `provenance` / `audit_events` | Lineage + audit |
+
+### Text trigram + partial (apply [`prisma/sql/search_indexes.sql`](../prisma/sql/search_indexes.sql))
+
+Requires `CREATE EXTENSION pg_trgm` (also in [`prisma/init.sql`](../prisma/init.sql)).
+
+| Index | Why |
+|-------|-----|
+| GIN trgm on `people.name` / `title` / `email` / `location` | `ILIKE '%…%'` Candidate + global search |
+| GIN trgm on `organizations.name`, `files.name`, `activity_events.summary`, `title_indexes.current_title` | Global / title search |
+| Partial `activity_events (tenant_id, created_at) WHERE wrap_up IS NULL` | Communications inbox |
+| Partial `requirements (tenant_id, opened_at) WHERE status = 'open'` | Aging open reqs |
 
 ---
 
 ## 7. How to keep this doc in sync
 
 1. Change models in `prisma/schema.prisma`
-2. Run migrations as usual
+2. Run migrations / `db push` as usual
 3. Update this file’s diagrams / catalog when tables, enums, or FKs change
 
 Render Mermaid in GitHub, VS Code Markdown preview, or [mermaid.live](https://mermaid.live).
@@ -501,27 +544,27 @@ Selective ideas from [`talentbridge_contact_management_database_design.md`](tale
 
 | Item | Status |
 |------|--------|
-| Channel DNC (`do_not_email`, `do_not_sms` + master `do_not_contact`) | Done on `contacts` |
-| Normalized match fields (`email_normalized`, `phone_normalized`) | Done on `contacts` |
+| Channel DNC (`do_not_email`, `do_not_sms` + master `do_not_reach`) | Done on `people` |
+| Normalized match fields (`email_normalized`, `phone_normalized`) | Done on `people` |
 | JNP match cascade: portal ID → normalized email → normalized phone → human confirm; never auto-merge | Done in `syncJnp` |
 | `external_entity_links` for stable cross-system IDs | Done (`ExternalEntityLink`) |
 | Resume as resource/label only — not file content or public URL | Product rule (`last_resume` comment) |
 | Hub stays up when JNP is down; collisions → `exception_items` | Existing product rule |
-| Internal `users` are not CRM `contacts` | Keep |
+| Internal `users` are not CRM `people` | Keep |
 
 ### Later (P1+)
 
 | Item | Notes |
 |------|--------|
 | Multiple `contact_methods` | When one email/phone is not enough |
-| Time-bound affiliations (employment / vendor / C2C) | Enrich `account_people`; never use client affiliation as submission |
-| Client tier / health / strategic flags | On `accounts` for relationship intelligence |
+| Time-bound affiliations (employment / vendor / C2C) | Enrich `person_organization_affiliations`; never use client affiliation as submission |
+| Client tier / health / strategic flags | On `organizations` for relationship intelligence |
 | Preferred contact method/time, influence level | Client-person relationship fields |
-| Typed call detail extension | Keep `activities` as timeline; optional detail when VioTalk needs more |
+| Typed call detail extension | Keep `activity_events` as timeline; optional detail when VioTalk needs more |
 | Tags | Discovery aid, not P0 |
 
 ### Never (for this product)
 
 - Moving Requirements / Submissions / Interviews / Placements out of TalentBridge
-- Replacing wrap-up `activities` + `tasks` with a CRM-only communications stack
-- Rewriting to `people` + many profile tables for POC
+- Replacing wrap-up `activity_events` + `tasks` with a CRM-only communications stack
+- Splitting POC into many profile tables (`candidate_profiles`, etc.) before product need

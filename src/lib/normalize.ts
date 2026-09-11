@@ -1,4 +1,4 @@
-/** Match helpers — display values stay on Contact.email / Contact.phone. */
+/** Match helpers — display values stay on Person.email / Person.phone. */
 
 export function normalizeEmail(value: string | null | undefined): string {
   return String(value || "")
@@ -11,15 +11,15 @@ export function normalizePhone(value: string | null | undefined): string {
   return String(value || "").replace(/\D/g, "");
 }
 
-export function contactChannelBlocks(contact: {
-  doNotContact?: boolean;
+export function outreachChannelBlocks(person: {
+  doNotReach?: boolean;
   doNotEmail?: boolean;
   doNotSms?: boolean;
 }) {
-  const master = Boolean(contact.doNotContact);
+  const master = Boolean(person.doNotReach);
   return {
     call: master,
-    email: master || Boolean(contact.doNotEmail),
-    sms: master || Boolean(contact.doNotSms),
+    email: master || Boolean(person.doNotEmail),
+    sms: master || Boolean(person.doNotSms),
   };
 }

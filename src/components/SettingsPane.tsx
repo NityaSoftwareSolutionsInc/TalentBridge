@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Avatar, Button, FieldInput, FieldSelect, Label, Tag, cn } from "./workspace-ui";
+import { Avatar, Button, FieldInput, FieldSelect, Label, Tag, Tabs, cn } from "./workspace-ui";
 
 type AdminUser = {
   id: string;
@@ -305,28 +305,28 @@ export function SettingsPane({
   const openException = filteredQueues.find((e) => e.id === openExceptionId) ?? null;
 
   return (
-    <div className="min-h-full bg-white">
+    <div className="min-h-full bg-[var(--color-surface)]">
       <header className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3">
-        <h1 className="text-xl sm:text-2xl font-semibold text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-600">
+        <h1 className="text-xl font-semibold text-[var(--color-text)]">Settings</h1>
+        <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
           Administrator workspace for this tenant. VioTalk number inventory stays in VioTalk; TalentBridge only maps
           user → agent / mailbox.
         </p>
-        <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 leading-relaxed">
-          <span className="font-medium text-slate-700">Privacy. </span>
+        <div className="mt-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-text-secondary)] leading-relaxed">
+          <span className="font-medium text-[var(--color-text)]">Privacy. </span>
           Candidates, clients and vendors never log in. DNC blocks outbound call, WhatsApp and email. Search snippets
           strip restricted values. Leadership Communication review is in-tenant, not public monitoring. Recordings and
           MSA files store a <span className="font-medium">reference</span>
           {canPlay ? " — playback permission is on for this tenant." : " — do not play in POC unless policy and recording permission are both on."}
           <span className="ml-3 inline-flex items-center gap-2 align-middle">
-            <span className="uppercase tracking-wide text-[10px] text-slate-500">Recording playback</span>
+            <span className="uppercase tracking-wide text-[10px] text-[var(--color-text-muted)]">Recording playback</span>
             <button
               type="button"
               disabled={busy}
               onClick={() => onAction({ action: "admin_set_recording_policy", allowed: !playbackAllowed })}
               className={cn(
                 "relative h-5 w-9 rounded-full transition-colors cursor-pointer disabled:opacity-40",
-                playbackAllowed ? "bg-blue-600" : "bg-slate-300",
+                playbackAllowed ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]",
               )}
               title={playbackAllowed ? "Playback allowed (still no file player in POC)" : "Store reference only"}
             >
@@ -342,29 +342,7 @@ export function SettingsPane({
         </div>
       </header>
 
-      <nav className="border-t border-slate-200" aria-label="Settings sections">
-        <div role="tablist" className="flex overflow-x-auto px-2 sm:px-3">
-          {TABS.map((t) => {
-            const active = tab === t;
-            return (
-              <button
-                key={t}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setTab(t)}
-                className={cn(
-                  "relative shrink-0 h-10 px-3 text-[13px] font-medium whitespace-nowrap cursor-pointer transition-colors",
-                  active ? "text-blue-700" : "text-slate-600 hover:text-slate-900",
-                )}
-              >
-                {t}
-                <span className={cn("absolute left-3 right-3 bottom-0 h-[3px]", active ? "bg-blue-600" : "bg-transparent")} />
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+      <Tabs items={[...TABS]} value={tab} onChange={(t) => setTab(t as (typeof TABS)[number])} />
 
       <div className="p-4 sm:p-5 space-y-5">
         {tab === "User details" ? (

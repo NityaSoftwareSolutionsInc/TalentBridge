@@ -18,11 +18,11 @@ export function ListPager<T>({
   const atStart = slice.page <= 1;
   const atEnd = slice.page >= slice.pages;
   return (
-    <div className="px-2.5 py-2 border-t bg-white text-[12px] text-slate-600 min-w-0">
+    <div className="px-2.5 py-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] text-[12px] text-[var(--color-text-muted)] min-w-0">
       <div className="flex items-center gap-1.5 min-w-0">
         <div className="shrink-0 whitespace-nowrap">
-          <span className="text-slate-500">Total</span>{" "}
-          <span className="font-semibold text-slate-900 tabular-nums">{slice.total}</span>
+          <span className="text-[var(--color-text-muted)]">Total</span>{" "}
+          <span className="font-semibold text-[var(--color-text)] tabular-nums">{slice.total}</span>
         </div>
         <div className="flex-1 flex items-center justify-center gap-0.5 min-w-0">
           <PagerIconButton

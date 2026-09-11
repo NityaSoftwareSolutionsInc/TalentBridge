@@ -18,7 +18,7 @@ enum TbRole {
   @@schema("talentbridge")
 }
 
-enum ContactKind {
+enum PersonKind {
   candidate
   client_person
   vendor_person
@@ -26,7 +26,7 @@ enum ContactKind {
   @@schema("talentbridge")
 }
 
-enum AccountRoleKind {
+enum OrganizationRoleKind {
   client
   vendor
 
@@ -82,22 +82,35 @@ enum InsightStatus {
   @@schema("talentbridge")
 }
 
+model PlatformAdmin {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("platform_admins")
+  @@schema("talentbridge")
+}
+
 model Tenant {
   id        String   @id @default(uuid())
   name      String
+  enabled   Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
 
   users            User[]
   memberships      Membership[]
   settings         TenantSettings?
-  accounts         Account[]
-  contacts         Contact[]
+  organizations    Organization[]
+  people           Person[]
   requirements     Requirement[]
   submissions      Submission[]
-  activities       Activity[]
+  activityEvents   ActivityEvent[]
   tasks            Task[]
   insights         Insight[]
-  documents        Document[]
+  files            StoredFile[]
   msaDocuments     MsaDocument[]
   purchaseOrders   PurchaseOrder[]
   provenance       Provenance[]
@@ -124,7 +137,7 @@ model TenantSettings {
   slaRequirementNoSubDays  Int      @default(3) @map("sla_requirement_no_sub_days")
   slaSubmissionFeedbackDays Int     @default(5) @map("sla_submission_feedback_days")
   slaInterviewFeedbackDays Int      @default(1) @map("sla_interview_feedback_days")
-  slaClientLastContactDays Int      @default(21) @map("sla_client_last_contact_days")
+  slaClientLastOutreachDays Int      @default(21) @map("sla_client_last_outreach_days")
   slaMsaExpiryDays         Int      @default(30) @map("sla_msa_expiry_days")
   recordingPlaybackAllowed Boolean  @default(false) @map("recording_playback_allowed")
 
@@ -149,17 +162,17 @@ model User {
   passwordResetKind       String?   @map("password_reset_kind")
 
   memberships         Membership[]
-  ownedContacts       Contact[]           @relation("ContactOwner")
-  coOwnedContacts     ContactCoOwner[]
-  ownedAccounts       Account[]           @relation("AccountOwner")
+  ownedPeople         Person[]              @relation("PersonOwner")
+  coOwnedPeople       PersonCoOwner[]
+  ownedOrganizations  Organization[]        @relation("OrganizationOwner")
   tasks               Task[]
-  activities          Activity[]          @relation("ActivityActor")
+  activityEvents      ActivityEvent[]       @relation("ActivityEventActor")
   agentMap            VioTalkAgentMap?
   mailboxMap          MailboxMap?
-  ownershipRequested  OwnershipRequest[]  @relation("OwnershipRequester")
-  ownershipTarget     OwnershipRequest[]  @relation("OwnershipTarget")
+  ownershipRequested  OwnershipRequest[]    @relation("OwnershipRequester")
+  ownershipTarget     OwnershipRequest[]    @relation("OwnershipTarget")
   assignedReqs        RequirementRecruiter[]
-  bdms                Requirement[]       @relation("RequirementBdm")
+  bdms                Requirement[]         @relation("RequirementBdm")
 
   @@unique([tenantId, email])
   @@map("users")
@@ -180,7 +193,7 @@ model Membership {
   @@schema("talentbridge")
 }
 
-model Account {
+model Organization {
   id         String   @id @default(uuid())
   tenantId   String   @map("tenant_id")
   tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -189,42 +202,45 @@ model Account {
   location   String   @default("")
   status     String   @default("active")
   ownerId    String   @map("owner_id")
-  owner      User     @relation("AccountOwner", fields: [ownerId], references: [id])
-  lastContactAt DateTime? @map("last_contact_at")
+  owner      User     @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  lastOutreachAt DateTime? @map("last_outreach_at")
   createdAt  DateTime @default(now()) @map("created_at")
 
-  roles          AccountRole[]
-  people         AccountPerson[]
+  roles          OrganizationRole[]
+  affiliations   PersonOrganizationAffiliation[]
   requirements   Requirement[]
   submissions    Submission[]
   msaDocuments   MsaDocument[]
   purchaseOrders PurchaseOrder[]
-  documents      Document[]
-  activities     Activity[]
+  files          StoredFile[]
+  activityEvents ActivityEvent[]
   tasks          Task[]
   interviews     Interview[]
   placements     Placement[]
 
-  @@map("accounts")
+  @@index([tenantId, lastOutreachAt])
+  @@index([tenantId, ownerId])
+  @@index([tenantId, status])
+  @@map("organizations")
   @@schema("talentbridge")
 }
 
-model AccountRole {
-  id        String          @id @default(uuid())
-  accountId String          @map("account_id")
-  account   Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  role      AccountRoleKind
+model OrganizationRole {
+  id             String                @id @default(uuid())
+  organizationId String                @map("organization_id")
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           OrganizationRoleKind
 
-  @@unique([accountId, role])
-  @@map("account_roles")
+  @@unique([organizationId, role])
+  @@map("organization_roles")
   @@schema("talentbridge")
 }
 
-model Contact {
+model Person {
   id              String      @id @default(uuid())
   tenantId        String      @map("tenant_id")
   tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  kind            ContactKind
+  kind            PersonKind
   stage           String      @default("Lead")
   status          String      @default("Active")
   name            String
@@ -240,8 +256,8 @@ model Contact {
   linkedIn        String      @default("") @map("linkedin")
   source          String      @default("manual")
   ownerId         String      @map("owner_id")
-  owner           User        @relation("ContactOwner", fields: [ownerId], references: [id])
-  doNotContact    Boolean     @default(false) @map("do_not_contact")
+  owner           User        @relation("PersonOwner", fields: [ownerId], references: [id])
+  doNotReach    Boolean     @default(false) @map("do_not_reach")
   doNotEmail      Boolean     @default(false) @map("do_not_email")
   doNotSms        Boolean     @default(false) @map("do_not_sms")
   availability    String      @default("")
@@ -260,29 +276,38 @@ model Contact {
   currentRate     String      @default("") @map("current_rate")
   expectedRate    String      @default("") @map("expected_rate")
   timezone        String      @default("")
-  lastContactAt   DateTime?   @map("last_contact_at")
+  lastOutreachAt   DateTime?   @map("last_outreach_at")
   nextAction      String      @default("")
   nextActionDueAt DateTime?   @map("next_action_due_at")
   portalCandidateId String?   @unique @map("portal_candidate_id")
   createdAt       DateTime    @default(now()) @map("created_at")
 
-  coOwners         ContactCoOwner[]
-  accounts         AccountPerson[]
+  coOwners         PersonCoOwner[]
+  affiliations     PersonOrganizationAffiliation[]
   titleIndex       TitleIndex?
   candidateSubs    Submission[]     @relation("SubmissionCandidate")
-  clientContactSubs Submission[]    @relation("SubmissionClientContact")
+  clientPersonSubs Submission[]    @relation("SubmissionClientPerson")
   hiringManagerReqs Requirement[]   @relation("RequirementHiringManager")
-  activities       Activity[]
+  activityEvents   ActivityEvent[]
   tasks            Task[]
-  documents        Document[]
+  files            StoredFile[]
   interviews       Interview[]
   placements       Placement[]
-  ownershipReqs    OwnershipRequest[] @relation("OwnershipContact")
+  ownershipReqs    OwnershipRequest[] @relation("OwnershipPerson")
 
   @@index([tenantId, kind])
   @@index([tenantId, emailNormalized])
   @@index([tenantId, phoneNormalized])
-  @@map("contacts")
+  /// List/sort + SLA stale-person paths
+  @@index([tenantId, lastOutreachAt])
+  /// Candidate Search filters (owner / source / stage / experience)
+  @@index([tenantId, ownerId])
+  @@index([tenantId, source])
+  @@index([tenantId, stage])
+  @@index([tenantId, experienceYears])
+  /// Array containment (`skills has …`)
+  @@index([skills], type: Gin, map: "people_skills_gin_idx")
+  @@map("people")
   @@schema("talentbridge")
 }
 
@@ -306,28 +331,28 @@ model ExternalEntityLink {
   @@schema("talentbridge")
 }
 
-model ContactCoOwner {
-  id        String  @id @default(uuid())
-  contactId String  @map("contact_id")
-  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  userId    String  @map("user_id")
-  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+model PersonCoOwner {
+  id       String @id @default(uuid())
+  personId String @map("person_id")
+  person   Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+  userId   String @map("user_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([contactId, userId])
-  @@map("contact_co_owners")
+  @@unique([personId, userId])
+  @@map("person_co_owners")
   @@schema("talentbridge")
 }
 
-model AccountPerson {
-  id          String  @id @default(uuid())
-  accountId   String  @map("account_id")
-  account     Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  contactId   String  @map("contact_id")
-  contact     Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
-  roleOnAccount String @default("") @map("role_on_account")
+model PersonOrganizationAffiliation {
+  id                   String       @id @default(uuid())
+  organizationId       String       @map("organization_id")
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  personId             String       @map("person_id")
+  person               Person       @relation(fields: [personId], references: [id], onDelete: Cascade)
+  roleOnOrganization   String       @default("") @map("role_on_organization")
 
-  @@unique([accountId, contactId])
-  @@map("account_people")
+  @@unique([organizationId, personId])
+  @@map("person_organization_affiliations")
   @@schema("talentbridge")
 }
 
@@ -335,13 +360,13 @@ model Requirement {
   id              String             @id @default(uuid())
   tenantId        String             @map("tenant_id")
   tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId       String             @map("account_id")
-  account         Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  organizationId  String             @map("organization_id")
+  organization    Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   title           String
   skills          String[]           @default([])
   location        String             @default("")
   hiringManagerId String?            @map("hiring_manager_id")
-  hiringManager   Contact?           @relation("RequirementHiringManager", fields: [hiringManagerId], references: [id])
+  hiringManager   Person?            @relation("RequirementHiringManager", fields: [hiringManagerId], references: [id])
   bdmId           String             @map("bdm_id")
   bdm             User               @relation("RequirementBdm", fields: [bdmId], references: [id])
   status          RequirementStatus  @default(open)
@@ -350,14 +375,17 @@ model Requirement {
   portalJobId     String?            @map("portal_job_id")
   createdAt       DateTime           @default(now()) @map("created_at")
 
-  recruiters   RequirementRecruiter[]
-  submissions  Submission[]
-  activities   Activity[]
-  tasks        Task[]
-  interviews   Interview[]
-  placements   Placement[]
+  recruiters     RequirementRecruiter[]
+  submissions    Submission[]
+  activityEvents ActivityEvent[]
+  tasks          Task[]
+  interviews     Interview[]
+  placements     Placement[]
 
   @@index([tenantId, status])
+  @@index([tenantId, organizationId, status])
+  @@index([tenantId, openedAt])
+  @@index([skills], type: Gin, map: "requirements_skills_gin_idx")
   @@map("requirements")
   @@schema("talentbridge")
 }
@@ -375,138 +403,154 @@ model RequirementRecruiter {
 }
 
 model Submission {
-  id              String      @id @default(uuid())
-  tenantId        String      @map("tenant_id")
-  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  candidateId     String      @map("candidate_id")
-  candidate       Contact     @relation("SubmissionCandidate", fields: [candidateId], references: [id])
-  requirementId   String      @map("requirement_id")
-  requirement     Requirement @relation(fields: [requirementId], references: [id])
-  accountId       String      @map("account_id")
-  account         Account     @relation(fields: [accountId], references: [id])
-  clientContactId String      @map("client_contact_id")
-  clientContact   Contact     @relation("SubmissionClientContact", fields: [clientContactId], references: [id])
-  recruiterId     String      @map("recruiter_id")
-  bdmId           String      @map("bdm_id")
-  stage           String      @default("Submitted")
-  emailMessageId  String?     @map("email_message_id")
-  resumeVersion   String      @default("") @map("resume_version")
-  sentAt          DateTime    @default(now()) @map("sent_at")
-  source          String      @default("hub")
-  vendorSourced   Boolean     @default(false) @map("vendor_sourced")
-  createdAt       DateTime    @default(now()) @map("created_at")
+  id              String       @id @default(uuid())
+  tenantId        String       @map("tenant_id")
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId     String       @map("candidate_id")
+  candidate       Person       @relation("SubmissionCandidate", fields: [candidateId], references: [id])
+  requirementId   String       @map("requirement_id")
+  requirement     Requirement  @relation(fields: [requirementId], references: [id])
+  organizationId  String       @map("organization_id")
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  clientPersonId String       @map("client_person_id")
+  clientPerson   Person       @relation("SubmissionClientPerson", fields: [clientPersonId], references: [id])
+  recruiterId     String       @map("recruiter_id")
+  bdmId           String       @map("bdm_id")
+  stage           String       @default("Submitted")
+  emailMessageId  String?      @map("email_message_id")
+  resumeVersion   String       @default("") @map("resume_version")
+  sentAt          DateTime     @default(now()) @map("sent_at")
+  source          String       @default("hub")
+  vendorSourced   Boolean      @default(false) @map("vendor_sourced")
+  createdAt       DateTime     @default(now()) @map("created_at")
 
-  activities Activity[]
-  interviews Interview[]
-  placements Placement[]
-  tasks      Task[]
+  activityEvents ActivityEvent[]
+  interviews     Interview[]
+  placements     Placement[]
+  tasks          Task[]
 
   @@index([tenantId, stage])
+  /// Exclude-already-submitted + candidate history
+  @@index([tenantId, requirementId])
+  @@index([tenantId, candidateId])
+  @@index([tenantId, organizationId, stage])
+  @@index([tenantId, sentAt])
   @@map("submissions")
   @@schema("talentbridge")
 }
 
 model Interview {
-  id            String       @id @default(uuid())
-  tenantId      String       @map("tenant_id")
-  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  candidateId   String       @map("candidate_id")
-  candidate     Contact      @relation(fields: [candidateId], references: [id])
-  accountId     String       @map("account_id")
-  account       Account      @relation(fields: [accountId], references: [id])
-  requirementId String       @map("requirement_id")
-  requirement   Requirement  @relation(fields: [requirementId], references: [id])
-  submissionId  String?      @map("submission_id")
-  submission    Submission?  @relation(fields: [submissionId], references: [id])
-  scheduledAt   DateTime     @map("scheduled_at")
-  feedbackAt    DateTime?    @map("feedback_at")
-  outcome       String       @default("pending")
-  createdAt     DateTime     @default(now()) @map("created_at")
+  id             String       @id @default(uuid())
+  tenantId       String       @map("tenant_id")
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId    String       @map("candidate_id")
+  candidate      Person       @relation(fields: [candidateId], references: [id])
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  requirementId  String       @map("requirement_id")
+  requirement    Requirement  @relation(fields: [requirementId], references: [id])
+  submissionId   String?      @map("submission_id")
+  submission     Submission?  @relation(fields: [submissionId], references: [id])
+  scheduledAt    DateTime     @map("scheduled_at")
+  feedbackAt     DateTime?    @map("feedback_at")
+  outcome        String       @default("pending")
+  createdAt      DateTime     @default(now()) @map("created_at")
 
+  @@index([tenantId, outcome, scheduledAt])
+  @@index([tenantId, candidateId])
   @@map("interviews")
   @@schema("talentbridge")
 }
 
 model Placement {
-  id            String      @id @default(uuid())
-  tenantId      String      @map("tenant_id")
-  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  candidateId   String      @map("candidate_id")
-  candidate     Contact     @relation(fields: [candidateId], references: [id])
-  accountId     String      @map("account_id")
-  account       Account     @relation(fields: [accountId], references: [id])
-  requirementId String      @map("requirement_id")
-  requirement   Requirement @relation(fields: [requirementId], references: [id])
-  submissionId  String?     @map("submission_id")
-  submission    Submission? @relation(fields: [submissionId], references: [id])
-  ownerId       String      @map("owner_id")
-  startDate     DateTime    @map("start_date")
-  endDate       DateTime?   @map("end_date")
-  followUp      String      @default("") @map("follow_up")
-  status        String      @default("active")
-  createdAt     DateTime    @default(now()) @map("created_at")
+  id             String       @id @default(uuid())
+  tenantId       String       @map("tenant_id")
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId    String       @map("candidate_id")
+  candidate      Person       @relation(fields: [candidateId], references: [id])
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  requirementId  String       @map("requirement_id")
+  requirement    Requirement  @relation(fields: [requirementId], references: [id])
+  submissionId   String?      @map("submission_id")
+  submission     Submission?  @relation(fields: [submissionId], references: [id])
+  ownerId        String       @map("owner_id")
+  startDate      DateTime     @map("start_date")
+  endDate        DateTime?    @map("end_date")
+  followUp       String       @default("") @map("follow_up")
+  status         String       @default("active")
+  createdAt      DateTime     @default(now()) @map("created_at")
 
+  @@index([tenantId, status])
+  @@index([tenantId, candidateId])
   @@map("placements")
   @@schema("talentbridge")
 }
 
-model Activity {
-  id            String   @id @default(uuid())
-  tenantId      String   @map("tenant_id")
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  kind          String
-  summary       String
-  body          String   @default("")
-  source        String   @default("talentbridge")
-  externalId    String?  @map("external_id")
-  actorId       String?  @map("actor_id")
-  actor         User?    @relation("ActivityActor", fields: [actorId], references: [id])
-  contactId     String?  @map("contact_id")
-  contact       Contact? @relation(fields: [contactId], references: [id])
-  accountId     String?  @map("account_id")
-  account       Account? @relation(fields: [accountId], references: [id])
-  requirementId String?  @map("requirement_id")
-  requirement   Requirement? @relation(fields: [requirementId], references: [id])
-  submissionId  String?  @map("submission_id")
-  submission    Submission? @relation(fields: [submissionId], references: [id])
-  wrapUp        WrapUpOutcome? @map("wrap_up")
-  recordingRef  String?  @map("recording_ref")
-  transcriptRef String?  @map("transcript_ref")
-  aiSummary     String?  @map("ai_summary")
-  causedTaskId  String?  @map("caused_task_id")
-  createdAt     DateTime @default(now()) @map("created_at")
+model ActivityEvent {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind           String
+  summary        String
+  body           String   @default("")
+  source         String   @default("talentbridge")
+  externalId     String?  @map("external_id")
+  actorId        String?  @map("actor_id")
+  actor          User?    @relation("ActivityEventActor", fields: [actorId], references: [id])
+  personId       String?  @map("person_id")
+  person         Person?  @relation(fields: [personId], references: [id])
+  organizationId String?  @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  requirementId  String?  @map("requirement_id")
+  requirement    Requirement? @relation(fields: [requirementId], references: [id])
+  submissionId   String?  @map("submission_id")
+  submission     Submission? @relation(fields: [submissionId], references: [id])
+  wrapUp         WrapUpOutcome? @map("wrap_up")
+  recordingRef   String?  @map("recording_ref")
+  transcriptRef  String?  @map("transcript_ref")
+  aiSummary      String?  @map("ai_summary")
+  causedTaskId   String?  @map("caused_task_id")
+  createdAt      DateTime @default(now()) @map("created_at")
 
   insights Insight[]
   tasks    Task[]
 
   @@index([tenantId, createdAt])
-  @@map("activities")
+  /// Communications inbox (open wrap-ups) + person/org timelines
+  @@index([tenantId, wrapUp, createdAt])
+  @@index([tenantId, personId, createdAt])
+  @@index([tenantId, organizationId, createdAt])
+  @@index([tenantId, externalId])
+  @@map("activity_events")
   @@schema("talentbridge")
 }
 
 model Task {
-  id            String    @id @default(uuid())
-  tenantId      String    @map("tenant_id")
-  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  title         String
-  status        String    @default("open")
-  priority      String    @default("normal")
-  dueAt         DateTime? @map("due_at")
-  ownerId       String    @map("owner_id")
-  owner         User      @relation(fields: [ownerId], references: [id])
-  contactId     String?   @map("contact_id")
-  contact       Contact?  @relation(fields: [contactId], references: [id])
-  accountId     String?   @map("account_id")
-  account       Account?  @relation(fields: [accountId], references: [id])
-  requirementId String?   @map("requirement_id")
-  requirement   Requirement? @relation(fields: [requirementId], references: [id])
-  submissionId  String?   @map("submission_id")
-  submission    Submission? @relation(fields: [submissionId], references: [id])
-  sourceEventId String?   @map("source_event_id")
-  sourceEvent   Activity? @relation(fields: [sourceEventId], references: [id])
-  createdAt     DateTime  @default(now()) @map("created_at")
+  id             String    @id @default(uuid())
+  tenantId       String    @map("tenant_id")
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title          String
+  status         String    @default("open")
+  priority       String    @default("normal")
+  dueAt          DateTime? @map("due_at")
+  ownerId        String    @map("owner_id")
+  owner          User      @relation(fields: [ownerId], references: [id])
+  personId       String?   @map("person_id")
+  person         Person?   @relation(fields: [personId], references: [id])
+  organizationId String?   @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  requirementId  String?   @map("requirement_id")
+  requirement    Requirement? @relation(fields: [requirementId], references: [id])
+  submissionId   String?   @map("submission_id")
+  submission     Submission? @relation(fields: [submissionId], references: [id])
+  sourceEventId  String?   @map("source_event_id")
+  sourceEvent    ActivityEvent? @relation(fields: [sourceEventId], references: [id])
+  createdAt      DateTime  @default(now()) @map("created_at")
 
   @@index([tenantId, status, dueAt])
+  @@index([tenantId, ownerId, status, dueAt])
+  @@index([tenantId, personId, status])
   @@map("tasks")
   @@schema("talentbridge")
 }
@@ -517,63 +561,70 @@ model Insight {
   tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   type            String
   sourceEventId   String?       @map("source_event_id")
-  sourceEvent     Activity?     @relation(fields: [sourceEventId], references: [id])
+  sourceEvent     ActivityEvent? @relation(fields: [sourceEventId], references: [id])
   suggestedTaskId String?       @map("suggested_task_id")
   confidence      Float         @default(0)
   status          InsightStatus @default(proposed)
   payload         String        @default("{}")
   createdAt       DateTime      @default(now()) @map("created_at")
 
+  @@index([tenantId, status])
   @@map("insights")
   @@schema("talentbridge")
 }
 
-model Document {
-  id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  kind      String   @default("other")
-  name      String
-  version   Int      @default(1)
-  accountId String?  @map("account_id")
-  account   Account? @relation(fields: [accountId], references: [id])
-  contactId String?  @map("contact_id")
-  contact   Contact? @relation(fields: [contactId], references: [id])
-  createdAt DateTime @default(now()) @map("created_at")
+model StoredFile {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind           String   @default("other")
+  name           String
+  version        Int      @default(1)
+  organizationId String?  @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  personId       String?  @map("person_id")
+  person         Person?  @relation(fields: [personId], references: [id])
+  createdAt      DateTime @default(now()) @map("created_at")
 
-  @@map("documents")
+  @@index([tenantId, personId])
+  @@index([tenantId, organizationId])
+  @@map("files")
   @@schema("talentbridge")
 }
 
 model MsaDocument {
-  id         String    @id @default(uuid())
-  tenantId   String    @map("tenant_id")
-  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId  String    @map("account_id")
-  account    Account   @relation(fields: [accountId], references: [id])
-  number     String
-  status     String    @default("active")
-  expiresAt  DateTime? @map("expires_at")
-  noticeDays Int       @default(30) @map("notice_days")
-  createdAt  DateTime  @default(now()) @map("created_at")
+  id             String       @id @default(uuid())
+  tenantId       String       @map("tenant_id")
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  number         String
+  status         String       @default("active")
+  expiresAt      DateTime?    @map("expires_at")
+  noticeDays     Int          @default(30) @map("notice_days")
+  createdAt      DateTime     @default(now()) @map("created_at")
 
+  @@index([tenantId, expiresAt])
+  @@index([tenantId, organizationId])
   @@map("msa_documents")
   @@schema("talentbridge")
 }
 
 model PurchaseOrder {
-  id         String   @id @default(uuid())
-  tenantId   String   @map("tenant_id")
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  accountId  String   @map("account_id")
-  account    Account  @relation(fields: [accountId], references: [id])
-  number     String
-  status     String   @default("active")
-  ceiling    Decimal  @default(0)
-  utilized   Decimal  @default(0)
+  id             String       @id @default(uuid())
+  tenantId       String       @map("tenant_id")
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  organizationId String       @map("organization_id")
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  number         String
+  status         String       @default("active")
+  ceiling        Decimal      @default(0)
+  utilized       Decimal      @default(0)
   expectedExhaustion DateTime? @map("expected_exhaustion")
-  createdAt  DateTime @default(now()) @map("created_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
 
+  @@index([tenantId, status])
+  @@index([tenantId, organizationId])
   @@map("purchase_orders")
   @@schema("talentbridge")
 }
@@ -619,8 +670,8 @@ model TitleIndex {
   id               String   @id @default(uuid())
   tenantId         String   @map("tenant_id")
   tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contactId        String   @unique @map("contact_id")
-  contact          Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  personId         String   @unique @map("person_id")
+  person           Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
   currentTitle     String   @default("") @map("current_title")
   previousTitles   String[] @default([]) @map("previous_titles")
   resumeTitles     String[] @default([]) @map("resume_titles")
@@ -629,6 +680,10 @@ model TitleIndex {
   skills           String[] @default([])
   lastIndexedAt    DateTime @default(now()) @map("last_indexed_at")
 
+  @@index([tenantId])
+  @@index([skills], type: Gin, map: "title_indexes_skills_gin_idx")
+  @@index([previousTitles], type: Gin, map: "title_indexes_previous_titles_gin_idx")
+  @@index([resumeTitles], type: Gin, map: "title_indexes_resume_titles_gin_idx")
   @@map("title_indexes")
   @@schema("talentbridge")
 }
@@ -637,8 +692,8 @@ model OwnershipRequest {
   id         String                 @id @default(uuid())
   tenantId   String                 @map("tenant_id")
   tenant     Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  contactId  String                 @map("contact_id")
-  contact    Contact                @relation("OwnershipContact", fields: [contactId], references: [id])
+  personId   String                 @map("person_id")
+  person     Person                 @relation("OwnershipPerson", fields: [personId], references: [id])
   requesterId String                @map("requester_id")
   requester  User                   @relation("OwnershipRequester", fields: [requesterId], references: [id])
   targetOwnerId String              @map("target_owner_id")
@@ -648,6 +703,8 @@ model OwnershipRequest {
   note       String                 @default("")
   createdAt  DateTime               @default(now()) @map("created_at")
 
+  @@index([tenantId, status])
+  @@index([tenantId, personId, status])
   @@map("ownership_requests")
   @@schema("talentbridge")
 }
@@ -663,6 +720,7 @@ model ExceptionItem {
   payload    String        @default("{}")
   createdAt  DateTime      @default(now()) @map("created_at")
 
+  @@index([tenantId, status, createdAt])
   @@map("exception_items")
   @@schema("talentbridge")
 }

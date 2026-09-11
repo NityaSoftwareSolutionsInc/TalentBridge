@@ -39,7 +39,7 @@ export async function getSession(): Promise<Session | null> {
       tenant: { include: { settings: true } },
     },
   });
-  if (!user) return null;
+  if (!user || !user.tenant.enabled) return null;
   const membership = user.memberships[0];
   if (!membership) return null;
 

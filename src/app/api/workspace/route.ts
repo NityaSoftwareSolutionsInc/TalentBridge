@@ -8,7 +8,7 @@ import {
   listTasks,
   listUsers,
   navBadges,
-  searchContacts,
+  searchPeople,
   settingsPayload,
   type ModuleKey,
 } from "@/lib/queries";
@@ -34,7 +34,7 @@ export async function GET(req: Request) {
     source: url.searchParams.get("source") || undefined,
     owner: url.searchParams.get("owner") || undefined,
     availability: url.searchParams.get("availability") || undefined,
-    lastContact: url.searchParams.get("lastContact") || undefined,
+    lastOutreach: url.searchParams.get("lastOutreach") || undefined,
     excludeRequirementId: url.searchParams.get("excludeRequirementId") || undefined,
     workAuthorization: url.searchParams.get("workAuthorization") || undefined,
     stage: url.searchParams.get("stage") || undefined,
@@ -49,7 +49,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ tasks: await listTasks(session), badges });
   }
   if (module === "communications") {
-    return NextResponse.json({ activities: await listCommunications(session), badges });
+    return NextResponse.json({ activityEvents: await listCommunications(session), badges });
   }
   if (module === "settings") {
     return NextResponse.json({ ...(await settingsPayload(session)), badges });
@@ -66,7 +66,7 @@ export async function GET(req: Request) {
     });
   }
 
-  const list = await searchContacts(session, module, filters);
+  const list = await searchPeople(session, module, filters);
   const requirements = await listRequirements(session);
   const users = await listUsers(session.tenantId);
   return NextResponse.json({ list, requirements, users, badges });

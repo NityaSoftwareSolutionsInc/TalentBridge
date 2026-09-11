@@ -14,7 +14,7 @@ This part answers Talent Bridge App Quetions.docx. Architecture decisions A1–A
 
 **Build:**
 
-Create Requirement with tenant, client, hiring-manager contact, title, skills, location, owner (BDM), assigned recruiter(s), status, dates, optional portal job ID. Not a core left-nav module in POC — core modules stay Candidates, Clients, Vendors. Open jobs from the Client (Requirements tab) and from Submit Profile. Architect the object and filters so a later module can offer My Requirements | All | New | Priority | Aging | No Submissions | Interviews | Filled | Closed. Do not store “submitted to ABC Company” with no job.
+Create Requirement with tenant, client, hiring-manager person, title, skills, location, owner (BDM), assigned recruiter(s), status, dates, optional portal job ID. Not a core left-nav module in POC — core modules stay Candidates, Clients, Vendors. Open jobs from the Client (Requirements tab) and from Submit Profile. Architect the object and filters so a later module can offer My Requirements | All | New | Priority | Aging | No Submissions | Interviews | Filled | Closed. Do not store “submitted to ABC Company” with no job.
 
 ## A2. Submission is a business object, not an email event
 
@@ -23,7 +23,7 @@ Create Requirement with tenant, client, hiring-manager contact, title, skills, l
 
 **Build:**
 
-Submission ID linked to Candidate + Requirement + Client + Client Contact + Recruiter + BDM + Email message ID + Resume version + Date/Time. Lifecycle: Submitted → Client Review → Interview → Rejected → Offer → Placement. Stage changes are permissioned, audited, and written to the unified timeline.
+Submission ID linked to Candidate + Requirement + Client + Client person + Recruiter + BDM + Email message ID + Resume version + Date/Time. Lifecycle: Submitted → Client Review → Interview → Rejected → Offer → Placement. Stage changes are permissioned, audited, and written to the unified timeline.
 
 ## A3. Outlook is hub-first send, plus outside-workflow capture
 
@@ -32,11 +32,11 @@ Submission ID linked to Candidate + Requirement + Client + Client Contact + Recr
 
 **Build:**
 
-Hub path: Candidate → Submit Profile → Select Requirement → Select Client Contact → Attach Resume → Send. Parallel path: Graph watch on sent and inbound; unmatched → review queue. No TalentBridge template catalog.
+Hub path: Candidate → Submit Profile → Select Requirement → Select Client person → Attach Resume → Send. Parallel path: Graph watch on sent and inbound; unmatched → review queue. No TalentBridge template catalog.
 
 ## A4. Communication is a unified timeline that understands outcomes
 
-> **Decision.** One tenant-scoped timeline per person and per company, plus per requirement and per submission. Store what was said and what it caused.
+> **Decision.** One tenant-scoped timeline per person and per organization, plus per requirement and per submission. Store what was said and what it caused.
 
 
 **Build:**
@@ -50,7 +50,7 @@ Every call, WhatsApp, email, meeting, note, task, submission-stage change and in
 
 **Build:**
 
-On Overview: Last Contact, Next Action, Owner, submission/interview/placement history, open requirements, communication frequency. POC flags: no contact in 21 days on an open client; candidate with three conversations and no next action.
+On Overview: Last outreach, Next Action, Owner, submission/interview/placement history, open requirements, communication frequency. POC flags: no outreach in 21 days on an open client; candidate with three conversations and no next action.
 
 ## A6. Nothing falls through the cracks
 
@@ -59,16 +59,16 @@ On Overview: Last Contact, Next Action, Owner, submission/interview/placement hi
 
 **Build:**
 
-This is the product heartbeat, not a call-only checkbox. Call, email, WhatsApp, meeting, interview and “submission waiting for feedback” all resolve to Next Action, No Action Required, or Closed. Next Action creates a Task (due date, owner, linked contact + requirement). SLA/aging watches anything left without a next action. VioTalk proposed follow-up pre-fills; later AI extraction uses the same Task object.
+This is the product heartbeat, not a call-only checkbox. Call, email, WhatsApp, meeting, interview and “submission waiting for feedback” all resolve to Next Action, No Action Required, or Closed. Next Action creates a Task (due date, owner, linked person + requirement). SLA/aging watches anything left without a next action. VioTalk proposed follow-up pre-fills; later AI extraction uses the same Task object.
 
-## A7. Candidate (and contact) ownership / relationship protection
+## A7. Candidate (and person) ownership / relationship protection
 
 > **Decision.** On match, show the existing relationship immediately, with Request Collaboration and Request Transfer. Never auto-merge.
 
 
 **Build:**
 
-Show Existing Relationship: Owner, Last Contact, Active Requirement, recent activity count, plus Request Collaboration and Request Transfer. Defaults: one primary owner; optional co-owners; team visibility by role; transfer and collaboration are permissioned requests. Duplicate review queue remains. Never auto-merge.
+Show Existing Relationship: Owner, Last outreach, Active Requirement, recent activity count, plus Request Collaboration and Request Transfer. Defaults: one primary owner; optional co-owners; team visibility by role; transfer and collaboration are permissioned requests. Duplicate review queue remains. Never auto-merge.
 
 ## A8. Client 360 workspace
 
@@ -77,16 +77,16 @@ Show Existing Relationship: Owner, Last Contact, Active Requirement, recent acti
 
 **Build:**
 
-Tabs: Overview | Contacts | Requirements | Candidates Submitted | Interviews | Placements | Communication | Tasks | MSA/PO | Vendors | Documents | Reports. Overview intelligence: Relationship Owner, Last Contact, Next Action, Open Requirements, Submissions, Interviews, Placements, Average Client Response Time, Requirement Aging, Relationship Health, MSA Status, PO Risk, Recent Commitments. Unauthorized roles see that a PO exists, not amounts.
+Tabs: Overview | People | Requirements | Candidates Submitted | Interviews | Placements | Communication | Tasks | MSA/PO | Vendors | Files | Reports. Overview intelligence: Relationship Owner, Last outreach, Next Action, Open Requirements, Submissions, Interviews, Placements, Average Client Response Time, Requirement Aging, Relationship Health, MSA Status, PO Risk, Recent Commitments. Unauthorized roles see that a PO exists, not amounts.
 
-## A9. Vendor is not another company type with a different label
+## A9. Vendor is not another organization type with a different label
 
 > **Decision.** Vendor has its own workspace and work objects.
 
 
 **Build:**
 
-Track Vendor → Contacts → Candidates → Submissions → Agreements → Rates → Compliance. POC: distinct major module, vendor MSA/PO, vendor-sourced candidate flag, submissions attributed to the vendor. Later intelligence: candidates provided/submitted, interview ratio, placement ratio, duplicate-candidate %, average response time, MSA status, rate competitiveness.
+Track Vendor → People → Candidates → Submissions → Agreements → Rates → Compliance. POC: distinct major module, vendor MSA/PO, vendor-sourced candidate flag, submissions attributed to the vendor. Later intelligence: candidates provided/submitted, interview ratio, placement ratio, duplicate-candidate %, average response time, MSA status, rate competitiveness.
 
 ## A10. Management reporting is action intelligence
 
@@ -95,7 +95,7 @@ Track Vendor → Contacts → Candidates → Submissions → Agreements → Rate
 
 **Build:**
 
-Lead with Today’s Risks and Today’s Opportunities driven by an SLA/aging engine (configurable days). Examples: requirement open 3 days with no submissions; candidate submitted 5 days ago with no client feedback; interview completed yesterday with feedback pending; client not contacted in 21 days; callback promised today; MSA expires in 30 days. KPIs stay as a second block. Every tile click-throughs to the live queue.
+Lead with Today’s Risks and Today’s Opportunities driven by an SLA/aging engine (configurable days). Examples: requirement open 3 days with no submissions; candidate submitted 5 days ago with no client feedback; interview completed yesterday with feedback pending; client no outreach in 21 days; callback promised today; MSA expires in 30 days. KPIs stay as a second block. Every tile click-throughs to the live queue.
 
 ## A11. AI is designed into the data architecture now
 
@@ -108,7 +108,7 @@ AI should recommend actions, not only summarize. Schema now: insight events (typ
 
 ## D.2 Recruiter
 
-Agreed from the questions file: recruiter lands on Candidates, fetches candidate data from JobsNProfiles, and can add the person to VioTalk so calling is tracked on that contact.
+Agreed from the questions file: recruiter lands on Candidates, fetches candidate data from JobsNProfiles, and can add the person to VioTalk so calling is tracked on that person.
 
 ## Q1. If submission is done from TalentBridge, should it reflect in JobsNProfiles when the candidate came from the JNP database?
 
@@ -117,7 +117,7 @@ Agreed from the questions file: recruiter lands on Candidates, fetches candidate
 
 **Build:**
 
-Hub-first: Candidate → Submit Profile → Select Requirement → Select Client Contact → Attach Resume → Send through the user’s Outlook. That send creates Submission ID on the timeline of candidate, client and requirement. Also ingest matching mail composed only in Outlook. Unmatched mail → review queue. Do not write submissions into JobsNProfiles.
+Hub-first: Candidate → Submit Profile → Select Requirement → Select Client person → Attach Resume → Send through the user’s Outlook. That send creates Submission ID on the timeline of candidate, client and requirement. Also ingest matching mail composed only in Outlook. Unmatched mail → review queue. Do not write submissions into JobsNProfiles.
 
 ## Q2. Approved templates — where do they come from if we send from TalentBridge?
 
@@ -128,14 +128,14 @@ Hub-first: Candidate → Submit Profile → Select Requirement → Select Client
 
 Do not build a template picker or template-approval workflow. Compose is free-text plus attachments. Matching of outside-Outlook mail is by recipients, sender, attachments and message ID — not by a template. WhatsApp first-touch templates remain a later-channel topic.
 
-## Q3. Will contact history be tracked based on tenant?
+## Q3. Will person history be tracked based on tenant?
 
-> **Decision.** Yes. History is per contact (and per company, requirement and submission), inside the signed-in tenant only.
+> **Decision.** Yes. History is per person (and per organization, requirement and submission), inside the signed-in tenant only.
 
 
 **Build:**
 
-Every activity is stored with tenant_id plus the relevant object IDs. Search, Communication, Calendar and Reports never return another tenant’s data. Sharing inside the tenant is by role permission and ownership rules (A7).
+Every activity event is stored with tenant_id plus the relevant object IDs. Search, Communication, Calendar and Reports never return another tenant’s data. Sharing inside the tenant is by role permission and ownership rules (A7).
 
 Recruiter integrations (POC): JobsNProfiles (one-way portal profile sync), Outlook (send from workspace + read/ingest), VioTalk.
 
@@ -157,16 +157,16 @@ Clients and Vendors are created in TalentBridge or imported (map columns, previe
 
 **Build:**
 
-Store stage on the person (and company status separately) using Lead → Suspect → Prospect → Customer. Converting stage does not create a new person and does not wipe Communication. Recruiter/delivery does not convert Customer unless granted that permission. Log every stage change on Activity. Do Not Contact blocks outbound Quick Actions. Requirement and Submission status changes are separate permissions.
+Store stage on the person (and organization status separately) using Lead → Suspect → Prospect → Customer. Converting stage does not create a new person and does not wipe Communication. Recruiter/delivery does not convert Customer unless granted that permission. Log every stage change on an activity event. Do not reach blocks outbound Quick Actions. Requirement and Submission status changes are separate permissions.
 
-## Q6. If we create a Contact in TalentBridge, do we need to sync it to JobsNProfiles?
+## Q6. If we create a Person in TalentBridge, do we need to sync it to JobsNProfiles?
 
-> **Decision.** No. Do not sync TalentBridge contacts into JobsNProfiles. Client/vendor/suspect people stay in TalentBridge only. Candidates may be pulled from the portal into TalentBridge (one-way).
+> **Decision.** No. Do not sync TalentBridge people into JobsNProfiles. Client/vendor/suspect people stay in TalentBridge only. Candidates may be pulled from the portal into TalentBridge (one-way).
 
 
 **Build:**
 
-POC sync: JobsNProfiles portal profile created/updated → upsert TalentBridge Contact type=Candidate keyed by portal candidate ID. Email/phone collisions go to duplicate review with the ownership banner — do not auto-merge.
+POC sync: JobsNProfiles portal profile created/updated → upsert TalentBridge Person kind=candidate keyed by portal candidate ID. Email/phone collisions go to duplicate review with the ownership banner — do not auto-merge.
 
 ## Q7. Need clarification on Master Service Agreement and Purchase Order.
 
@@ -179,12 +179,12 @@ Metadata (number, dates, status, owner), encrypted file versions, PO ceiling / u
 
 ## Q8. Where do we handle history? Can we link it with JobsNProfiles?
 
-> **Decision.** Handle history in TalentBridge Communication / Activity (unified timeline). Link to JobsNProfiles by candidate ID only. Do not copy the TalentBridge timeline into JobsNProfiles.
+> **Decision.** Handle history in TalentBridge Communication / activity events (unified timeline). Link to JobsNProfiles by candidate ID only. Do not copy the TalentBridge timeline into JobsNProfiles.
 
 
 **Build:**
 
-Show JNP candidate ID and a deep link on candidate Contacts. Submissions, interviews and placements appear on the TalentBridge timeline with requirement_id. Managers review them here, not on the job portal.
+Show JNP candidate ID and a deep link on candidate people. Submissions, interviews and placements appear on the TalentBridge timeline with requirement_id. Managers review them here, not on the job portal.
 
 ## D.4 Operations
 
@@ -227,7 +227,7 @@ No requirement that a leadership user has a VioTalk calling number.
 
 **Build:**
 
-Do not rebuild VioTalk’s number admin. Map TalentBridge user_id → VioTalk user/agent ID and assigned caller number (and WhatsApp company number if exposed). Prefer read/sync from VioTalk. Users with no mapping cannot use VioTalk Call or WhatsApp; the UI states why. Also map the mailbox used for Outlook send. Credentials stay in the secrets vault.
+Do not rebuild VioTalk’s number admin. Map TalentBridge user_id → VioTalk user/agent ID and assigned caller number (and WhatsApp organization number if exposed). Prefer read/sync from VioTalk. Users with no mapping cannot use VioTalk Call or WhatsApp; the UI states why. Also map the mailbox used for Outlook send. Credentials stay in the secrets vault.
 
 Administrator also: users and roles; module/field permissions; ownership transfer; JobsNProfiles sync; Outlook/Graph consent; exception queues (unmatched calls, unmatched emails, failed syncs, duplicates); audit search.
 
@@ -235,16 +235,16 @@ Administrator also: users and roles; module/field permissions; ownership transfe
 
 Yes — Tasks, Calendar, Communications and global search are available to every signed-in role, with field-level permissions on snippets and recordings.
 
-## Q12. Global search list: candidates / clients / contacts / company / conversations — confirm?
+## Q12. Global search list: candidates / clients / people / organization / conversations — confirm?
 
-> **Decision.** Yes, grouped results matching the core modules: Candidates, Clients, Vendors, plus Conversations and Documents.
+> **Decision.** Yes, grouped results matching the core modules: Candidates, Clients, Vendors, plus Conversations and Files.
 
 
 **Build:**
 
-Global search groups, omit empty: Candidates, Clients, Vendors, Conversations, Documents. Conversation hits land on the Communication tab at that event. Jobs/submissions open on the Client or Candidate. Candidate sourcing is not only global search — the Candidates module has Candidate Search & Discovery (C.15): POC filters on title + skills + location + experience + source + owner + availability + last contact, with exclude-already-submitted and relationship context on each result. Related-title search is MVP. Semantic queries are later AI. Strip PO amounts, recordings and internal-note bodies from snippets for unauthorized roles.
+Global search groups, omit empty: Candidates, Clients, Vendors, Conversations, Files. Conversation hits land on the Communication tab at that event. Jobs/submissions open on the Client or Candidate. Candidate sourcing is not only global search — the Candidates module has Candidate Search & Discovery (C.15): POC filters on title + skills + location + experience + source + owner + availability + Last outreach, with exclude-already-submitted and relationship context on each result. Related-title search is MVP. Semantic queries are later AI. Strip PO amounts, recordings and internal-note bodies from snippets for unauthorized roles.
 
-VioTalk workflow as restated by development is correct: send contact ID + phone + signed-in user; call on assigned number; profile stays visible; disposition required; recording / transcript / AI summary / proposed follow-up; one card keyed by VioTalk call ID. Wrap-up still requires Next Action | No Action Required | Closed. Communications in the sidebar is the org-wide inbox; the same card pattern appears on the contact Communication tab.
+VioTalk workflow as restated by development is correct: send person ID + phone + signed-in user; call on assigned number; profile stays visible; disposition required; recording / transcript / AI summary / proposed follow-up; one card keyed by VioTalk call ID. Wrap-up still requires Next Action | No Action Required | Closed. Communications in the sidebar is the org-wide inbox; the same card pattern appears on the person Communication tab.
 
 Call card example: VioTalk call – 12 minutes. September 6, 2026, 2:32 PM. Called by Sarah Mitchell. Outcome: Interested – follow-up required. Recording | Transcript | AI Summary | Create Task.
 

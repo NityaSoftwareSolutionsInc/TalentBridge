@@ -8,7 +8,7 @@ export const vioTalkStub: VioTalkAdapter = {
       durationSeconds: 12 * 60,
       recordingRef: `rec:${callId}`,
       transcriptRef: `tr:${callId}`,
-      aiSummary: `Spoke with contact ${req.contactId}. Interested — follow-up required.`,
+      aiSummary: `Spoke with contact ${req.personId}. Interested — follow-up required.`,
       proposedFollowUp: "Send two matching profiles tomorrow",
     };
   },

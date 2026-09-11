@@ -1,6 +1,6 @@
 import {
-  AccountRoleKind,
-  ContactKind,
+  OrganizationRoleKind,
+  PersonKind,
   ExceptionKind,
   OwnershipRequestType,
   Prisma,
@@ -15,7 +15,7 @@ import { canSeePoAmounts } from "./rbac";
 import { tenantSettings } from "./settings";
 import { appBaseUrl, issuePasswordEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
-import { contactChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
+import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
 export type ModuleKey =
   | "dashboard"
   | "candidates"
@@ -31,7 +31,7 @@ export type ModuleKey =
 export async function navBadges(tenantId: string) {
   const [tasks, communications] = await Promise.all([
     prisma.task.count({ where: { tenantId, status: "open" } }),
-    prisma.activity.count({ where: { tenantId, wrapUp: null } }),
+    prisma.activityEvent.count({ where: { tenantId, wrapUp: null } }),
   ]);
   return { tasks, communications };
 }
@@ -46,7 +46,7 @@ export async function listUsers(tenantId: string) {
 
 
 
-export async function searchContacts(
+export async function searchPeople(
   session: Session,
   module: ModuleKey,
   filters: {
@@ -58,65 +58,97 @@ export async function searchContacts(
     source?: string;
     owner?: string;
     availability?: string;
-    lastContact?: string;
+    lastOutreach?: string;
     excludeRequirementId?: string;
     stage?: string;
     workAuthorization?: string;
   },
 ) {
   const tenantId = session.tenantId;
+  const skillNeedles = (filters.skills || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const listSelect = {
+    id: true,
+    name: true,
+    title: true,
+    department: true,
+    location: true,
+    status: true,
+    source: true,
+    lastOutreachAt: true,
+    nextAction: true,
+    nextActionDueAt: true,
+    availability: true,
+    workAuthorization: true,
+    skills: true,
+    owner: { select: { name: true } },
+    affiliations: {
+      take: 1,
+      select: {
+        roleOnOrganization: true,
+        organization: { select: { name: true } },
+      },
+    },
+    candidateSubs: {
+      take: 3,
+      orderBy: { sentAt: "desc" as const },
+      select: {
+        stage: true,
+        organization: { select: { name: true } },
+        requirement: { select: { title: true } },
+      },
+    },
+  } satisfies Prisma.PersonSelect;
 
   if (module === "clients" || module === "vendors") {
-    const kind = module === "clients" ? ContactKind.client_person : ContactKind.vendor_person;
-    const contacts = await prisma.contact.findMany({
+    const kind = module === "clients" ? PersonKind.client_person : PersonKind.vendor_person;
+    const people = await prisma.person.findMany({
       where: {
         tenantId,
         kind,
-        OR: filters.q
-          ? [
-              { name: { contains: filters.q, mode: "insensitive" } },
-              { title: { contains: filters.q, mode: "insensitive" } },
-              { email: { contains: filters.q, mode: "insensitive" } },
-              { accounts: { some: { account: { name: { contains: filters.q, mode: "insensitive" } } } } },
-            ]
-          : undefined,
         location: filters.location ? { contains: filters.location, mode: "insensitive" } : undefined,
         status: filters.stage || undefined,
+        AND: [
+          filters.q
+            ? {
+                OR: [
+                  { name: { contains: filters.q, mode: "insensitive" } },
+                  { title: { contains: filters.q, mode: "insensitive" } },
+                  { email: { contains: filters.q, mode: "insensitive" } },
+                  { affiliations: { some: { organization: { name: { contains: filters.q, mode: "insensitive" } } } } },
+                ],
+              }
+            : {},
+          skillNeedles.length
+            ? {
+                OR: [
+                  { skills: { hasEvery: skillNeedles } },
+                  { titleIndex: { is: { skills: { hasEvery: skillNeedles } } } },
+                ],
+              }
+            : {},
+        ],
       },
-      include: {
-        owner: true,
-        titleIndex: true,
-        candidateSubs: { include: { requirement: true, account: true } },
-        accounts: { include: { account: true } },
-      },
-      orderBy: { lastContactAt: "desc" },
+      select: listSelect,
+      orderBy: { lastOutreachAt: "desc" },
       take: 100,
     });
-    return contacts.map((c) => serializeContactList(c));
+    return people.map((c) => serializePersonList(c));
   }
 
-  const kind = module === "candidates" ? ContactKind.candidate : undefined;
-
-  const submittedIds = filters.excludeRequirementId
-    ? (
-        await prisma.submission.findMany({
-          where: { tenantId, requirementId: filters.excludeRequirementId },
-          select: { candidateId: true },
-        })
-      ).map((s) => s.candidateId)
-    : [];
-
-  const lastContactDays = filters.lastContact ? Number(filters.lastContact) : undefined;
-  const lastContactBefore =
-    lastContactDays && !Number.isNaN(lastContactDays)
-      ? new Date(Date.now() - lastContactDays * 24 * 60 * 60 * 1000)
+  const lastOutreachDays = filters.lastOutreach ? Number(filters.lastOutreach) : undefined;
+  const lastOutreachBefore =
+    lastOutreachDays && !Number.isNaN(lastOutreachDays)
+      ? new Date(Date.now() - lastOutreachDays * 24 * 60 * 60 * 1000)
       : undefined;
 
-  const contacts = await prisma.contact.findMany({
+  const people = await prisma.person.findMany({
     where: {
       tenantId,
-      kind: kind ?? ContactKind.candidate,
-      id: submittedIds.length ? { notIn: submittedIds } : undefined,
+      kind: PersonKind.candidate,
       stage: filters.stage || undefined,
       source: filters.source || undefined,
       ownerId: filters.owner || undefined,
@@ -125,10 +157,18 @@ export async function searchContacts(
         : undefined,
       location: filters.location ? { contains: filters.location, mode: "insensitive" } : undefined,
       experienceYears: filters.experience ? { gte: Number(filters.experience) || 0 } : undefined,
-      lastContactAt: lastContactBefore ? { lte: lastContactBefore } : undefined,
+      lastOutreachAt: lastOutreachBefore ? { lte: lastOutreachBefore } : undefined,
       workAuthorization: filters.workAuthorization
         ? { contains: filters.workAuthorization, mode: "insensitive" }
         : undefined,
+      // Exclude candidates already submitted to this requirement (anti-join, not huge NOT IN)
+      ...(filters.excludeRequirementId
+        ? {
+            candidateSubs: {
+              none: { tenantId, requirementId: filters.excludeRequirementId },
+            },
+          }
+        : {}),
       AND: [
         filters.q
           ? {
@@ -158,91 +198,84 @@ export async function searchContacts(
               ],
             }
           : {},
+        // Skills filter in SQL (uses GIN) — every token must match person or title-index skills
+        skillNeedles.length
+          ? {
+              OR: [
+                { skills: { hasEvery: skillNeedles } },
+                { titleIndex: { is: { skills: { hasEvery: skillNeedles } } } },
+              ],
+            }
+          : {},
       ],
     },
-    include: {
-      owner: true,
-      titleIndex: true,
-      candidateSubs: { include: { requirement: true, account: true } },
-      accounts: { include: { account: true } },
-    },
-    orderBy: { lastContactAt: "desc" },
+    select: listSelect,
+    orderBy: { lastOutreachAt: "desc" },
     take: 100,
   });
 
-  const needles = (filters.skills || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  const filtered = needles.length
-    ? contacts.filter((c) => {
-        const hay = [...c.skills, ...(c.titleIndex?.skills ?? [])].map((s) => s.toLowerCase());
-        return needles.every((n) => hay.some((h) => h.includes(n)));
-      })
-    : contacts;
-
-  return filtered.map((c) => serializeContactList(c));
+  return people.map((c) => serializePersonList(c));
 }
 
-export async function getContactWorkspace(session: Session, contactId: string) {
-  const c = await prisma.contact.findFirst({
-    where: { id: contactId, tenantId: session.tenantId },
+export async function getPersonWorkspace(session: Session, personId: string) {
+  const c = await prisma.person.findFirst({
+    where: { id: personId, tenantId: session.tenantId },
     include: {
       owner: true,
       coOwners: { include: { user: true } },
       titleIndex: true,
-      accounts: { include: { account: { include: { roles: true, msaDocuments: true, purchaseOrders: true } } } },
-      candidateSubs: { include: { requirement: true, account: true, clientContact: true } },
-      clientContactSubs: { include: { requirement: true, candidate: true } },
+      affiliations: { include: { organization: { include: { roles: true, msaDocuments: true, purchaseOrders: true } } } },
+      candidateSubs: { include: { requirement: true, organization: true, clientPerson: true } },
+      clientPersonSubs: { include: { requirement: true, candidate: true } },
       hiringManagerReqs: true,
-      activities: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 50 },
+      activityEvents: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 50 },
       tasks: { include: { owner: true }, orderBy: { dueAt: "asc" } },
-      documents: true,
-      interviews: { include: { requirement: true, account: true } },
-      placements: { include: { account: true, requirement: true } },
+      files: true,
+      interviews: { include: { requirement: true, organization: true } },
+      placements: { include: { organization: true, requirement: true } },
       ownershipReqs: { where: { status: "pending" }, include: { requester: true } },
     },
   });
   if (!c) return null;
-  const accountIds = c.accounts.map((p) => p.account.id);
-  const people = accountIds.length
-    ? await prisma.accountPerson.findMany({
-        where: { accountId: { in: accountIds }, contactId: { not: c.id } },
-        include: { contact: true },
+  const organizationIds = c.affiliations.map((p) => p.organization.id);
+  const people = organizationIds.length
+    ? await prisma.personOrganizationAffiliation.findMany({
+        where: { organizationId: { in: organizationIds }, personId: { not: c.id } },
+        include: { person: true },
         take: 8,
       })
     : [];
-  return { ...serializeContactDetail(c, session), people };
+  return { ...serializePersonDetail(c, session), people };
 }
 
-export async function getAccountWorkspace(session: Session, accountId: string) {
-  const a = await prisma.account.findFirst({
-    where: { id: accountId, tenantId: session.tenantId },
+export async function getOrganizationWorkspace(session: Session, organizationId: string) {
+  const a = await prisma.organization.findFirst({
+    where: { id: organizationId, tenantId: session.tenantId },
     include: {
       owner: true,
       roles: true,
-      people: { include: { contact: true } },
+      affiliations: { include: { person: true } },
       requirements: { include: { hiringManager: true, recruiters: { include: { user: true } }, submissions: true } },
       submissions: { include: { candidate: true, requirement: true } },
       interviews: { include: { candidate: true, requirement: true } },
       placements: { include: { candidate: true } },
       msaDocuments: true,
       purchaseOrders: true,
-      documents: true,
-      activities: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 40 },
+      files: true,
+      activityEvents: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 40 },
       tasks: { include: { owner: true }, orderBy: { dueAt: "asc" } },
     },
   });
   if (!a) return null;
-  return serializeAccountDetail(a, session);
+  return serializeOrganizationDetail(a, session);
 }
 
 export async function globalSearch(session: Session, q: string) {
   const tenantId = session.tenantId;
-  if (!q.trim()) return { candidates: [], clients: [], vendors: [], conversations: [], documents: [] };
+  if (!q.trim()) return { candidates: [], clients: [], vendors: [], conversations: [], files: [] };
 
-  const [people, accounts, activities, documents] = await Promise.all([
-    prisma.contact.findMany({
+  const [people, organizations, activityEvents, files] = await Promise.all([
+    prisma.person.findMany({
       where: {
         tenantId,
         OR: [
@@ -253,19 +286,19 @@ export async function globalSearch(session: Session, q: string) {
       },
       take: 16,
     }),
-    prisma.account.findMany({
+    prisma.organization.findMany({
       where: { tenantId, name: { contains: q, mode: "insensitive" } },
       include: { roles: true },
       take: 8,
     }),
-    prisma.activity.findMany({
+    prisma.activityEvent.findMany({
       where: {
         tenantId,
         OR: [{ summary: { contains: q, mode: "insensitive" } }, { body: { contains: q, mode: "insensitive" } }],
       },
       take: 8,
     }),
-    prisma.document.findMany({
+    prisma.storedFile.findMany({
       where: { tenantId, name: { contains: q, mode: "insensitive" } },
       take: 8,
     }),
@@ -278,32 +311,32 @@ export async function globalSearch(session: Session, q: string) {
 
   return {
     candidates: people
-      .filter((c) => c.kind === ContactKind.candidate)
-      .map((c) => ({ id: c.id, name: c.name, title: c.title, module: "candidates", type: "contact" })),
+      .filter((c) => c.kind === PersonKind.candidate)
+      .map((c) => ({ id: c.id, name: c.name, title: c.title, module: "candidates", type: "person" })),
     clients: [
       ...people
-        .filter((c) => c.kind === ContactKind.client_person)
-        .map((c) => ({ id: c.id, name: c.name, module: "clients", type: "contact" })),
-      ...accounts
+        .filter((c) => c.kind === PersonKind.client_person)
+        .map((c) => ({ id: c.id, name: c.name, module: "clients", type: "person" })),
+      ...organizations
         .filter((a) => a.roles.some((r) => r.role === "client"))
-        .map((a) => ({ id: a.id, name: a.name, module: "clients", type: "account" })),
+        .map((a) => ({ id: a.id, name: a.name, module: "clients", type: "organization" })),
     ],
     vendors: [
       ...people
-        .filter((c) => c.kind === ContactKind.vendor_person)
-        .map((c) => ({ id: c.id, name: c.name, module: "vendors", type: "contact" })),
-      ...accounts
+        .filter((c) => c.kind === PersonKind.vendor_person)
+        .map((c) => ({ id: c.id, name: c.name, module: "vendors", type: "person" })),
+      ...organizations
         .filter((a) => a.roles.some((r) => r.role === "vendor"))
-        .map((a) => ({ id: a.id, name: a.name, module: "vendors", type: "account" })),
+        .map((a) => ({ id: a.id, name: a.name, module: "vendors", type: "organization" })),
     ],
-    conversations: activities.map((a) => ({
+    conversations: activityEvents.map((a) => ({
       id: a.id,
       name: strip(a.summary),
-      contactId: a.contactId,
-      accountId: a.accountId,
-      module: a.contactId ? "candidates" : "clients",
+      personId: a.personId,
+      organizationId: a.organizationId,
+      module: a.personId ? "candidates" : "clients",
     })),
-    documents: documents.map((d) => ({ id: d.id, name: d.name, module: "clients" })),
+    files: files.map((d) => ({ id: d.id, name: d.name, module: "clients" })),
   };
 }
 
@@ -314,7 +347,7 @@ export async function dashboard(session: Session) {
   const reqCutoff = daysAgo(settings.slaRequirementNoSubDays);
   const subCutoff = daysAgo(settings.slaSubmissionFeedbackDays);
   const interviewCutoff = daysAgo(settings.slaInterviewFeedbackDays);
-  const clientCutoff = daysAgo(settings.slaClientLastContactDays);
+  const clientCutoff = daysAgo(settings.slaClientLastOutreachDays);
   const msaCutoff = daysFromNow(settings.slaMsaExpiryDays);
   const startToday = new Date(now);
   startToday.setHours(0, 0, 0, 0);
@@ -334,34 +367,34 @@ export async function dashboard(session: Session) {
   ] = await Promise.all([
     prisma.requirement.findMany({
       where: { tenantId, status: "open", openedAt: { lte: reqCutoff }, submissions: { none: {} } },
-      include: { account: true },
+      include: { organization: true },
     }),
     prisma.submission.findMany({
       where: { tenantId, stage: { in: ["Submitted", "Client Review"] }, sentAt: { lte: subCutoff } },
-      include: { candidate: true, requirement: true, account: true },
+      include: { candidate: true, requirement: true, organization: true },
     }),
     prisma.interview.findMany({
       where: { tenantId, outcome: "pending", scheduledAt: { lte: interviewCutoff } },
       include: { candidate: true, requirement: true },
     }),
-    prisma.account.findMany({
+    prisma.organization.findMany({
       where: {
         tenantId,
         roles: { some: { role: "client" } },
-        OR: [{ lastContactAt: { lte: clientCutoff } }, { lastContactAt: null }],
+        OR: [{ lastOutreachAt: { lte: clientCutoff } }, { lastOutreachAt: null }],
       },
     }),
     prisma.task.findMany({
       where: { tenantId, status: "open", dueAt: { gte: startToday, lte: endToday } },
-      include: { contact: true },
+      include: { person: true },
     }),
     prisma.msaDocument.findMany({
       where: { tenantId, expiresAt: { lte: msaCutoff, gte: now } },
-      include: { account: true },
+      include: { organization: true },
     }),
     prisma.purchaseOrder.findMany({
       where: { tenantId, status: { in: ["low", "exhausted"] } },
-      include: { account: true },
+      include: { organization: true },
     }),
     prisma.task.count({ where: { tenantId, status: "open" } }),
     prisma.exceptionItem.findMany({ where: { tenantId, status: "open" } }),
@@ -373,7 +406,7 @@ export async function dashboard(session: Session) {
       type: "requirement_aging",
       title: `${r.title} open ${settings.slaRequirementNoSubDays}+ days with no submissions`,
       module: "clients" as const,
-      recordId: r.accountId,
+      recordId: r.organizationId,
     })),
     ...waitingSubs.map((s) => ({
       id: s.id,
@@ -392,7 +425,7 @@ export async function dashboard(session: Session) {
     ...staleClients.map((a) => ({
       id: a.id,
       type: "client_silence",
-      title: `${a.name} not contacted in ${settings.slaClientLastContactDays}+ days`,
+      title: `${a.name} no outreach in ${settings.slaClientLastOutreachDays}+ days`,
       module: "clients" as const,
       recordId: a.id,
     })),
@@ -401,23 +434,23 @@ export async function dashboard(session: Session) {
       type: "callback_today",
       title: t.title,
       module: "tasks" as const,
-      recordId: t.contactId ?? t.id,
+      recordId: t.personId ?? t.id,
     })),
     ...expiringMsa.map((m) => ({
       id: m.id,
       type: "msa_expiry",
-      title: `${m.account.name} MSA ${m.number} expires within ${settings.slaMsaExpiryDays} days`,
+      title: `${m.organization.name} MSA ${m.number} expires within ${settings.slaMsaExpiryDays} days`,
       module: "msa-po" as const,
-      recordId: m.accountId,
+      recordId: m.organizationId,
     })),
     ...lowPo.map((p) => ({
       id: p.id,
       type: "po_risk",
       title: canSeePoAmounts(session.role, session.permissions)
-        ? `${p.account.name} PO ${p.number} ${p.status} ($${Number(p.utilized).toLocaleString()} / $${Number(p.ceiling).toLocaleString()})`
-        : `${p.account.name} has a PO that needs attention`,
+        ? `${p.organization.name} PO ${p.number} ${p.status} ($${Number(p.utilized).toLocaleString()} / $${Number(p.ceiling).toLocaleString()})`
+        : `${p.organization.name} has a PO that needs attention`,
       module: "msa-po" as const,
-      recordId: p.accountId,
+      recordId: p.organizationId,
     })),
   ];
 
@@ -447,52 +480,52 @@ export async function dashboard(session: Session) {
 export async function listTasks(session: Session) {
   return prisma.task.findMany({
     where: { tenantId: session.tenantId },
-    include: { owner: true, contact: true, account: true, requirement: true },
+    include: { owner: true, person: true, organization: true, requirement: true },
     orderBy: { dueAt: "asc" },
   });
 }
 
 export async function listCommunications(session: Session) {
-  return prisma.activity.findMany({
+  return prisma.activityEvent.findMany({
     where: { tenantId: session.tenantId, wrapUp: null },
-    include: { actor: true, contact: true, account: true },
+    include: { actor: true, person: true, organization: true },
     orderBy: { createdAt: "desc" },
     take: 50,
   });
 }
 
-export async function listRequirements(session: Session, accountId?: string) {
+export async function listRequirements(session: Session, organizationId?: string) {
   return prisma.requirement.findMany({
-    where: { tenantId: session.tenantId, accountId: accountId || undefined },
-    include: { account: true, hiringManager: true, recruiters: { include: { user: true } } },
+    where: { tenantId: session.tenantId, organizationId: organizationId || undefined },
+    include: { organization: true, hiringManager: true, recruiters: { include: { user: true } } },
     orderBy: { openedAt: "desc" },
   });
 }
 
 export async function wrapUp(session: Session, input: {
   activityId?: string;
-  contactId: string;
+  personId: string;
   outcome: WrapUpOutcome;
   nextActionTitle?: string;
   dueAt?: string;
   requirementId?: string;
 }) {
   const activity = input.activityId
-    ? await prisma.activity.findFirst({ where: { id: input.activityId, tenantId: session.tenantId } })
-    : await prisma.activity.create({
+    ? await prisma.activityEvent.findFirst({ where: { id: input.activityId, tenantId: session.tenantId } })
+    : await prisma.activityEvent.create({
         data: {
           tenantId: session.tenantId,
           kind: "note",
           summary: `Wrap-up: ${input.outcome}`,
           actorId: session.userId,
-          contactId: input.contactId,
+          personId: input.personId,
           requirementId: input.requirementId,
           wrapUp: input.outcome,
         },
       });
 
   if (activity && input.activityId) {
-    await prisma.activity.update({
+    await prisma.activityEvent.update({
       where: { id: activity.id },
       data: { wrapUp: input.outcome },
     });
@@ -506,24 +539,24 @@ export async function wrapUp(session: Session, input: {
         title: input.nextActionTitle,
         dueAt: input.dueAt ? new Date(input.dueAt) : daysFromNow(1),
         ownerId: session.userId,
-        contactId: input.contactId,
+        personId: input.personId,
         requirementId: input.requirementId,
         sourceEventId: activity?.id,
       },
     });
     taskId = task.id;
-    await prisma.contact.update({
-      where: { id: input.contactId },
+    await prisma.person.update({
+      where: { id: input.personId },
       data: {
         nextAction: input.nextActionTitle,
         nextActionDueAt: task.dueAt,
-        lastContactAt: new Date(),
+        lastOutreachAt: new Date(),
       },
     });
   } else {
-    await prisma.contact.update({
-      where: { id: input.contactId },
-      data: { nextAction: input.outcome === "closed" ? "Closed" : "No action required", lastContactAt: new Date() },
+    await prisma.person.update({
+      where: { id: input.personId },
+      data: { nextAction: input.outcome === "closed" ? "Closed" : "No action required", lastOutreachAt: new Date() },
     });
   }
 
@@ -531,31 +564,31 @@ export async function wrapUp(session: Session, input: {
     tenantId: session.tenantId,
     actorId: session.userId,
     action: "wrap_up",
-    entityType: "activity",
-    entityId: activity?.id ?? input.contactId,
+    entityType: "activity_event",
+    entityId: activity?.id ?? input.personId,
     after: { outcome: input.outcome, taskId },
   });
 
   return { activityId: activity?.id, taskId };
 }
 
-export async function placeCall(session: Session, contactId: string) {
+export async function placeCall(session: Session, personId: string) {
   if (!session.vioTalkMapped) {
     throw new Error("No VioTalk agent mapping. Users with no mapping cannot use VioTalk Call.");
   }
-  const contact = await prisma.contact.findFirst({
-    where: { id: contactId, tenantId: session.tenantId },
+  const person = await prisma.person.findFirst({
+    where: { id: personId, tenantId: session.tenantId },
   });
-  if (!contact) throw new Error("Contact not found");
-  if (contactChannelBlocks(contact).call) throw new Error("Do Not Contact is on — outbound call disabled.");
+  if (!person) throw new Error("Contact not found");
+  if (outreachChannelBlocks(person).call) throw new Error("Do not reach is on — outbound call disabled.");
 
   const result = await integrations.vioTalk.placeCall({
-    contactId,
-    phone: contact.phone,
+    personId,
+    phone: person.phone,
     userId: session.userId,
   });
 
-  const activity = await prisma.activity.create({
+  const activity = await prisma.activityEvent.create({
     data: {
       tenantId: session.tenantId,
       kind: "call",
@@ -564,23 +597,23 @@ export async function placeCall(session: Session, contactId: string) {
       source: "viotalk",
       externalId: result.callId,
       actorId: session.userId,
-      contactId,
+      personId,
       recordingRef: result.recordingRef,
       transcriptRef: result.transcriptRef,
       aiSummary: result.aiSummary,
     },
   });
 
-  await prisma.contact.update({
-    where: { id: contactId },
-    data: { lastContactAt: new Date() },
+  await prisma.person.update({
+    where: { id: personId },
+    data: { lastOutreachAt: new Date() },
   });
 
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
     action: "viotalk_call",
-    entityType: "activity",
+    entityType: "activity_event",
     entityId: activity.id,
     after: { callId: result.callId },
   });
@@ -593,7 +626,7 @@ export async function submitProfile(
   input: {
     candidateId: string;
     requirementId: string;
-    clientContactId: string;
+    clientPersonId: string;
     message: string;
     resumeName: string;
   },
@@ -601,22 +634,22 @@ export async function submitProfile(
   if (!session.permissions.includes("submit")) throw new Error("No Submit Profile permission");
   const req = await prisma.requirement.findFirst({
     where: { id: input.requirementId, tenantId: session.tenantId },
-    include: { account: true },
+    include: { organization: true },
   });
   if (!req) throw new Error("Requirement required — cannot submit to a company with no job");
-  const candidate = await prisma.contact.findFirst({
+  const candidate = await prisma.person.findFirst({
     where: { id: input.candidateId, tenantId: session.tenantId },
   });
-  const clientContact = await prisma.contact.findFirst({
-    where: { id: input.clientContactId, tenantId: session.tenantId },
+  const clientPerson = await prisma.person.findFirst({
+    where: { id: input.clientPersonId, tenantId: session.tenantId },
   });
-  if (!candidate || !clientContact) throw new Error("Candidate and client contact required");
-  if (contactChannelBlocks(candidate).email) throw new Error("Do Not Contact is on — outbound email disabled.");
+  if (!candidate || !clientPerson) throw new Error("Candidate and Client person required");
+  if (outreachChannelBlocks(candidate).email) throw new Error("Do not reach is on — outbound email disabled.");
   if (!session.mailbox) throw new Error("No mailbox mapped for Outlook send");
 
   const sent = await integrations.outlook.sendAsUser({
     fromMailbox: session.mailbox,
-    to: clientContact.email,
+    to: clientPerson.email,
     subject: `${candidate.name} — ${req.title}`,
     body: input.message,
     attachments: [{ name: input.resumeName || candidate.lastResume || "resume.pdf" }],
@@ -628,8 +661,8 @@ export async function submitProfile(
       tenantId: session.tenantId,
       candidateId: candidate.id,
       requirementId: req.id,
-      accountId: req.accountId,
-      clientContactId: clientContact.id,
+      organizationId: req.organizationId,
+      clientPersonId: clientPerson.id,
       recruiterId: session.userId,
       bdmId: req.bdmId,
       stage: settings.submissionStages[0] ?? "Submitted",
@@ -639,17 +672,17 @@ export async function submitProfile(
     },
   });
 
-  const activity = await prisma.activity.create({
+  const activity = await prisma.activityEvent.create({
     data: {
       tenantId: session.tenantId,
       kind: "email",
-      summary: `Submitted ${candidate.name} to ${req.account.name} / ${req.title}`,
+      summary: `Submitted ${candidate.name} to ${req.organization.name} / ${req.title}`,
       body: input.message,
       source: "outlook",
       externalId: sent.messageId,
       actorId: session.userId,
-      contactId: candidate.id,
-      accountId: req.accountId,
+      personId: candidate.id,
+      organizationId: req.organizationId,
       requirementId: req.id,
       submissionId: submission.id,
     },
@@ -667,33 +700,33 @@ export async function submitProfile(
   return { submissionId: submission.id, activityId: activity.id, messageId: sent.messageId };
 }
 
-export async function changeStage(session: Session, contactId: string, stage: string) {
+export async function changeStage(session: Session, personId: string, stage: string) {
   if (!session.permissions.includes("change_stage")) {
     throw new Error("Stage change is permissioned (owner / sales / ops / admin)");
   }
   const settings = await tenantSettings(session.tenantId);
   if (!settings.relationshipStages.includes(stage)) throw new Error("Unknown stage");
-  const before = await prisma.contact.findFirst({ where: { id: contactId, tenantId: session.tenantId } });
+  const before = await prisma.person.findFirst({ where: { id: personId, tenantId: session.tenantId } });
   if (!before) throw new Error("Contact not found");
-  const updated = await prisma.contact.update({
-    where: { id: contactId },
+  const updated = await prisma.person.update({
+    where: { id: personId },
     data: { stage },
   });
-  await prisma.activity.create({
+  await prisma.activityEvent.create({
     data: {
       tenantId: session.tenantId,
       kind: "stage",
       summary: `Stage ${before.stage} → ${stage}`,
       actorId: session.userId,
-      contactId,
+      personId,
     },
   });
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
     action: "change_stage",
-    entityType: "contact",
-    entityId: contactId,
+    entityType: "person",
+    entityId: personId,
     before: { stage: before.stage },
     after: { stage },
   });
@@ -702,20 +735,20 @@ export async function changeStage(session: Session, contactId: string, stage: st
 
 export async function requestOwnership(
   session: Session,
-  contactId: string,
+  personId: string,
   type: OwnershipRequestType,
   note: string,
 ) {
-  const contact = await prisma.contact.findFirst({
-    where: { id: contactId, tenantId: session.tenantId },
+  const person = await prisma.person.findFirst({
+    where: { id: personId, tenantId: session.tenantId },
   });
-  if (!contact) throw new Error("Contact not found");
+  if (!person) throw new Error("Contact not found");
   const row = await prisma.ownershipRequest.create({
     data: {
       tenantId: session.tenantId,
-      contactId,
+      personId,
       requesterId: session.userId,
-      targetOwnerId: contact.ownerId,
+      targetOwnerId: person.ownerId,
       type,
       note,
     },
@@ -724,8 +757,8 @@ export async function requestOwnership(
     tenantId: session.tenantId,
     actorId: session.userId,
     action: `ownership_${type}`,
-    entityType: "contact",
-    entityId: contactId,
+    entityType: "person",
+    entityId: personId,
     after: { requestId: row.id },
   });
   return row;
@@ -740,14 +773,14 @@ export async function decideOwnership(session: Session, requestId: string, accep
   });
   if (!req) throw new Error("Request not found");
   if (accept && req.type === "transfer") {
-    await prisma.contact.update({
-      where: { id: req.contactId },
+    await prisma.person.update({
+      where: { id: req.personId },
       data: { ownerId: req.requesterId },
     });
   }
   if (accept && req.type === "collaboration") {
-    await prisma.contactCoOwner.create({
-      data: { contactId: req.contactId, userId: req.requesterId },
+    await prisma.personCoOwner.create({
+      data: { personId: req.personId, userId: req.requesterId },
     });
   }
   return prisma.ownershipRequest.update({
@@ -763,12 +796,12 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
   const emailNormalized = normalizeEmail(profile.email);
   const phoneNormalized = normalizePhone(profile.phone);
 
-  const existingByPortal = await prisma.contact.findFirst({
+  const existingByPortal = await prisma.person.findFirst({
     where: { tenantId: session.tenantId, portalCandidateId },
   });
 
   // Match cascade: portal ID (above) → normalized email → normalized phone. Never auto-merge.
-  const collision = await prisma.contact.findFirst({
+  const collision = await prisma.person.findFirst({
     where: {
       tenantId: session.tenantId,
       portalCandidateId: { not: portalCandidateId },
@@ -796,7 +829,7 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
 
   const data = {
     tenantId: session.tenantId,
-    kind: ContactKind.candidate,
+    kind: PersonKind.candidate,
     name: profile.name,
     title: profile.title,
     email: profile.email,
@@ -812,15 +845,15 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
     portalCandidateId,
   };
 
-  const contact = existingByPortal
-    ? await prisma.contact.update({ where: { id: existingByPortal.id }, data })
-    : await prisma.contact.create({ data });
+  const person = existingByPortal
+    ? await prisma.person.update({ where: { id: existingByPortal.id }, data })
+    : await prisma.person.create({ data });
 
   await prisma.titleIndex.upsert({
-    where: { contactId: contact.id },
+    where: { personId: person.id },
     create: {
       tenantId: session.tenantId,
-      contactId: contact.id,
+      personId: person.id,
       currentTitle: profile.title,
       previousTitles: profile.previousTitles,
       resumeTitles: profile.resumeTitles,
@@ -839,16 +872,16 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
     where: {
       tenantId_entityType_entityId_externalSystem_externalEntityType: {
         tenantId: session.tenantId,
-        entityType: "contact",
-        entityId: contact.id,
+        entityType: "person",
+        entityId: person.id,
         externalSystem: "JobsNProfiles",
         externalEntityType: "candidate",
       },
     },
     create: {
       tenantId: session.tenantId,
-      entityType: "contact",
-      entityId: contact.id,
+      entityType: "person",
+      entityId: person.id,
       externalSystem: "JobsNProfiles",
       externalEntityType: "candidate",
       externalId: portalCandidateId,
@@ -863,8 +896,8 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
   await prisma.provenance.create({
     data: {
       tenantId: session.tenantId,
-      entityType: "contact",
-      entityId: contact.id,
+      entityType: "person",
+      entityId: person.id,
       field: "profile",
       sourceSystem: "JobsNProfiles",
       externalId: portalCandidateId,
@@ -873,20 +906,20 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
     },
   });
 
-  return { status: "upserted" as const, contactId: contact.id };
+  return { status: "upserted" as const, personId: person.id };
 }
 
-export async function createContact(
+export async function createPerson(
   session: Session,
   input: { name: string; kind: "candidate" | "client_person" | "vendor_person"; email?: string; phone?: string; title?: string },
 ) {
   const kind =
     input.kind === "candidate"
-      ? ContactKind.candidate
+      ? PersonKind.candidate
       : input.kind === "vendor_person"
-        ? ContactKind.vendor_person
-        : ContactKind.client_person;
-  const contact = await prisma.contact.create({
+        ? PersonKind.vendor_person
+        : PersonKind.client_person;
+  const person = await prisma.person.create({
     data: {
       tenantId: session.tenantId,
       kind,
@@ -903,16 +936,16 @@ export async function createContact(
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
-    action: "create_contact",
-    entityType: "contact",
-    entityId: contact.id,
+    action: "create_person",
+    entityType: "person",
+    entityId: person.id,
   });
-  return contact;
+  return person;
 }
 
-export async function updateContact(
+export async function updatePerson(
   session: Session,
-  contactId: string,
+  personId: string,
   input: {
     name?: string;
     title?: string;
@@ -935,12 +968,12 @@ export async function updateContact(
     timezone?: string;
   },
 ) {
-  const existing = await prisma.contact.findFirst({ where: { id: contactId, tenantId: session.tenantId } });
+  const existing = await prisma.person.findFirst({ where: { id: personId, tenantId: session.tenantId } });
   if (!existing) throw new Error("Contact not found");
   const nextEmail = input.email ?? existing.email;
   const nextPhone = input.phone ?? existing.phone;
-  const contact = await prisma.contact.update({
-    where: { id: contactId },
+  const person = await prisma.person.update({
+    where: { id: personId },
     data: {
       name: input.name ?? existing.name,
       title: input.title ?? existing.title,
@@ -975,44 +1008,44 @@ export async function updateContact(
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
-    action: "update_contact",
-    entityType: "contact",
-    entityId: contact.id,
+    action: "update_person",
+    entityType: "person",
+    entityId: person.id,
   });
-  return contact;
+  return person;
 }
 
-export async function createAccount(
+export async function createOrganization(
   session: Session,
   input: { name: string; role: "client" | "vendor"; industry?: string; location?: string },
 ) {
   if (!["sales", "operations", "admin"].includes(session.role)) {
     throw new Error("Clients/Vendors are created in TalentBridge by sales/ops/admin — not fetched from JobsNProfiles");
   }
-  const account = await prisma.account.create({
+  const organization = await prisma.organization.create({
     data: {
       tenantId: session.tenantId,
       name: input.name,
       industry: input.industry || "",
       location: input.location || "",
       ownerId: session.userId,
-      roles: { create: { role: input.role === "vendor" ? AccountRoleKind.vendor : AccountRoleKind.client } },
+      roles: { create: { role: input.role === "vendor" ? OrganizationRoleKind.vendor : OrganizationRoleKind.client } },
     },
   });
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
-    action: "create_account",
-    entityType: "account",
-    entityId: account.id,
+    action: "create_organization",
+    entityType: "organization",
+    entityId: organization.id,
   });
-  return account;
+  return organization;
 }
 
 export async function createRequirement(
   session: Session,
   input: {
-    accountId: string;
+    organizationId: string;
     title: string;
     skills: string[];
     location: string;
@@ -1029,7 +1062,7 @@ export async function createRequirement(
   const req = await prisma.requirement.create({
     data: {
       tenantId: session.tenantId,
-      accountId: input.accountId,
+      organizationId: input.organizationId,
       title: input.title,
       skills: input.skills,
       location: input.location,
@@ -1048,24 +1081,24 @@ export async function createRequirement(
   return req;
 }
 
-export async function addNote(session: Session, contactId: string, body: string, visibility: "shared" | "internal") {
-  return prisma.activity.create({
+export async function addNote(session: Session, personId: string, body: string, visibility: "shared" | "internal") {
+  return prisma.activityEvent.create({
     data: {
       tenantId: session.tenantId,
       kind: visibility === "internal" ? "internal_note" : "note",
       summary: body.slice(0, 80),
       body,
       actorId: session.userId,
-      contactId,
+      personId,
     },
   });
 }
 
-export async function toggleDnc(session: Session, contactId: string, on: boolean) {
+export async function toggleDnc(session: Session, personId: string, on: boolean) {
   if (!["sales", "operations", "admin"].includes(session.role)) throw new Error("DNC change not permitted");
-  return prisma.contact.update({
-    where: { id: contactId },
-    data: { doNotContact: on },
+  return prisma.person.update({
+    where: { id: personId },
+    data: { doNotReach: on },
   });
 }
 
@@ -1258,7 +1291,7 @@ export async function settingsPayload(session: Session) {
       slaRequirementNoSubDays: settings.slaRequirementNoSubDays,
       slaSubmissionFeedbackDays: settings.slaSubmissionFeedbackDays,
       slaInterviewFeedbackDays: settings.slaInterviewFeedbackDays,
-      slaClientLastContactDays: settings.slaClientLastContactDays,
+      slaClientLastOutreachDays: settings.slaClientLastOutreachDays,
       slaMsaExpiryDays: settings.slaMsaExpiryDays,
     },
     jnp: {
@@ -1662,7 +1695,7 @@ export async function adminSetRecordingPolicy(session: Session, allowed: boolean
   return { recordingPlaybackAllowed: updated.recordingPlaybackAllowed };
 }
 
-function serializeContactList(c: {
+function serializePersonList(c: {
   id: string;
   name: string;
   title: string;
@@ -1670,17 +1703,17 @@ function serializeContactList(c: {
   location: string;
   status: string;
   source: string;
-    lastContactAt: Date | null;
+    lastOutreachAt: Date | null;
   nextAction: string;
   nextActionDueAt?: Date | null;
   availability?: string;
   workAuthorization?: string;
   owner: { name: string };
   skills: string[];
-  candidateSubs: { stage: string; account: { name: string }; requirement: { title: string } }[];
-  accounts: { roleOnAccount: string; account: { name: string } }[];
+  candidateSubs: { stage: string; organization: { name: string }; requirement: { title: string } }[];
+  affiliations: { roleOnOrganization: string; organization: { name: string } }[];
 }) {
-  const company = c.accounts[0];
+  const company = c.affiliations[0];
   return {
     id: c.id,
     name: c.name,
@@ -1689,39 +1722,39 @@ function serializeContactList(c: {
     location: c.location,
     status: c.status,
     source: c.source,
-    lastContactAt: c.lastContactAt,
+    lastOutreachAt: c.lastOutreachAt,
     nextAction: c.nextAction,
     nextActionDueAt: c.nextActionDueAt,
     availability: c.availability,
     workAuthorization: c.workAuthorization,
     ownerName: c.owner.name,
-    companyName: company?.account.name ?? "",
-    roleOnAccount: company?.roleOnAccount ?? "",
+    companyName: company?.organization.name ?? "",
+    roleOnOrganization: company?.roleOnOrganization ?? "",
     skills: c.skills,
-    tags: [company?.roleOnAccount, c.status, ...c.skills].filter((t, i, a) => Boolean(t) && a.indexOf(t) === i).slice(0, 3),
+    tags: [company?.roleOnOrganization, c.status, ...c.skills].filter((t, i, a) => Boolean(t) && a.indexOf(t) === i).slice(0, 3),
     previousSubmissions: c.candidateSubs.map((s) => ({
-      client: s.account.name,
+      client: s.organization.name,
       job: s.requirement.title,
       stage: s.stage,
     })),
   };
 }
 
-function serializeContactDetail(
-  c: Prisma.ContactGetPayload<{
+function serializePersonDetail(
+  c: Prisma.PersonGetPayload<{
     include: {
       owner: true;
       coOwners: { include: { user: true } };
       titleIndex: true;
-      accounts: { include: { account: { include: { roles: true; msaDocuments: true; purchaseOrders: true } } } };
-      candidateSubs: { include: { requirement: true; account: true; clientContact: true } };
-      clientContactSubs: { include: { requirement: true; candidate: true } };
+      affiliations: { include: { organization: { include: { roles: true; msaDocuments: true; purchaseOrders: true } } } };
+      candidateSubs: { include: { requirement: true; organization: true; clientPerson: true } };
+      clientPersonSubs: { include: { requirement: true; candidate: true } };
       hiringManagerReqs: true;
-      activities: { include: { actor: true } };
+      activityEvents: { include: { actor: true } };
       tasks: { include: { owner: true } };
-      documents: true;
-      interviews: { include: { requirement: true; account: true } };
-      placements: { include: { account: true; requirement: true } };
+      files: true;
+      interviews: { include: { requirement: true; organization: true } };
+      placements: { include: { organization: true; requirement: true } };
       ownershipReqs: { include: { requester: true } };
     };
   }>,
@@ -1729,7 +1762,7 @@ function serializeContactDetail(
 ) {
   const showRecording = session.permissions.includes("recording") && session.recordingPlaybackAllowed;
   return {
-    type: "contact" as const,
+    type: "person" as const,
     id: c.id,
     kind: c.kind,
     stage: c.stage,
@@ -1742,7 +1775,7 @@ function serializeContactDetail(
     location: c.location,
     linkedIn: c.linkedIn,
     source: c.source,
-    doNotContact: c.doNotContact,
+    doNotReach: c.doNotReach,
     doNotEmail: c.doNotEmail,
     doNotSms: c.doNotSms,
     availability: c.availability,
@@ -1760,7 +1793,7 @@ function serializeContactDetail(
     currentRate: c.currentRate,
     expectedRate: c.expectedRate,
     timezone: c.timezone,
-    lastContactAt: c.lastContactAt,
+    lastOutreachAt: c.lastOutreachAt,
     nextAction: c.nextAction,
     nextActionDueAt: c.nextActionDueAt,
     portalCandidateId: c.portalCandidateId,
@@ -1768,27 +1801,27 @@ function serializeContactDetail(
     isOwnedByOther: c.ownerId !== session.userId,
     coOwners: c.coOwners.map((x) => x.user.name),
     titleIndex: c.titleIndex,
-    tags: Array.from(new Set([c.status, ...c.accounts.map((p) => p.roleOnAccount), ...c.skills].filter(Boolean))),
-    companies: c.accounts.map((p) => ({
-      id: p.account.id,
-      name: p.account.name,
-      role: p.roleOnAccount,
-      industry: p.account.industry,
-      location: p.account.location,
-      roles: p.account.roles.map((r) => r.role),
-      hasMsa: p.account.msaDocuments.length > 0,
-      hasPo: p.account.purchaseOrders.length > 0,
+    tags: Array.from(new Set([c.status, ...c.affiliations.map((p) => p.roleOnOrganization), ...c.skills].filter(Boolean))),
+    companies: c.affiliations.map((p) => ({
+      id: p.organization.id,
+      name: p.organization.name,
+      role: p.roleOnOrganization,
+      industry: p.organization.industry,
+      location: p.organization.location,
+      roles: p.organization.roles.map((r) => r.role),
+      hasMsa: p.organization.msaDocuments.length > 0,
+      hasPo: p.organization.purchaseOrders.length > 0,
     })),
     submissions: c.candidateSubs,
     interviews: c.interviews,
     placements: c.placements,
     requirements: c.hiringManagerReqs,
-    documents: c.documents,
+    files: c.files,
     upcoming: c.tasks.filter((t) => t.status === "open"),
     tasks: c.tasks,
     ownershipRequests: c.ownershipReqs,
     activeRequirements: c.candidateSubs.filter((s) => !["Rejected", "Placement"].includes(s.stage)).length,
-    activities: c.activities.map((a) => ({
+    activityEvents: c.activityEvents.map((a) => ({
       ...a,
       recordingRef: showRecording ? a.recordingRef : a.recordingRef ? "[hidden]" : null,
       transcriptRef: showRecording ? a.transcriptRef : a.transcriptRef ? "[hidden]" : null,
@@ -1797,14 +1830,14 @@ function serializeContactDetail(
   };
 }
 
-function serializeAccount(
-  a: Prisma.AccountGetPayload<{
+function serializeOrganization(
+  a: Prisma.OrganizationGetPayload<{
     include: {
       owner: true;
       roles: true;
       msaDocuments: true;
       purchaseOrders: true;
-      _count: { select: { requirements: true; submissions: true; people: true } };
+      _count: { select: { requirements: true; submissions: true; affiliations: true } };
     };
   }>,
   session: Session,
@@ -1817,11 +1850,11 @@ function serializeAccount(
     location: a.location,
     status: a.status,
     ownerName: a.owner.name,
-    lastContactAt: a.lastContactAt,
+    lastOutreachAt: a.lastOutreachAt,
     roles: a.roles.map((r) => r.role),
     openRequirements: a._count.requirements,
     submissions: a._count.submissions,
-    people: a._count.people,
+    people: a._count.affiliations,
     msaStatus: a.msaDocuments[0]?.status ?? "none",
     poRisk: a.purchaseOrders[0]
       ? po
@@ -1831,20 +1864,20 @@ function serializeAccount(
   };
 }
 
-function serializeAccountDetail(
-  a: Prisma.AccountGetPayload<{
+function serializeOrganizationDetail(
+  a: Prisma.OrganizationGetPayload<{
     include: {
       owner: true;
       roles: true;
-      people: { include: { contact: true } };
+      affiliations: { include: { person: true } };
       requirements: { include: { hiringManager: true; recruiters: { include: { user: true } }; submissions: true } };
       submissions: { include: { candidate: true; requirement: true } };
       interviews: { include: { candidate: true; requirement: true } };
       placements: { include: { candidate: true } };
       msaDocuments: true;
       purchaseOrders: true;
-      documents: true;
-      activities: { include: { actor: true } };
+      files: true;
+      activityEvents: { include: { actor: true } };
       tasks: { include: { owner: true } };
     };
   }>,
@@ -1852,23 +1885,23 @@ function serializeAccountDetail(
 ) {
   const po = canSeePoAmounts(session.role, session.permissions);
   return {
-    type: "account" as const,
+    type: "organization" as const,
     id: a.id,
     name: a.name,
     industry: a.industry,
     location: a.location,
     status: a.status,
     owner: { id: a.owner.id, name: a.owner.name },
-    lastContactAt: a.lastContactAt,
+    lastOutreachAt: a.lastOutreachAt,
     nextAction: a.tasks.find((t) => t.status === "open")?.title ?? "",
     roles: a.roles.map((r) => r.role),
-    people: a.people,
+    people: a.affiliations,
     requirements: a.requirements,
     submissions: a.submissions,
     interviews: a.interviews,
     placements: a.placements,
-    documents: a.documents,
-    activities: a.activities,
+    files: a.files,
+    activityEvents: a.activityEvents,
     tasks: a.tasks,
     msaDocuments: a.msaDocuments,
     purchaseOrders: a.purchaseOrders.map((p) => ({
@@ -1880,7 +1913,7 @@ function serializeAccountDetail(
     })),
     intelligence: {
       relationshipOwner: a.owner.name,
-      lastContact: a.lastContactAt,
+      lastOutreach: a.lastOutreachAt,
       nextAction: a.tasks.find((t) => t.status === "open")?.title ?? "None",
       openRequirements: a.requirements.filter((r) => r.status === "open").length,
       submissions: a.submissions.length,
