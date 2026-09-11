@@ -1,0 +1,693 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["talentbridge"]
+}
+
+enum TbRole {
+  recruiter
+  sales
+  operations
+  leadership
+  admin
+
+  @@schema("talentbridge")
+}
+
+enum ContactKind {
+  candidate
+  client_person
+  vendor_person
+
+  @@schema("talentbridge")
+}
+
+enum AccountRoleKind {
+  client
+  vendor
+
+  @@schema("talentbridge")
+}
+
+enum RequirementStatus {
+  open
+  on_hold
+  filled
+  cancelled
+
+  @@schema("talentbridge")
+}
+
+enum WrapUpOutcome {
+  next_action
+  no_action_required
+  closed
+
+  @@schema("talentbridge")
+}
+
+enum OwnershipRequestType {
+  collaboration
+  transfer
+
+  @@schema("talentbridge")
+}
+
+enum OwnershipRequestStatus {
+  pending
+  accepted
+  dismissed
+
+  @@schema("talentbridge")
+}
+
+enum ExceptionKind {
+  unmatched_mail
+  unmatched_call
+  duplicate
+  failed_sync
+
+  @@schema("talentbridge")
+}
+
+enum InsightStatus {
+  proposed
+  accepted
+  dismissed
+
+  @@schema("talentbridge")
+}
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users            User[]
+  memberships      Membership[]
+  settings         TenantSettings?
+  accounts         Account[]
+  contacts         Contact[]
+  requirements     Requirement[]
+  submissions      Submission[]
+  activities       Activity[]
+  tasks            Task[]
+  insights         Insight[]
+  documents        Document[]
+  msaDocuments     MsaDocument[]
+  purchaseOrders   PurchaseOrder[]
+  provenance       Provenance[]
+  auditEvents      AuditEvent[]
+  titleIndexes     TitleIndex[]
+  ownershipReqs    OwnershipRequest[]
+  exceptions       ExceptionItem[]
+  agentMaps        VioTalkAgentMap[]
+  mailboxMaps      MailboxMap[]
+  interviews       Interview[]
+  placements       Placement[]
+  externalLinks    ExternalEntityLink[]
+
+  @@map("tenants")
+  @@schema("talentbridge")
+}
+
+model TenantSettings {
+  id                       String   @id @default(uuid())
+  tenantId                 String   @unique @map("tenant_id")
+  tenant                   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  relationshipStages       String[] @default(["Lead", "Suspect", "Prospect", "Customer"]) @map("relationship_stages")
+  submissionStages         String[] @default(["Submitted", "Client Review", "Interview", "Rejected", "Offer", "Placement"]) @map("submission_stages")
+  slaRequirementNoSubDays  Int      @default(3) @map("sla_requirement_no_sub_days")
+  slaSubmissionFeedbackDays Int     @default(5) @map("sla_submission_feedback_days")
+  slaInterviewFeedbackDays Int      @default(1) @map("sla_interview_feedback_days")
+  slaClientLastContactDays Int      @default(21) @map("sla_client_last_contact_days")
+  slaMsaExpiryDays         Int      @default(30) @map("sla_msa_expiry_days")
+  recordingPlaybackAllowed Boolean  @default(false) @map("recording_playback_allowed")
+
+  @@map("tenant_settings")
+  @@schema("talentbridge")
+}
+
+model User {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email         String
+  name          String
+  title         String   @default("")
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+  passwordHash            String?   @map("password_hash")
+  passwordSetAt           DateTime? @map("password_set_at")
+  inviteSentAt            DateTime? @map("invite_sent_at")
+  passwordResetTokenHash  String?   @map("password_reset_token_hash")
+  passwordResetExpiresAt  DateTime? @map("password_reset_expires_at")
+  passwordResetKind       String?   @map("password_reset_kind")
+
+  memberships         Membership[]
+  ownedContacts       Contact[]           @relation("ContactOwner")
+  coOwnedContacts     ContactCoOwner[]
+  ownedAccounts       Account[]           @relation("AccountOwner")
+  tasks               Task[]
+  activities          Activity[]          @relation("ActivityActor")
+  agentMap            VioTalkAgentMap?
+  mailboxMap          MailboxMap?
+  ownershipRequested  OwnershipRequest[]  @relation("OwnershipRequester")
+  ownershipTarget     OwnershipRequest[]  @relation("OwnershipTarget")
+  assignedReqs        RequirementRecruiter[]
+  bdms                Requirement[]       @relation("RequirementBdm")
+
+  @@unique([tenantId, email])
+  @@map("users")
+  @@schema("talentbridge")
+}
+
+model Membership {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId   String @map("user_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     TbRole
+  permissions String[] @default([])
+
+  @@unique([tenantId, userId])
+  @@map("memberships")
+  @@schema("talentbridge")
+}
+
+model Account {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  industry   String   @default("")
+  location   String   @default("")
+  status     String   @default("active")
+  ownerId    String   @map("owner_id")
+  owner      User     @relation("AccountOwner", fields: [ownerId], references: [id])
+  lastContactAt DateTime? @map("last_contact_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  roles          AccountRole[]
+  people         AccountPerson[]
+  requirements   Requirement[]
+  submissions    Submission[]
+  msaDocuments   MsaDocument[]
+  purchaseOrders PurchaseOrder[]
+  documents      Document[]
+  activities     Activity[]
+  tasks          Task[]
+  interviews     Interview[]
+  placements     Placement[]
+
+  @@map("accounts")
+  @@schema("talentbridge")
+}
+
+model AccountRole {
+  id        String          @id @default(uuid())
+  accountId String          @map("account_id")
+  account   Account         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  role      AccountRoleKind
+
+  @@unique([accountId, role])
+  @@map("account_roles")
+  @@schema("talentbridge")
+}
+
+model Contact {
+  id              String      @id @default(uuid())
+  tenantId        String      @map("tenant_id")
+  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind            ContactKind
+  stage           String      @default("Lead")
+  status          String      @default("Active")
+  name            String
+  title           String      @default("")
+  department      String      @default("")
+  email           String      @default("")
+  phone           String      @default("")
+  /// Lowercased trimmed email for match / collision checks (not display).
+  emailNormalized String      @default("") @map("email_normalized")
+  /// Digits-only phone for match / collision checks (not display).
+  phoneNormalized String      @default("") @map("phone_normalized")
+  location        String      @default("")
+  linkedIn        String      @default("") @map("linkedin")
+  source          String      @default("manual")
+  ownerId         String      @map("owner_id")
+  owner           User        @relation("ContactOwner", fields: [ownerId], references: [id])
+  doNotContact    Boolean     @default(false) @map("do_not_contact")
+  doNotEmail      Boolean     @default(false) @map("do_not_email")
+  doNotSms        Boolean     @default(false) @map("do_not_sms")
+  availability    String      @default("")
+  experienceYears Int         @default(0) @map("experience_years")
+  skills          String[]    @default([])
+  /// Label or external resume resource id — not resume file content / public URL.
+  lastResume      String      @default("") @map("last_resume")
+  secondaryTitle  String      @default("") @map("secondary_title")
+  citizenship     String      @default("")
+  workAuthorization String    @default("") @map("work_authorization")
+  visaExpiry      DateTime?   @map("visa_expiry")
+  willingToRelocate String    @default("") @map("willing_to_relocate")
+  preferredLocation String    @default("") @map("preferred_location")
+  noticePeriod    String      @default("") @map("notice_period")
+  employmentType  String      @default("") @map("employment_type")
+  currentRate     String      @default("") @map("current_rate")
+  expectedRate    String      @default("") @map("expected_rate")
+  timezone        String      @default("")
+  lastContactAt   DateTime?   @map("last_contact_at")
+  nextAction      String      @default("")
+  nextActionDueAt DateTime?   @map("next_action_due_at")
+  portalCandidateId String?   @unique @map("portal_candidate_id")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  coOwners         ContactCoOwner[]
+  accounts         AccountPerson[]
+  titleIndex       TitleIndex?
+  candidateSubs    Submission[]     @relation("SubmissionCandidate")
+  clientContactSubs Submission[]    @relation("SubmissionClientContact")
+  hiringManagerReqs Requirement[]   @relation("RequirementHiringManager")
+  activities       Activity[]
+  tasks            Task[]
+  documents        Document[]
+  interviews       Interview[]
+  placements       Placement[]
+  ownershipReqs    OwnershipRequest[] @relation("OwnershipContact")
+
+  @@index([tenantId, kind])
+  @@index([tenantId, emailNormalized])
+  @@index([tenantId, phoneNormalized])
+  @@map("contacts")
+  @@schema("talentbridge")
+}
+
+/// Stable cross-system ids (JobsNProfiles, etc.) without cloning ATS records.
+model ExternalEntityLink {
+  id                 String    @id @default(uuid())
+  tenantId           String    @map("tenant_id")
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entityType         String    @map("entity_type")
+  entityId           String    @map("entity_id")
+  externalSystem     String    @map("external_system")
+  externalEntityType String    @default("") @map("external_entity_type")
+  externalId         String    @map("external_id")
+  externalUrl        String    @default("") @map("external_url")
+  lastSyncedAt       DateTime? @map("last_synced_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  @@unique([tenantId, entityType, entityId, externalSystem, externalEntityType])
+  @@index([tenantId, externalSystem, externalId])
+  @@map("external_entity_links")
+  @@schema("talentbridge")
+}
+
+model ContactCoOwner {
+  id        String  @id @default(uuid())
+  contactId String  @map("contact_id")
+  contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  userId    String  @map("user_id")
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, userId])
+  @@map("contact_co_owners")
+  @@schema("talentbridge")
+}
+
+model AccountPerson {
+  id          String  @id @default(uuid())
+  accountId   String  @map("account_id")
+  account     Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  contactId   String  @map("contact_id")
+  contact     Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  roleOnAccount String @default("") @map("role_on_account")
+
+  @@unique([accountId, contactId])
+  @@map("account_people")
+  @@schema("talentbridge")
+}
+
+model Requirement {
+  id              String             @id @default(uuid())
+  tenantId        String             @map("tenant_id")
+  tenant          Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId       String             @map("account_id")
+  account         Account            @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  title           String
+  skills          String[]           @default([])
+  location        String             @default("")
+  hiringManagerId String?            @map("hiring_manager_id")
+  hiringManager   Contact?           @relation("RequirementHiringManager", fields: [hiringManagerId], references: [id])
+  bdmId           String             @map("bdm_id")
+  bdm             User               @relation("RequirementBdm", fields: [bdmId], references: [id])
+  status          RequirementStatus  @default(open)
+  openedAt        DateTime           @default(now()) @map("opened_at")
+  targetFillAt    DateTime?          @map("target_fill_at")
+  portalJobId     String?            @map("portal_job_id")
+  createdAt       DateTime           @default(now()) @map("created_at")
+
+  recruiters   RequirementRecruiter[]
+  submissions  Submission[]
+  activities   Activity[]
+  tasks        Task[]
+  interviews   Interview[]
+  placements   Placement[]
+
+  @@index([tenantId, status])
+  @@map("requirements")
+  @@schema("talentbridge")
+}
+
+model RequirementRecruiter {
+  id            String      @id @default(uuid())
+  requirementId String      @map("requirement_id")
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  userId        String      @map("user_id")
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, userId])
+  @@map("requirement_recruiters")
+  @@schema("talentbridge")
+}
+
+model Submission {
+  id              String      @id @default(uuid())
+  tenantId        String      @map("tenant_id")
+  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId     String      @map("candidate_id")
+  candidate       Contact     @relation("SubmissionCandidate", fields: [candidateId], references: [id])
+  requirementId   String      @map("requirement_id")
+  requirement     Requirement @relation(fields: [requirementId], references: [id])
+  accountId       String      @map("account_id")
+  account         Account     @relation(fields: [accountId], references: [id])
+  clientContactId String      @map("client_contact_id")
+  clientContact   Contact     @relation("SubmissionClientContact", fields: [clientContactId], references: [id])
+  recruiterId     String      @map("recruiter_id")
+  bdmId           String      @map("bdm_id")
+  stage           String      @default("Submitted")
+  emailMessageId  String?     @map("email_message_id")
+  resumeVersion   String      @default("") @map("resume_version")
+  sentAt          DateTime    @default(now()) @map("sent_at")
+  source          String      @default("hub")
+  vendorSourced   Boolean     @default(false) @map("vendor_sourced")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  activities Activity[]
+  interviews Interview[]
+  placements Placement[]
+  tasks      Task[]
+
+  @@index([tenantId, stage])
+  @@map("submissions")
+  @@schema("talentbridge")
+}
+
+model Interview {
+  id            String       @id @default(uuid())
+  tenantId      String       @map("tenant_id")
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId   String       @map("candidate_id")
+  candidate     Contact      @relation(fields: [candidateId], references: [id])
+  accountId     String       @map("account_id")
+  account       Account      @relation(fields: [accountId], references: [id])
+  requirementId String       @map("requirement_id")
+  requirement   Requirement  @relation(fields: [requirementId], references: [id])
+  submissionId  String?      @map("submission_id")
+  submission    Submission?  @relation(fields: [submissionId], references: [id])
+  scheduledAt   DateTime     @map("scheduled_at")
+  feedbackAt    DateTime?    @map("feedback_at")
+  outcome       String       @default("pending")
+  createdAt     DateTime     @default(now()) @map("created_at")
+
+  @@map("interviews")
+  @@schema("talentbridge")
+}
+
+model Placement {
+  id            String      @id @default(uuid())
+  tenantId      String      @map("tenant_id")
+  tenant        Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  candidateId   String      @map("candidate_id")
+  candidate     Contact     @relation(fields: [candidateId], references: [id])
+  accountId     String      @map("account_id")
+  account       Account     @relation(fields: [accountId], references: [id])
+  requirementId String      @map("requirement_id")
+  requirement   Requirement @relation(fields: [requirementId], references: [id])
+  submissionId  String?     @map("submission_id")
+  submission    Submission? @relation(fields: [submissionId], references: [id])
+  ownerId       String      @map("owner_id")
+  startDate     DateTime    @map("start_date")
+  endDate       DateTime?   @map("end_date")
+  followUp      String      @default("") @map("follow_up")
+  status        String      @default("active")
+  createdAt     DateTime    @default(now()) @map("created_at")
+
+  @@map("placements")
+  @@schema("talentbridge")
+}
+
+model Activity {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind          String
+  summary       String
+  body          String   @default("")
+  source        String   @default("talentbridge")
+  externalId    String?  @map("external_id")
+  actorId       String?  @map("actor_id")
+  actor         User?    @relation("ActivityActor", fields: [actorId], references: [id])
+  contactId     String?  @map("contact_id")
+  contact       Contact? @relation(fields: [contactId], references: [id])
+  accountId     String?  @map("account_id")
+  account       Account? @relation(fields: [accountId], references: [id])
+  requirementId String?  @map("requirement_id")
+  requirement   Requirement? @relation(fields: [requirementId], references: [id])
+  submissionId  String?  @map("submission_id")
+  submission    Submission? @relation(fields: [submissionId], references: [id])
+  wrapUp        WrapUpOutcome? @map("wrap_up")
+  recordingRef  String?  @map("recording_ref")
+  transcriptRef String?  @map("transcript_ref")
+  aiSummary     String?  @map("ai_summary")
+  causedTaskId  String?  @map("caused_task_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  insights Insight[]
+  tasks    Task[]
+
+  @@index([tenantId, createdAt])
+  @@map("activities")
+  @@schema("talentbridge")
+}
+
+model Task {
+  id            String    @id @default(uuid())
+  tenantId      String    @map("tenant_id")
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title         String
+  status        String    @default("open")
+  priority      String    @default("normal")
+  dueAt         DateTime? @map("due_at")
+  ownerId       String    @map("owner_id")
+  owner         User      @relation(fields: [ownerId], references: [id])
+  contactId     String?   @map("contact_id")
+  contact       Contact?  @relation(fields: [contactId], references: [id])
+  accountId     String?   @map("account_id")
+  account       Account?  @relation(fields: [accountId], references: [id])
+  requirementId String?   @map("requirement_id")
+  requirement   Requirement? @relation(fields: [requirementId], references: [id])
+  submissionId  String?   @map("submission_id")
+  submission    Submission? @relation(fields: [submissionId], references: [id])
+  sourceEventId String?   @map("source_event_id")
+  sourceEvent   Activity? @relation(fields: [sourceEventId], references: [id])
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId, status, dueAt])
+  @@map("tasks")
+  @@schema("talentbridge")
+}
+
+model Insight {
+  id              String        @id @default(uuid())
+  tenantId        String        @map("tenant_id")
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type            String
+  sourceEventId   String?       @map("source_event_id")
+  sourceEvent     Activity?     @relation(fields: [sourceEventId], references: [id])
+  suggestedTaskId String?       @map("suggested_task_id")
+  confidence      Float         @default(0)
+  status          InsightStatus @default(proposed)
+  payload         String        @default("{}")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@map("insights")
+  @@schema("talentbridge")
+}
+
+model Document {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind      String   @default("other")
+  name      String
+  version   Int      @default(1)
+  accountId String?  @map("account_id")
+  account   Account? @relation(fields: [accountId], references: [id])
+  contactId String?  @map("contact_id")
+  contact   Contact? @relation(fields: [contactId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("documents")
+  @@schema("talentbridge")
+}
+
+model MsaDocument {
+  id         String    @id @default(uuid())
+  tenantId   String    @map("tenant_id")
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId  String    @map("account_id")
+  account    Account   @relation(fields: [accountId], references: [id])
+  number     String
+  status     String    @default("active")
+  expiresAt  DateTime? @map("expires_at")
+  noticeDays Int       @default(30) @map("notice_days")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@map("msa_documents")
+  @@schema("talentbridge")
+}
+
+model PurchaseOrder {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  accountId  String   @map("account_id")
+  account    Account  @relation(fields: [accountId], references: [id])
+  number     String
+  status     String   @default("active")
+  ceiling    Decimal  @default(0)
+  utilized   Decimal  @default(0)
+  expectedExhaustion DateTime? @map("expected_exhaustion")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("purchase_orders")
+  @@schema("talentbridge")
+}
+
+model Provenance {
+  id              String    @id @default(uuid())
+  tenantId        String    @map("tenant_id")
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  entityType      String    @map("entity_type")
+  entityId        String    @map("entity_id")
+  field           String
+  sourceSystem    String    @map("source_system")
+  externalId      String?   @map("external_id")
+  sourceTimestamp DateTime? @map("source_timestamp")
+  lastSyncedAt    DateTime? @map("last_synced_at")
+  syncStatus      String    @default("ok") @map("sync_status")
+  updatedBy       String    @map("updated_by")
+  manualOverride  Boolean   @default(false) @map("manual_override")
+
+  @@index([tenantId, entityType, entityId])
+  @@map("provenance")
+  @@schema("talentbridge")
+}
+
+model AuditEvent {
+  id         String   @id @default(uuid())
+  tenantId   String   @map("tenant_id")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actorId    String   @map("actor_id")
+  action     String
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  before     String   @default("")
+  after      String   @default("")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt])
+  @@map("audit_events")
+  @@schema("talentbridge")
+}
+
+model TitleIndex {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId        String   @unique @map("contact_id")
+  contact          Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  currentTitle     String   @default("") @map("current_title")
+  previousTitles   String[] @default([]) @map("previous_titles")
+  resumeTitles     String[] @default([]) @map("resume_titles")
+  normalizedTitleId String? @map("normalized_title_id")
+  relatedTitleIds  String[] @default([]) @map("related_title_ids")
+  skills           String[] @default([])
+  lastIndexedAt    DateTime @default(now()) @map("last_indexed_at")
+
+  @@map("title_indexes")
+  @@schema("talentbridge")
+}
+
+model OwnershipRequest {
+  id         String                 @id @default(uuid())
+  tenantId   String                 @map("tenant_id")
+  tenant     Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId  String                 @map("contact_id")
+  contact    Contact                @relation("OwnershipContact", fields: [contactId], references: [id])
+  requesterId String                @map("requester_id")
+  requester  User                   @relation("OwnershipRequester", fields: [requesterId], references: [id])
+  targetOwnerId String              @map("target_owner_id")
+  targetOwner User                  @relation("OwnershipTarget", fields: [targetOwnerId], references: [id])
+  type       OwnershipRequestType
+  status     OwnershipRequestStatus @default(pending)
+  note       String                 @default("")
+  createdAt  DateTime               @default(now()) @map("created_at")
+
+  @@map("ownership_requests")
+  @@schema("talentbridge")
+}
+
+model ExceptionItem {
+  id         String        @id @default(uuid())
+  tenantId   String        @map("tenant_id")
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind       ExceptionKind
+  title      String
+  detail     String        @default("")
+  status     String        @default("open")
+  payload    String        @default("{}")
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  @@map("exception_items")
+  @@schema("talentbridge")
+}
+
+model VioTalkAgentMap {
+  id             String @id @default(uuid())
+  tenantId       String @map("tenant_id")
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId         String @unique @map("user_id")
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vioTalkUserId  String @map("viotalk_user_id")
+  assignedNumber String @map("assigned_number")
+
+  @@map("viotalk_agent_maps")
+  @@schema("talentbridge")
+}
+
+model MailboxMap {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String @unique @map("user_id")
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mailbox   String
+
+  @@map("mailbox_maps")
+  @@schema("talentbridge")
+}

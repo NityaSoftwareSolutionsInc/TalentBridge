@@ -1,0 +1,21 @@
+---
+description: TalentBridge product principle — operational hub, not a CRM replacement
+alwaysApply: true
+---
+
+# Product principle
+
+Source of truth: `docs/spec/` — same flow as Contact_Manager_Development_Specification 1.docx (A → B → C → D).
+
+TalentBridge Contact Manager is not another CRM and is not a replacement for JobsNProfiles, Outlook or VioTalk. It is the operational hub that connects them.
+
+- JobsNProfiles = candidate/profile source (one-way in; never client submissions)
+- VioTalk = calling/recording/transcript engine
+- Outlook = email infrastructure (hub-first send + outside-mail capture)
+- WhatsApp = messaging channel
+- TalentBridge = relationship + workflow + communication + action + intelligence hub
+- Core modules: Candidates, Clients, Vendors. Jobs/Requirements are work objects on the Client, not a fourth menu in POC
+- Submissions are TalentBridge work objects, not emails and not JNP ATS records
+- Every important relationship has an owner, context and next action (Next Action / No Action Required / Closed)
+
+Do not: clone adjacent systems, add a template catalog, write submissions back to JobsNProfiles, or ship history without a next action.

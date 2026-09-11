@@ -1,0 +1,87 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Env & secrets (keep examples)
+.env
+.env.*
+!.env.example
+!.env*.example
+
+# Local / SQLite leftovers
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+prisma/dev.db
+
+# Logs & debug
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+*.lcov
+
+# TypeScript / tooling cache
+*.tsbuildinfo
+.turbo/
+.eslintcache
+.cache/
+.parcel-cache/
+.swc/
+
+# Vercel / deploy
+.vercel
+
+# OS junk
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Prisma generate temps (engine locks / tmp)
+node_modules/.prisma/client/*.tmp*
+*.node.tmp*
+
+# Misc local
+*.pem
+*.key
+tmp/
+temp/
+.temp/
