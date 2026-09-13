@@ -3,12 +3,16 @@ import { OwnershipRequestType, WrapUpOutcome } from "@prisma/client";
 import { getSession } from "@/lib/auth";
 import {
   addNote,
+  addPersonFile,
   adminCreateUser,
   adminResolveException,
   adminSendPasswordEmail,
+  adminSetJnpAccount,
+  adminSetJnpEnabled,
   adminSetPassword,
   adminSetRecordingPolicy,
   adminUpdateUser,
+  adminUpsertJnpMap,
   adminUpsertMailboxMap,
   adminUpsertVioTalkMap,
   changeStage,
@@ -16,12 +20,18 @@ import {
   createPerson,
   createRequirement,
   decideOwnership,
+  exportDashboard,
+  ingestOutlookMail,
   placeCall,
   requestOwnership,
+  scheduleMeeting,
+  sendEmail,
   submitProfile,
   syncJnp,
   toggleDnc,
   updatePerson,
+  viewCallArtifact,
+  viewCommercial,
   wrapUp,
 } from "@/lib/queries";
 
@@ -55,6 +65,31 @@ export async function POST(req: Request) {
             resumeName: String(body.resumeName || ""),
           }),
         );
+      case "send_email":
+        return NextResponse.json(
+          await sendEmail(session, {
+            personId: String(body.personId),
+            subject: String(body.subject || ""),
+            body: String(body.body || ""),
+            to: body.to as string | undefined,
+          }),
+        );
+      case "schedule_meeting":
+        return NextResponse.json(
+          await scheduleMeeting(session, {
+            personId: String(body.personId),
+            title: body.title as string | undefined,
+            startsAt: String(body.startsAt || ""),
+            endsAt: String(body.endsAt || ""),
+            body: body.body as string | undefined,
+            extraAttendees: body.extraAttendees as string | undefined,
+            teams: body.teams !== false,
+            requirementId: body.requirementId ? String(body.requirementId) : undefined,
+            asInterview: Boolean(body.asInterview),
+          }),
+        );
+      case "ingest_outlook":
+        return NextResponse.json(await ingestOutlookMail(session));
       case "stage":
         return NextResponse.json(await changeStage(session, String(body.personId), String(body.stage)));
       case "ownership_request":
@@ -70,6 +105,14 @@ export async function POST(req: Request) {
         return NextResponse.json(await decideOwnership(session, String(body.requestId), Boolean(body.accept)));
       case "jnp_sync":
         return NextResponse.json(await syncJnp(session, String(body.portalCandidateId)));
+      case "add_person_file":
+        return NextResponse.json(
+          await addPersonFile(session, {
+            personId: String(body.personId),
+            name: String(body.name || ""),
+            kind: body.kind as string | undefined,
+          }),
+        );
       case "create_person":
         return NextResponse.json(
           await createPerson(session, {
@@ -158,6 +201,20 @@ export async function POST(req: Request) {
         );
       case "dnc":
         return NextResponse.json(await toggleDnc(session, String(body.personId), Boolean(body.on)));
+      case "view_call_artifact":
+        return NextResponse.json(
+          await viewCallArtifact(
+            session,
+            String(body.activityId || ""),
+            body.kind === "transcript" ? "transcript" : "recording",
+          ),
+        );
+      case "view_commercial":
+        return NextResponse.json(
+          await viewCommercial(session, body.kind === "po" ? "po" : "msa", String(body.id || "")),
+        );
+      case "export_dashboard":
+        return NextResponse.json(await exportDashboard(session));
       case "admin_create_user":
         return NextResponse.json(
           await adminCreateUser(session, {
@@ -212,6 +269,22 @@ export async function POST(req: Request) {
             mailbox: body.mailbox as string | undefined,
             clear: Boolean(body.clear),
           }),
+        );
+      case "admin_upsert_jnp_map":
+        return NextResponse.json(
+          await adminUpsertJnpMap(session, {
+            userId: String(body.userId || ""),
+            jnpUserId: body.jnpUserId as string | undefined,
+            clear: Boolean(body.clear),
+          }),
+        );
+      case "admin_set_jnp_account":
+        return NextResponse.json(
+          await adminSetJnpAccount(session, String(body.jnpAccountUserId || ""), { clear: Boolean(body.clear) }),
+        );
+      case "admin_set_jnp_enabled":
+        return NextResponse.json(
+          await adminSetJnpEnabled(session, String(body.userId || ""), Boolean(body.enabled)),
         );
       case "admin_resolve_exception":
         return NextResponse.json(await adminResolveException(session, String(body.exceptionId || "")));

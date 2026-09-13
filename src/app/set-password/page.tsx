@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { TalentBridgeMark, TbLoader } from "@/components/TbLoader";
 
 function SetPasswordForm() {
   const router = useRouter();
@@ -40,7 +41,10 @@ function SetPasswordForm() {
   return (
     <main className="min-h-screen bg-[#0b1f3a] text-white flex items-center justify-center p-8">
       <form onSubmit={submit} className="w-full max-w-md rounded-2xl bg-white text-slate-900 p-8 shadow-2xl space-y-4">
-        <p className="text-sm uppercase tracking-wide text-blue-700 font-semibold">TalentBridge</p>
+        <div className="flex items-center gap-3">
+          <TalentBridgeMark size={36} />
+          <p className="text-sm uppercase tracking-wide text-blue-700 font-semibold">TalentBridge</p>
+        </div>
         <h1 className="text-2xl font-semibold">Set your password</h1>
         <p className="text-sm text-slate-600">
           This link comes from an administrator invitation or password reset. It can be used once.
@@ -85,7 +89,7 @@ function SetPasswordForm() {
 
 export default function SetPasswordPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<TbLoader variant="page" hint="Loading" />}>
       <SetPasswordForm />
     </Suspense>
   );

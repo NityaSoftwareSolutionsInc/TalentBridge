@@ -4,25 +4,27 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { availabilityBadge, Avatar, btnGhost, btnPrimary, Button, Card, CardHeader, cn, EmptyState, FieldInput, FieldSelect, IconBtn, IconButton, IconChip, IconOnly, InlineError, Label, LinkedInIcon, LoadingSkeleton, MenuItem, shortDate, Tag, tagTone, Tabs, TextLink, timeZoneHint, WhatsAppIcon } from "./workspace-ui";
 import { AppShell } from "./AppShell";
+import type { GlobalHit } from "./GlobalSearchPanel";
 import { SettingsPane, CreateUserForm, inviteStatusMeta } from "./SettingsPane";
 import { DashList, DashPane } from "./DashboardPane";
+import { CalendarAgenda, CalendarPane, type CalendarItem } from "./CalendarPane";
 import { ListPager } from "./ListPager";
 import { ListToolbar, sortRecords } from "./ListToolbar";
 import { paginate, parsePageSize, readStoredPageSize, storePageSize } from "@/lib/paging";
 import { EMPLOYMENT_TYPE_OPTIONS, RELOCATE_OPTIONS, WORK_AUTH_OPTIONS } from "@/lib/candidate-fields";
+import { buildJnpProfileUrl } from "@/lib/jnp-links";
 import {
+  Ban,
   Building2,
   CalendarDays,
   ChevronDown,
   CloudUpload,
   ExternalLink,
   FileText,
-  Hash,
   Lock,
   Mail,
   MapPin,
   MoreHorizontal,
-  Pencil,
   Phone,
   Plus,
   RefreshCw,
@@ -41,10 +43,15 @@ type Session = {
   landing: string;
   vioTalkMapped: boolean;
   mailbox: string | null;
+  jnpUserId?: string | null;
+  jnpEnabled?: boolean;
+  jnpAllowed?: boolean;
+  jnpAccessOk?: boolean;
+  jnpAccessCode?: string;
   recordingPlaybackAllowed?: boolean;
 };
 
-type Drawer = "none" | "call" | "wrap" | "submit" | "note" | "jnp" | "req" | "create" | "create-user" | "edit";
+type Drawer = "none" | "call" | "wrap" | "submit" | "note" | "email" | "meeting" | "jnp" | "req" | "create" | "create-user" | "edit";
 
 export function Workspace({ moduleKey }: { moduleKey: string }) {
   const router = useRouter();
@@ -55,16 +62,20 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [record, setRecord] = useState<Record<string, unknown> | null>(null);
   const [dash, setDash] = useState<Record<string, unknown> | null>(null);
   const [tasks, setTasks] = useState<Record<string, unknown>[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarItem[]>([]);
+  const [calendarPeople, setCalendarPeople] = useState<{ id: string; name: string; email: string; kind: string; title: string }[]>([]);
+  const [calendarMeta, setCalendarMeta] = useState<{ graphLive?: boolean; mailbox?: string | null }>({});
   const [activityEvents, setActivityEvents] = useState<Record<string, unknown>[]>([]);
   const [requirements, setRequirements] = useState<Record<string, unknown>[]>([]);
   const [users, setUsers] = useState<Record<string, unknown>[]>([]);
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
-  const [globalHits, setGlobalHits] = useState<Record<string, { id: string; name: string; module?: string; personId?: string; type?: string }[]> | null>(null);
+  const [globalHits, setGlobalHits] = useState<Record<string, GlobalHit[]> | null>(null);
   const [error, setError] = useState("");
   const [drawer, setDrawer] = useState<Drawer>("none");
   const [tab, setTab] = useState("Overview");
   const [busy, setBusy] = useState(false);
   const [callActivityId, setCallActivityId] = useState<string | null>(null);
+  const [wrapPersonId, setWrapPersonId] = useState<string | null>(null);
   const [proposed, setProposed] = useState("");
   const [badges, setBadges] = useState({ tasks: 0, communications: 0 });
   const [menu, setMenu] = useState<"none" | "help" | "user" | "more" | "bell" | "qa-more">("none");
@@ -141,7 +152,17 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const page = Math.max(1, Number(params.get("page") || "1") || 1);
   const pageSize = parsePageSize(params.get("pageSize") || readStoredPageSize());
   const listSource =
-    moduleKey === "tasks" || moduleKey === "calendar"
+    moduleKey === "calendar"
+      ? calendarEvents.filter((row) => {
+          const q = filters.q.trim().toLowerCase();
+          if (!q) return true;
+          return [row.title, row.personName, row.organizationName, row.requirementTitle]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(q);
+        })
+      : moduleKey === "tasks"
       ? tasks
       : moduleKey === "communications"
         ? activityEvents
@@ -173,9 +194,14 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
 
   const select = (id: string, type?: "person" | "organization") => {
     const next = new URLSearchParams(params.toString());
-    next.set("id", id);
-    if (type) next.set("type", type);
-    else next.delete("type");
+    if (!id) {
+      next.delete("id");
+      next.delete("type");
+    } else {
+      next.set("id", id);
+      if (type) next.set("type", type);
+      else next.delete("type");
+    }
     router.replace(`/${moduleKey}?${next.toString()}`);
   };
 
@@ -190,6 +216,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     if (data.list) setList(data.list);
     if (data.dashboard) setDash(data.dashboard);
     if (data.tasks) setTasks(data.tasks);
+    if (data.calendar) {
+      setCalendarEvents((data.calendar.events || []) as CalendarItem[]);
+      setCalendarPeople((data.calendar.people || []) as { id: string; name: string; email: string; kind: string; title: string }[]);
+      setCalendarMeta({ graphLive: Boolean(data.calendar.graphLive), mailbox: data.calendar.mailbox || null });
+    }
     if (data.activityEvents) setActivityEvents(data.activityEvents);
     if (data.requirements) setRequirements(data.requirements);
     if (data.users) setUsers(data.users);
@@ -223,8 +254,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   }, [list, selectedId, moduleKey, params, router]);
 
   useEffect(() => {
-    if (!selectedId || moduleKey === "settings") {
-      if (!selectedId || moduleKey === "settings") setRecord(null);
+    if (!selectedId || ["settings", "calendar", "dashboard", "reports", "tasks", "communications", "msa-po"].includes(moduleKey)) {
+      if (moduleKey === "calendar") setRecord(null);
       return;
     }
     const type = params.get("type") || "person";
@@ -250,6 +281,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
       await load();
+      const sess = await fetch("/api/session").then((r) => r.json());
+      if (sess.session) setSession(sess.session);
       if (selectedId) {
         const type = params.get("type") || (record?.type === "organization" ? "organization" : "person");
         const rec = await fetch(`/api/record?type=${type}&id=${selectedId}`).then((r) => r.json());
@@ -264,11 +297,26 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     }
   }
 
+  async function exportOps() {
+    const data = await act({ action: "export_dashboard" });
+    if (!data?.csv) return;
+    const blob = new Blob([String(data.csv)], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = String(data.filename || "talentbridge-ops.csv");
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   async function onCall() {
     if (!selectedId) return;
     const data = await act({ action: "call", personId: selectedId });
     if (data) {
       setCallActivityId(data.activityId);
+      setWrapPersonId(selectedId);
       setProposed(data.proposedFollowUp || "");
       setDrawer("wrap");
     }
@@ -290,12 +338,30 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       setGlobalHits(null);
       return;
     }
-    const res = await fetch(`/api/workspace?global=1&q=${encodeURIComponent(q)}`);
+    const res = await fetch(`/api/workspace?global=1&q=${encodeURIComponent(q)}`, {
+      headers: { "x-tb-loader": "silent" },
+    });
     const data = await res.json();
     setGlobalHits(data.results);
   }
 
+  const clearGlobalHits = useCallback(() => setGlobalHits(null), []);
+
   const dnc = Boolean(record?.doNotReach);
+  const canToggleDnc = ["sales", "operations", "admin"].includes(session?.role || "");
+  const canPlayRecording = Boolean(session?.permissions.includes("recording") && session?.recordingPlaybackAllowed);
+  const canJnpSync = Boolean(session?.jnpEnabled && session?.jnpUserId);
+  const canViewMsa = Boolean(session?.permissions.includes("msa"));
+  const canViewPo = Boolean(session?.permissions.includes("po"));
+  const pendingOwnership = (
+    (record?.ownershipRequests as {
+      id: string;
+      type: string;
+      status?: string;
+      note?: string;
+      requester?: { name?: string };
+    }[]) || []
+  ).filter((r) => !r.status || r.status === "pending");
   const blockEmail = dnc || Boolean(record?.doNotEmail);
   const blockSms = dnc || Boolean(record?.doNotSms);
   const callBlocked = dnc || !session?.vioTalkMapped;
@@ -315,16 +381,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const company = ((record?.companies as { id: string; name: string; role?: string; industry?: string; location?: string }[]) || [])[0];
   const peopleOnOrganization = (record?.people as { person: { id: string; name: string; title: string; status?: string }; roleOnOrganization?: string }[]) || [];
   const internalNotes = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => a.kind === "internal_note");
-  const files = (record?.files as { name: string }[]) || [];
+  const files = (record?.files as { name: string; source?: string; kind?: string }[]) || [];
   const upcoming = (record?.upcoming as { id: string; title: string; dueAt?: string }[]) || [];
   const contactTags = ((record?.tags as string[]) || []).filter((t) => t && t !== record?.status);
   const avail = availabilityBadge(record?.availability, record?.status);
   const canSeeRates = Boolean(session?.permissions.includes("submit") || session?.permissions.includes("po"));
-  const jnpProfileBase = (process.env.NEXT_PUBLIC_JNP_PROFILE_BASE_URL || "https://jobs.nprofiles.example/candidates").replace(
-    /\/$/,
-    "",
-  );
-  const jnpUrl = record?.portalCandidateId ? `${jnpProfileBase}/${String(record.portalCandidateId)}` : "";
+  const jnpUrl = buildJnpProfileUrl(record?.portalCandidateId);
   const relatedPeople = (() => {
     const rows: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[] = [];
     for (const s of ((record?.submissions as { clientPerson?: { id?: string; name?: string; title?: string } }[]) || [])) {
@@ -350,6 +412,15 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
         <Plus className="h-4 w-4" />
         Add user
       </Button>
+    ) : moduleKey === "calendar" ? (
+      <Button
+        onClick={() => setDrawer("meeting")}
+        disabled={!session?.mailbox}
+        title={session?.mailbox ? "Schedule a Teams meeting" : "No mailbox mapped for Outlook / Teams"}
+      >
+        <CalendarDays className="h-4 w-4" />
+        Schedule meeting
+      </Button>
     ) : ["candidates", "clients", "vendors"].includes(moduleKey) ? (
       <Button onClick={() => setDrawer("create")}>
         <Plus className="h-4 w-4" />
@@ -369,7 +440,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
         onMenuChange={(next) => setMenu(next as typeof menu)}
         globalHits={globalHits}
         onSearchGlobal={searchGlobal}
-        onClearHits={() => setGlobalHits(null)}
+        onClearHits={clearGlobalHits}
         onNavigate={(href) => router.push(href)}
         onSignOut={signOut}
         primaryAction={primaryAction}
@@ -400,7 +471,13 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
           <div className="flex-1 overflow-auto">
             {moduleKey === "dashboard" || moduleKey === "reports" ? (
               <DashList dash={dash ? { ...dash, risks: pageSlice.items } : dash} onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)} />
-            ) : moduleKey === "tasks" || moduleKey === "calendar" ? (
+            ) : moduleKey === "calendar" ? (
+              <CalendarAgenda
+                events={pageSlice.items as CalendarItem[]}
+                selectedId={selectedId}
+                onSelect={(id) => select(id)}
+              />
+            ) : moduleKey === "tasks" ? (
               pageSlice.items.map((t) => (
                 <button key={String(t.id)} onClick={() => t.personId && router.push(`/candidates?id=${t.personId}&type=person`)} className="w-full text-left px-4 py-3 border-b hover:bg-slate-50 cursor-pointer">
                   <div className="text-sm font-medium">{String(t.title)}</div>
@@ -539,9 +616,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
           ) : null}
         </section>
 
-        <section className="flex-1 overflow-auto bg-[var(--color-canvas)]">
+        <section className="flex-1 min-h-0 flex flex-col overflow-hidden bg-[var(--color-canvas)]">
           {error ? (
-            <div className="m-4">
+            <div className="m-4 shrink-0">
               <InlineError
                 title="Something went wrong"
                 reason={error}
@@ -554,20 +631,32 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
             </div>
           ) : null}
           {moduleKey === "settings" ? (
-            <SettingsPane
-              data={settings}
-              session={session}
-              busy={busy}
-              selectedUserId={selectedId || null}
-              onAction={act}
+            <div className="flex-1 min-h-0 overflow-auto">
+              <SettingsPane
+                data={settings}
+                session={session}
+                busy={busy}
+                selectedUserId={selectedId || null}
+                onAction={act}
+              />
+            </div>
+          ) : moduleKey === "calendar" ? (
+            <CalendarPane
+              events={calendarEvents}
+              selectedId={selectedId}
+              onSelect={(id) => select(id)}
+              onSchedule={() => setDrawer("meeting")}
+              onOpenHref={(href) => router.push(href)}
+              graphLive={calendarMeta.graphLive}
+              mailbox={session?.mailbox || calendarMeta.mailbox}
             />
           ) : !record && moduleKey !== "dashboard" && moduleKey !== "reports" ? (
             busy ? (
-              <div className="p-6">
+              <div className="flex-1 min-h-0 overflow-auto p-6">
                 <LoadingSkeleton rows={8} />
               </div>
             ) : (
-              <div className="p-8">
+              <div className="flex-1 min-h-0 overflow-auto p-8">
                 <EmptyState
                   title="Select a record"
                   hint="Filters stay when you open, call, or submit. Pick someone from the list to work the next action."
@@ -575,10 +664,16 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               </div>
             )
           ) : moduleKey === "dashboard" || moduleKey === "reports" ? (
-            <DashPane dash={dash} onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)} />
+            <div className="flex-1 min-h-0 overflow-auto">
+              <DashPane
+                dash={dash}
+                onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)}
+                onExport={session?.permissions.includes("export") ? exportOps : undefined}
+              />
+            </div>
           ) : (
-            <div className="min-h-full">
-              <div className="bg-[var(--color-surface)]">
+            <div className="flex-1 min-h-0 flex flex-col">
+              <div className="shrink-0 bg-[var(--color-surface)]">
                 <header className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3">
                   <div className="flex flex-col gap-4 sm:flex-row">
                     <Avatar name={String(record?.name || "")} size={72} />
@@ -611,81 +706,98 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             <Tag tone="green">{String(record?.status || "Active")}</Tag>
                           )}
                           {dnc ? <Tag tone="red">Do not reach</Tag> : null}
-                          <Button variant="secondary" onClick={() => setDrawer("edit")}>
-                            <Pencil className="h-3.5 w-3.5" />
+                          <Button
+                            variant="secondary"
+                            className="!bg-transparent !border-[var(--color-accent)] !text-[var(--color-accent)] hover:!bg-blue-50 hover:!text-[var(--color-accent)]"
+                            onClick={() => setDrawer("edit")}
+                          >
                             Edit
                           </Button>
                           {isCandidate && jnpUrl ? (
-                            <Button variant="secondary" onClick={() => window.open(jnpUrl, "_blank", "noopener")}>
-                              <ExternalLink className="h-3.5 w-3.5" />
+                            <Button
+                              variant="secondary"
+                              className="!bg-transparent !border-[var(--color-accent)] !text-[var(--color-accent)] hover:!bg-blue-50 hover:!text-[var(--color-accent)]"
+                              href={jnpUrl}
+                              title={jnpUrl}
+                            >
                               Open JobsNProfiles
                             </Button>
                           ) : company?.id ? (
-                            <Button variant="secondary" onClick={() => select(company.id, "organization")}>
-                              <Building2 className="h-3.5 w-3.5" />
+                            <Button
+                              variant="secondary"
+                              className="!bg-transparent !border-[var(--color-accent)] !text-[var(--color-accent)] hover:!bg-blue-50 hover:!text-[var(--color-accent)]"
+                              onClick={() => select(company.id, "organization")}
+                            >
                               View Company
                             </Button>
                           ) : null}
                           <div className="relative">
-                            <IconButton icon={MoreHorizontal} label="More actions" onClick={() => setMenu(menu === "more" ? "none" : "more")} />
+                            <IconButton
+                              icon={MoreHorizontal}
+                              label="More actions"
+                              onClick={() => setMenu(menu === "more" ? "none" : "more")}
+                              className="!border !border-[var(--color-accent)] !bg-transparent !text-[var(--color-accent)] hover:!bg-blue-50 hover:!text-[var(--color-accent)]"
+                            />
                             {menu === "more" ? (
                               <div className="absolute right-0 mt-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
-                                <MenuItem icon={Mail} onClick={() => { setMenu("none"); setDrawer("note"); }}>Send Email</MenuItem>
+                                <MenuItem icon={Mail} onClick={() => { setMenu("none"); setDrawer("email"); }}>Send Email</MenuItem>
                                 <MenuItem icon={Phone} disabled={callBlocked} title={callWhy} onClick={() => { setMenu("none"); onCall(); }}>VioTalk Call</MenuItem>
-                                <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
+                                <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("meeting"); }}>Schedule Meeting</MenuItem>
                                 {isCandidate ? <MenuItem icon={CloudUpload} disabled={submitBlocked} title={submitWhy} onClick={() => { setMenu("none"); setDrawer("submit"); }}>Submit Profile</MenuItem> : null}
-                                {isCandidate ? <MenuItem icon={RefreshCw} onClick={() => { setMenu("none"); setDrawer("jnp"); }}>JNP sync</MenuItem> : null}
+                                {isCandidate && canJnpSync ? (
+                                  <MenuItem
+                                    icon={RefreshCw}
+                                    onClick={() => { setMenu("none"); setDrawer("jnp"); }}
+                                  >
+                                    JNP sync
+                                  </MenuItem>
+                                ) : null}
                                 {company?.id && isCandidate ? (
                                   <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem>
+                                ) : null}
+                                {canToggleDnc && !isOrganization ? (
+                                  <MenuItem
+                                    icon={Ban}
+                                    onClick={() => {
+                                      setMenu("none");
+                                      void act({ action: "dnc", personId: selectedId, on: !dnc });
+                                    }}
+                                  >
+                                    {dnc ? "Clear Do not reach" : "Mark Do not reach"}
+                                  </MenuItem>
                                 ) : null}
                               </div>
                             ) : null}
                           </div>
                         </div>
                       </div>
-                      <div className="mt-3 flex flex-col gap-1.5">
-                        <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
-                          {record?.email ? (
-                            <IconChip icon={Mail} tone="blue" onClick={() => setDrawer("note")}>{String(record.email)}</IconChip>
-                          ) : null}
-                          {record?.phone ? (
-                            <span className="inline-flex items-center gap-0.5">
-                              <IconChip icon={Phone} disabled={callBlocked} title={callWhy} onClick={onCall}>
-                                {String(record.phone)}
-                              </IconChip>
-                              <IconOnly icon={WhatsAppIcon} label="WhatsApp" tone="green" disabled title="WhatsApp channel not live in POC" />
-                            </span>
-                          ) : null}
-                          {record?.location ? (
-                            <IconChip icon={MapPin}>{timeZoneHint(record.location)}</IconChip>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
-                          {record?.linkedIn ? (
-                            <IconOnly
-                              icon={LinkedInIcon}
-                              label="LinkedIn"
-                              tone="blue"
-                              href={`https://${String(record.linkedIn).replace(/^https?:\/\//, "")}`}
-                              title={String(record.linkedIn)}
-                            />
-                          ) : isCandidate ? (
-                            <IconOnly icon={LinkedInIcon} label="LinkedIn" tone="blue" disabled title="No LinkedIn on file" />
-                          ) : null}
-                          {record?.portalCandidateId ? (
-                            <IconChip icon={Hash} tone="blue" href={jnpUrl || undefined} title="JobsNProfiles ID">
-                              {String(record.portalCandidateId)}
+                      <div className="mt-3 flex flex-wrap items-center gap-x-1 gap-y-1">
+                        {record?.email ? (
+                          <IconChip icon={Mail} tone="blue" onClick={() => setDrawer("email")}>{String(record.email)}</IconChip>
+                        ) : null}
+                        {record?.phone ? (
+                          <span className="inline-flex items-center gap-0.5">
+                            <IconChip icon={Phone} disabled={callBlocked} title={callWhy} onClick={onCall}>
+                              {String(record.phone)}
                             </IconChip>
-                          ) : null}
-                          {isCandidate ? (
-                            <IconChip icon={Phone} tone="blue" disabled={callBlocked} onClick={onCall} title={callWhy}>
-                              {shortDate(record?.lastOutreachAt, true) || "Call"}
-                            </IconChip>
-                          ) : null}
-                          <IconChip icon={CalendarDays} onClick={() => setDrawer("wrap")} title={String(record?.nextAction || "Follow-up")}>
-                            {shortDate(record?.nextActionDueAt, true) || "Follow-up"}
+                            <IconOnly icon={WhatsAppIcon} label="WhatsApp" tone="green" disabled title="WhatsApp channel not live in POC" />
+                          </span>
+                        ) : null}
+                        {record?.location ? (
+                          <IconChip icon={MapPin}>{timeZoneHint(record.location)}</IconChip>
+                        ) : null}
+                        {record?.linkedIn ? (
+                          <IconChip
+                            icon={LinkedInIcon}
+                            tone="blue"
+                            href={linkedInHref(record.linkedIn)}
+                            title={linkedInHref(record.linkedIn)}
+                          >
+                            {linkedInLabel(record.linkedIn)}
                           </IconChip>
-                        </div>
+                        ) : isCandidate ? (
+                          <IconOnly icon={LinkedInIcon} label="LinkedIn" tone="blue" disabled title="No LinkedIn on file" />
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -699,6 +811,26 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           ]
                             .filter(Boolean)
                             .join(" · ") + " is on for this contact."}
+                    </div>
+                  ) : null}
+                  {pendingOwnership.length && session?.permissions.includes("ownership_transfer") ? (
+                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 space-y-2">
+                      {pendingOwnership.map((r) => (
+                        <div key={r.id} className="flex flex-wrap items-center justify-between gap-2">
+                          <span>
+                            {r.requester?.name || "Someone"} requested {r.type}
+                            {r.note ? ` — ${r.note}` : ""}
+                          </span>
+                          <span className="flex gap-3">
+                            <TextLink onClick={() => void act({ action: "ownership_decide", requestId: r.id, accept: true })}>
+                              Accept
+                            </TextLink>
+                            <TextLink onClick={() => void act({ action: "ownership_decide", requestId: r.id, accept: false })}>
+                              Dismiss
+                            </TextLink>
+                          </span>
+                        </div>
+                      ))}
                     </div>
                   ) : null}
                   {record?.isOwnedByOther ? (
@@ -736,7 +868,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 />
               </div>
 
-              <div className="p-4 sm:p-5 space-y-4">
+              <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-5 space-y-4">
 
                 {tab === "Overview" && !isOrganization ? (
                   isCandidate ? (
@@ -755,10 +887,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Quick Actions" />
                         <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail} onClick={() => setDrawer("note")} label="Send Email" title={blockEmail ? "Do not reach / Do Not Email" : ""} />
+                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "No mailbox mapped for Outlook send" : blockEmail ? "Do not reach / Do Not Email" : ""} />
                           <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
                           <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn onClick={() => setDrawer("wrap")} label="Schedule Meeting" />
+                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "No mailbox mapped for Outlook / Teams" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
                           <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
                           <IconBtn onClick={() => setDrawer("wrap")} label="Add Follow-up" />
                           {session?.permissions.includes("submit") ? (
@@ -768,9 +900,27 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             <IconBtn onClick={() => setMenu(menu === "qa-more" ? "none" : "qa-more")} label="More" />
                             {menu === "qa-more" ? (
                               <div className="absolute left-0 bottom-full mb-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
-                                <MenuItem icon={RefreshCw} onClick={() => { setMenu("none"); setDrawer("jnp"); }}>JNP sync</MenuItem>
+                                {canJnpSync ? (
+                                  <MenuItem
+                                    icon={RefreshCw}
+                                    onClick={() => { setMenu("none"); setDrawer("jnp"); }}
+                                  >
+                                    JNP sync
+                                  </MenuItem>
+                                ) : null}
                                 <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
                                 {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem> : null}
+                                {canToggleDnc ? (
+                                  <MenuItem
+                                    icon={Ban}
+                                    onClick={() => {
+                                      setMenu("none");
+                                      void act({ action: "dnc", personId: selectedId, on: !dnc });
+                                    }}
+                                  >
+                                    {dnc ? "Clear Do not reach" : "Mark Do not reach"}
+                                  </MenuItem>
+                                ) : null}
                               </div>
                             ) : null}
                           </div>
@@ -779,7 +929,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Recent Communication" action={<TextLink onClick={() => setTab("Communication")}>View all</TextLink>} />
                         <div className="px-4 py-3">
-                          <Timeline record={record} embedded />
+                          <Timeline
+                            record={record}
+                            embedded
+                            canPlayRecording={canPlayRecording}
+                            onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
+                          />
                         </div>
                       </Card>
                     </div>
@@ -890,10 +1045,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Quick Actions" />
                         <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail} onClick={() => setDrawer("note")} label="Send Email" title={blockEmail ? "Do not reach / Do Not Email" : ""} />
+                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "No mailbox mapped for Outlook send" : blockEmail ? "Do not reach / Do Not Email" : ""} />
                           <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
                           <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn onClick={() => setDrawer("wrap")} label="Schedule Meeting" />
+                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "No mailbox mapped for Outlook / Teams" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
                           <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
                           <IconBtn onClick={() => setDrawer("wrap")} label="Add Follow-up" />
                           <div className="relative">
@@ -902,6 +1057,17 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                               <div className="absolute left-0 bottom-full mb-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
                                 <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
                                 {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem> : null}
+                                {canToggleDnc ? (
+                                  <MenuItem
+                                    icon={Ban}
+                                    onClick={() => {
+                                      setMenu("none");
+                                      void act({ action: "dnc", personId: selectedId, on: !dnc });
+                                    }}
+                                  >
+                                    {dnc ? "Clear Do not reach" : "Mark Do not reach"}
+                                  </MenuItem>
+                                ) : null}
                               </div>
                             ) : null}
                           </div>
@@ -910,7 +1076,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Recent Communication" action={<TextLink onClick={() => setTab("Communication")}>View all</TextLink>} />
                         <div className="px-4 py-3">
-                          <Timeline record={record} embedded />
+                          <Timeline
+                            record={record}
+                            embedded
+                            canPlayRecording={canPlayRecording}
+                            onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
+                          />
                         </div>
                       </Card>
                       <Card>
@@ -919,8 +1090,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           {files.map((d) => (
                             <li key={d.name}>
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-blue-700 hover:bg-blue-50 cursor-pointer" onClick={() => setTab("Files")}>
-                                <FileText className="h-4 w-4" />
-                                {d.name}
+                                <FileText className="h-4 w-4 shrink-0" />
+                                <span className="min-w-0 truncate flex-1 text-left">{d.name}</span>
+                                <span className="text-[10px] text-slate-500 shrink-0">
+                                  {d.source === "JobsNProfiles" ? "JNP" : "Manual"}
+                                </span>
                               </button>
                             </li>
                           ))}
@@ -983,10 +1157,18 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     relatedPeople={relatedPeople}
                     canAddRequirement={Boolean(isOrganization && ["sales", "operations", "admin"].includes(session?.role || ""))}
                     jnpUrl={jnpUrl}
+                    canPlayRecording={canPlayRecording}
+                    canViewMsa={canViewMsa}
+                    canViewPo={canViewPo}
                     onAddRequirement={() => setDrawer("req")}
                     onAddNote={() => setDrawer("note")}
                     onSubmit={() => setDrawer("submit")}
                     onOpenPerson={(id) => router.push(`/clients?id=${id}&type=person`)}
+                    onAddFile={async ({ name, kind }) => {
+                      await act({ action: "add_person_file", personId: selectedId, name, kind });
+                    }}
+                    onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
+                    onViewCommercial={(kind, id) => act({ action: "view_commercial", kind, id })}
                   />
                 )}
               </div>
@@ -1006,23 +1188,27 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 onSave={async (vals) => {
                   await act({
                     action: "wrap_up",
-                    personId: selectedId,
+                    personId: wrapPersonId || selectedId,
                     activityId: callActivityId,
                     ...vals,
                   });
                   setDrawer("none");
                   setCallActivityId(null);
+                  setWrapPersonId(null);
                 }}
               />
             ) : null}
             {drawer === "submit" ? (
               <SubmitForm
                 requirements={requirements}
+                files={((record?.files as { id?: string; name: string; kind?: string; source?: string }[]) || []).filter((f) => f.name)}
+                defaultResumeName={String(record?.lastResume || "resume.pdf")}
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
                   const data = await act({ action: "submit", candidateId: selectedId, ...vals });
                   if (data) {
                     setCallActivityId(data.activityId);
+                    setWrapPersonId(selectedId);
                     setProposed("Follow up on submission with the client");
                     setDrawer("wrap");
                   }
@@ -1035,12 +1221,63 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 onSave={async (body, visibility) => {
                   await act({ action: "note", personId: selectedId, body, visibility });
                   setProposed("Follow up on this note");
+                  setWrapPersonId(selectedId);
                   setDrawer("wrap");
+                }}
+              />
+            ) : null}
+            {drawer === "email" ? (
+              <EmailForm
+                to={String(record?.email || "")}
+                mailbox={session?.mailbox || null}
+                onClose={() => setDrawer("none")}
+                onSave={async (vals) => {
+                  const data = await act({ action: "send_email", personId: selectedId, ...vals });
+                  if (data) {
+                    setCallActivityId(data.activityId);
+                    setWrapPersonId(selectedId);
+                    setProposed("Follow up if no reply");
+                    setDrawer("wrap");
+                  }
+                }}
+              />
+            ) : null}
+            {drawer === "meeting" ? (
+              <MeetingForm
+                people={
+                  calendarPeople.length
+                    ? calendarPeople
+                    : record
+                      ? [{ id: selectedId, name: String(record.name || ""), email: String(record.email || ""), kind: String(record.kind || ""), title: String(record.title || "") }]
+                      : []
+                }
+                requirements={requirements}
+                defaultPersonId={record?.id ? selectedId : ""}
+                mailbox={session?.mailbox || null}
+                onClose={() => setDrawer("none")}
+                onSave={async (vals) => {
+                  const data = await act({ action: "schedule_meeting", ...vals });
+                  if (data) {
+                    setCallActivityId(data.activityId);
+                    setWrapPersonId(String(vals.personId));
+                    setProposed("Send confirmation / prepare interview pack");
+                    setDrawer("wrap");
+                  }
                 }}
               />
             ) : null}
             {drawer === "jnp" ? (
               <JnpForm
+                mapped={canJnpSync}
+                accessCode={
+                  !session?.jnpAllowed
+                    ? "tenant_not_allowed"
+                    : !(session?.jnpEnabled && session?.jnpUserId)
+                      ? "not_mapped"
+                      : session?.jnpAccessOk
+                        ? "ok"
+                        : session?.jnpAccessCode || "pending"
+                }
                 onClose={() => setDrawer("none")}
                 onSave={async (portalCandidateId) => {
                   const data = await act({ action: "jnp_sync", portalCandidateId });
@@ -1111,6 +1348,21 @@ function fmtDate(v: unknown) {
   return new Date(String(v)).toLocaleString();
 }
 
+function linkedInHref(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  return /^https?:\/\//i.test(text) ? text : `https://${text.replace(/^\/+/, "")}`;
+}
+
+function linkedInLabel(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const clean = text.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+  const match = clean.match(/^(linkedin\.com\/in\/[^/?#]+)/i);
+  if (match?.[1]) return match[1];
+  return clean.replace(/\/$/, "");
+}
+
 function contactLink(kind: "email" | "phone" | "linkedin" | "url", value: unknown, label?: string) {
   const text = String(value ?? "").trim();
   if (!text) return "—";
@@ -1121,13 +1373,9 @@ function contactLink(kind: "email" | "phone" | "linkedin" | "url", value: unknow
     const tel = text.replace(/[^\d+]/g, "");
     return tel ? <TextLink href={`tel:${tel}`}>{text}</TextLink> : text;
   }
-  const href =
-    kind === "linkedin" || kind === "url"
-      ? /^https?:\/\//i.test(text)
-        ? text
-        : `https://${text.replace(/^\/+/, "")}`
-      : "";
-  return href ? <TextLink href={href}>{label || text}</TextLink> : text;
+  const href = kind === "linkedin" || kind === "url" ? linkedInHref(text) : "";
+  const display = kind === "linkedin" ? label || linkedInLabel(text) : label || text;
+  return href ? <TextLink href={href}>{display}</TextLink> : display;
 }
 
 function contactDetailValue(label: string, value: unknown) {
@@ -1232,9 +1480,14 @@ function Candidate360Header({ record }: { record: Record<string, unknown> | null
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-2">
       {items.map(([label, value]) => (
-        <div key={label} className="rounded-lg bg-[#e6f4f1] border border-emerald-100 px-3 py-2">
-          <div className="text-[10px] uppercase tracking-wide text-slate-600">{label}</div>
-          <div className="text-[13px] font-semibold text-slate-900 truncate" title={value}>{value}</div>
+        <div
+          key={label}
+          className="min-w-0 rounded-[var(--radius-md)] border border-blue-100 bg-blue-50/50 px-3 py-2"
+        >
+          <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
+          <div className="text-[13px] font-semibold text-[var(--color-text)] truncate" title={value}>
+            {value}
+          </div>
         </div>
       ))}
     </div>
@@ -1248,10 +1501,16 @@ function RecordTabs({
   relatedPeople,
   canAddRequirement,
   jnpUrl,
+  canPlayRecording,
+  canViewMsa,
+  canViewPo,
   onAddRequirement,
   onAddNote,
   onSubmit,
   onOpenPerson,
+  onAddFile,
+  onViewCall,
+  onViewCommercial,
 }: {
   tab: string;
   record: Record<string, unknown> | null;
@@ -1260,10 +1519,16 @@ function RecordTabs({
   relatedPeople: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[];
   canAddRequirement: boolean;
   jnpUrl: string;
+  canPlayRecording?: boolean;
+  canViewMsa?: boolean;
+  canViewPo?: boolean;
   onAddRequirement: () => void;
   onAddNote: () => void;
   onSubmit: () => void;
   onOpenPerson: (id: string) => void;
+  onAddFile: (v: { name: string; kind: string }) => Promise<void>;
+  onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
+  onViewCommercial?: (kind: "msa" | "po", id: string) => Promise<unknown>;
 }) {
   if (tab === "Overview" && isOrganization) {
     return (
@@ -1298,19 +1563,19 @@ function RecordTabs({
     return <PlacementsPane record={record} />;
   }
   if (tab === "Communication") {
-    return <Timeline record={record} mode="communication" />;
+    return <Timeline record={record} mode="communication" canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
   }
   if (tab === "Activity") {
-    return <Timeline record={record} mode="activity" />;
+    return <Timeline record={record} mode="activity" canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
   }
   if (tab === "Tasks") {
     return <TasksPane record={record} />;
   }
   if (tab === "Notes") {
-    return <Timeline record={record} mode="notes" onAddNote={onAddNote} />;
+    return <Timeline record={record} mode="notes" onAddNote={onAddNote} canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
   }
   if (tab === "Files") {
-    return <FilesPane record={record} />;
+    return <FilesPane record={record} onAddFile={onAddFile} />;
   }
   if (tab === "Relationships" || tab === "People") {
     return <RelationshipsPane record={record} relatedPeople={relatedPeople} onOpen={onOpenPerson} />;
@@ -1320,7 +1585,7 @@ function RecordTabs({
       <Card>
         <CardHeader title="MSA & Purchase Orders" />
         <div className="p-4">
-          <Commercial record={record} />
+          <Commercial record={record} canViewMsa={canViewMsa} canViewPo={canViewPo} onView={onViewCommercial} />
         </div>
       </Card>
     );
@@ -1512,15 +1777,26 @@ function InterviewsPane({ record }: { record: Record<string, unknown> | null }) 
   const rows = (record?.interviews as {
     id: string;
     scheduledAt?: string;
+    endsAt?: string;
     outcome?: string;
+    teamsJoinUrl?: string;
+    location?: string;
     candidate?: { name?: string };
     organization?: { name?: string };
     requirement?: { title?: string };
   }[]) || [];
+  const meetings = (record?.meetings as {
+    id: string;
+    title?: string;
+    startsAt?: string;
+    teamsJoinUrl?: string;
+    location?: string;
+    kind?: string;
+  }[]) || [];
   return (
     <Card>
-      <CardHeader title="Interviews" />
-      {rows.length ? (
+      <CardHeader title="Interviews / Meetings" />
+      {rows.length || meetings.length ? (
         <ul className="divide-y">
           {rows.map((i) => (
             <li key={i.id} className="px-4 py-3 flex items-start gap-3">
@@ -1528,15 +1804,35 @@ function InterviewsPane({ record }: { record: Record<string, unknown> | null }) 
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{i.requirement?.title || "Interview"}</div>
                 <div className="text-xs text-slate-500">
-                  {[i.candidate?.name, i.organization?.name, shortDate(i.scheduledAt)].filter(Boolean).join(" · ")}
+                  {[i.candidate?.name, i.organization?.name, shortDate(i.scheduledAt), i.location].filter(Boolean).join(" · ")}
                 </div>
+                {i.teamsJoinUrl ? (
+                  <a href={i.teamsJoinUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-700 hover:underline">
+                    Join Teams
+                  </a>
+                ) : null}
               </div>
               <Tag tone={i.outcome === "pending" ? "amber" : i.outcome === "passed" ? "green" : "slate"}>{i.outcome || "pending"}</Tag>
             </li>
           ))}
+          {meetings.filter((m) => !rows.some((i) => i.id === m.id)).map((m) => (
+            <li key={m.id} className="px-4 py-3 flex items-start gap-3">
+              <CalendarDays className="h-4 w-4 mt-0.5 text-blue-600 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium">{m.title || "Meeting"}</div>
+                <div className="text-xs text-slate-500">{[shortDate(m.startsAt), m.location].filter(Boolean).join(" · ")}</div>
+                {m.teamsJoinUrl ? (
+                  <a href={m.teamsJoinUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-700 hover:underline">
+                    Join Teams
+                  </a>
+                ) : null}
+              </div>
+              <Tag tone="blue">{m.kind || "meeting"}</Tag>
+            </li>
+          ))}
         </ul>
       ) : (
-        <EmptyState title="No interviews scheduled" hint="Interviews attach to a Submission and Requirement on this record." />
+        <EmptyState title="No interviews scheduled" hint="Use Schedule Meeting to create a Teams call on the calendar. Interviews attach to a Submission and Requirement on this record." />
       )}
     </Card>
   );
@@ -1613,31 +1909,144 @@ function TasksPane({ record }: { record: Record<string, unknown> | null }) {
   );
 }
 
-function FilesPane({ record }: { record: Record<string, unknown> | null }) {
-  const files = (record?.files as { id?: string; name: string; kind?: string; createdAt?: string }[]) || [];
-  const resume = String(record?.lastResume || "");
-  const rows = files.length
-    ? files
-    : resume
-      ? [{ name: resume, kind: "resume" }]
-      : [];
+function FilesPane({
+  record,
+  onAddFile,
+}: {
+  record: Record<string, unknown> | null;
+  onAddFile: (v: { name: string; kind: string }) => Promise<void>;
+}) {
+  const files = (record?.files as {
+    id?: string;
+    name: string;
+    kind?: string;
+    source?: string;
+    externalId?: string | null;
+    createdAt?: string;
+  }[]) || [];
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState("resume");
+  const [saving, setSaving] = useState(false);
+
+  const rows = [...files].sort((a, b) => {
+    const aT = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bT = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return bT - aT;
+  });
+
+  async function saveFile() {
+    const trimmed = name.trim();
+    if (!trimmed || saving) return;
+    setSaving(true);
+    try {
+      await onAddFile({ name: trimmed, kind });
+      setName("");
+      setKind("resume");
+      setAdding(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Card>
-      <CardHeader title="Files" />
+      <CardHeader
+        title="Files"
+        action={
+          <TextLink
+            onClick={() => {
+              setAdding((v) => !v);
+            }}
+          >
+            {adding ? "Cancel" : "Add file"}
+          </TextLink>
+        }
+      />
+      {adding ? (
+        <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2 bg-[var(--color-surface-muted)]">
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Name is required — this label is what appears on the record and in email attachments. Binary upload comes later.
+          </p>
+          <label className="block text-sm">
+            Document name
+            <input
+              className="mt-1 w-full border border-[var(--color-border)] rounded-[var(--radius-md)] px-2 py-2 text-sm"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Jane_Doe_Java.pdf"
+              required
+            />
+          </label>
+          <label className="block text-sm">
+            Type
+            <FieldSelect wrapClassName="mt-1" value={kind} onChange={(e) => setKind(e.target.value)}>
+              <option value="resume">Resume</option>
+              <option value="other">Other document</option>
+            </FieldSelect>
+          </label>
+          <label className="block text-sm">
+            Optional file (fills name)
+            <input
+              type="file"
+              className="mt-1 block w-full text-xs"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file?.name) setName(file.name);
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            className={btnPrimary}
+            disabled={!name.trim() || saving}
+            onClick={() => void saveFile()}
+          >
+            {saving ? "Saving…" : "Save document"}
+          </button>
+        </div>
+      ) : null}
       {rows.length ? (
         <ul className="divide-y">
-          {rows.map((d) => (
-            <li key={d.id || d.name} className="px-4 py-3 flex items-center gap-3">
-              <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium truncate">{d.name}</div>
-                <div className="text-xs text-slate-500">{d.kind || "file"}{d.createdAt ? ` · ${shortDate(d.createdAt)}` : ""}</div>
-              </div>
-            </li>
-          ))}
+          {rows.map((d) => {
+            const fromJnp = d.source === "JobsNProfiles";
+            const canPreview = Boolean(fromJnp && d.externalId && d.id);
+            return (
+              <li key={d.id || d.name} className="px-4 py-3 flex items-center gap-3">
+                <FileText className="h-4 w-4 text-[var(--color-accent)] shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate" title={d.name}>
+                    {d.name}
+                  </div>
+                  <div className="text-xs text-[var(--color-text-muted)] flex flex-wrap items-center gap-1.5 mt-0.5">
+                    <span className="capitalize">{d.kind || "file"}</span>
+                    <Tag tone={fromJnp ? "blue" : "slate"}>{fromJnp ? "JobsNProfiles" : "Manual"}</Tag>
+                    {d.createdAt ? <span>· {shortDate(d.createdAt)}</span> : null}
+                  </div>
+                </div>
+                {canPreview ? (
+                  <a
+                    href={`/api/files/preview?fileId=${encodeURIComponent(String(d.id))}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[12px] font-medium text-[var(--color-accent)] hover:underline shrink-0"
+                  >
+                    Preview
+                  </a>
+                ) : (
+                  <span className="text-[11px] text-[var(--color-text-muted)] shrink-0" title="Manual files are name-only in POC">
+                    Name only
+                  </span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       ) : (
-        <EmptyState title="No files" hint="Resumes and files on this record appear here. JobsNProfiles remains the profile source." />
+        <EmptyState
+          title="No files"
+          hint="Add a resume or other document with a clear name for email."
+        />
       )}
     </Card>
   );
@@ -1714,13 +2123,18 @@ function Timeline({
   mode = "communication",
   onAddNote,
   embedded,
+  canPlayRecording,
+  onViewCall,
 }: {
   record: Record<string, unknown> | null;
   mode?: "communication" | "activity" | "notes";
   onAddNote?: () => void;
   embedded?: boolean;
+  canPlayRecording?: boolean;
+  onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
 }) {
   const [channel, setChannel] = useState("All");
+  const [viewed, setViewed] = useState<Record<string, string>>({});
   const items = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => {
     const kind = String(a.kind);
     if (mode === "notes") return kind === "note" || kind === "internal_note";
@@ -1729,6 +2143,7 @@ function Timeline({
       if (!comm) return false;
       if (channel === "Emails") return kind === "email";
       if (channel === "Calls") return kind === "call";
+      if (channel === "Meetings") return kind === "meeting";
       if (channel === "Notes") return kind === "note" || kind === "internal_note";
       return true;
     }
@@ -1739,7 +2154,7 @@ function Timeline({
       <div className={embedded ? "" : "px-4 py-3"}>
       {mode === "communication" ? (
         <div className="flex flex-wrap gap-2 mb-3 text-xs">
-          {["All", "Emails", "Calls", "Notes"].map((c) => (
+          {["All", "Emails", "Calls", "Meetings", "Notes"].map((c) => (
             <button
               key={c}
               onClick={() => setChannel(c)}
@@ -1762,10 +2177,66 @@ function Timeline({
             </div>
             {a.body && mode === "notes" ? <div className="text-sm mt-1 text-slate-700">{String(a.body)}</div> : null}
             {a.aiSummary ? <div className="text-xs mt-1 text-slate-600">{String(a.aiSummary)}</div> : null}
+            {a.kind === "meeting" && String(a.body || "").includes("https://teams.microsoft.com") ? (
+              <a
+                href={String(a.body).split("Teams: ").pop()?.trim()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block text-xs text-blue-700 hover:underline"
+              >
+                Join Teams
+              </a>
+            ) : null}
             {a.kind === "call" ? (
-              <div className="mt-1 flex gap-3 text-xs">
-                {a.recordingRef ? <span className="text-slate-500">Recording {String(a.recordingRef)}</span> : null}
-                {a.transcriptRef ? <span className="text-slate-500">Transcript {String(a.transcriptRef)}</span> : null}
+              <div className="mt-1 flex flex-wrap gap-3 text-xs">
+                {a.recordingRef ? (
+                  canPlayRecording && onViewCall && String(a.recordingRef) !== "[hidden]" ? (
+                    <button
+                      type="button"
+                      className="text-blue-700 hover:underline cursor-pointer"
+                      onClick={async () => {
+                        const data = await onViewCall(String(a.id), "recording");
+                        if (data) {
+                          setViewed((prev) => ({
+                            ...prev,
+                            [`${String(a.id)}-recording`]: "View recorded — playback is not available in POC",
+                          }));
+                        }
+                      }}
+                    >
+                      View recording
+                    </button>
+                  ) : (
+                    <span className="text-slate-500">Recording {String(a.recordingRef)}</span>
+                  )
+                ) : null}
+                {a.transcriptRef ? (
+                  canPlayRecording && onViewCall && String(a.transcriptRef) !== "[hidden]" ? (
+                    <button
+                      type="button"
+                      className="text-blue-700 hover:underline cursor-pointer"
+                      onClick={async () => {
+                        const data = await onViewCall(String(a.id), "transcript");
+                        if (data) {
+                          setViewed((prev) => ({
+                            ...prev,
+                            [`${String(a.id)}-transcript`]: "View recorded — transcript is not downloaded in POC",
+                          }));
+                        }
+                      }}
+                    >
+                      View transcript
+                    </button>
+                  ) : (
+                    <span className="text-slate-500">Transcript {String(a.transcriptRef)}</span>
+                  )
+                ) : null}
+                {viewed[`${String(a.id)}-recording`] ? (
+                  <span className="w-full text-slate-500">{viewed[`${String(a.id)}-recording`]}</span>
+                ) : null}
+                {viewed[`${String(a.id)}-transcript`] ? (
+                  <span className="w-full text-slate-500">{viewed[`${String(a.id)}-transcript`]}</span>
+                ) : null}
               </div>
             ) : null}
           </li>
@@ -1786,7 +2257,18 @@ function Timeline({
     </Card>
   );
 }
-function Commercial({ record }: { record: Record<string, unknown> | null }) {
+function Commercial({
+  record,
+  canViewMsa,
+  canViewPo,
+  onView,
+}: {
+  record: Record<string, unknown> | null;
+  canViewMsa?: boolean;
+  canViewPo?: boolean;
+  onView?: (kind: "msa" | "po", id: string) => Promise<unknown>;
+}) {
+  const [notice, setNotice] = useState<Record<string, string>>({});
   const pos = (record?.purchaseOrders as Record<string, unknown>[]) || [];
   const msas = (record?.msaDocuments as Record<string, unknown>[]) || [];
   return (
@@ -1794,8 +2276,28 @@ function Commercial({ record }: { record: Record<string, unknown> | null }) {
       <div>
         <h3 className="font-semibold">MSA</h3>
         {msas.map((m) => (
-          <div key={String(m.id)}>
-            {String(m.number)} · {String(m.status)} · expires {fmtDate(m.expiresAt)}
+          <div key={String(m.id)} className="flex flex-wrap items-center gap-2 py-1">
+            <span>
+              {String(m.number)} · {String(m.status)} · expires {fmtDate(m.expiresAt)}
+            </span>
+            {canViewMsa && onView ? (
+              <button
+                type="button"
+                className="text-xs text-blue-700 hover:underline cursor-pointer"
+                onClick={async () => {
+                  const data = await onView("msa", String(m.id));
+                  if (data) {
+                    setNotice((prev) => ({
+                      ...prev,
+                      [String(m.id)]: "View recorded — file download is not available in POC",
+                    }));
+                  }
+                }}
+              >
+                View
+              </button>
+            ) : null}
+            {notice[String(m.id)] ? <span className="w-full text-xs text-slate-500">{notice[String(m.id)]}</span> : null}
           </div>
         ))}
         {!msas.length ? <div className="text-slate-400">None on file</div> : null}
@@ -1803,8 +2305,28 @@ function Commercial({ record }: { record: Record<string, unknown> | null }) {
       <div>
         <h3 className="font-semibold">PO</h3>
         {pos.map((p) => (
-          <div key={String(p.id)}>
-            {String(p.number)} · {p.ceiling == null ? "amount hidden" : `$${p.utilized} / $${p.ceiling}`}
+          <div key={String(p.id)} className="flex flex-wrap items-center gap-2 py-1">
+            <span>
+              {String(p.number)} · {p.ceiling == null ? "amount hidden" : `$${p.utilized} / $${p.ceiling}`}
+            </span>
+            {canViewPo && onView ? (
+              <button
+                type="button"
+                className="text-xs text-blue-700 hover:underline cursor-pointer"
+                onClick={async () => {
+                  const data = await onView("po", String(p.id));
+                  if (data) {
+                    setNotice((prev) => ({
+                      ...prev,
+                      [String(p.id)]: "View recorded — file download is not available in POC",
+                    }));
+                  }
+                }}
+              >
+                View
+              </button>
+            ) : null}
+            {notice[String(p.id)] ? <span className="w-full text-xs text-slate-500">{notice[String(p.id)]}</span> : null}
           </div>
         ))}
         {!pos.length ? <div className="text-slate-400">None on file</div> : null}
@@ -1856,18 +2378,34 @@ function WrapForm({
 }
 function SubmitForm({
   requirements,
+  files,
+  defaultResumeName,
   onClose,
   onSave,
 }: {
   requirements: Record<string, unknown>[];
+  files: { id?: string; name: string; kind?: string; source?: string }[];
+  defaultResumeName: string;
   onClose: () => void;
   onSave: (v: { requirementId: string; clientPersonId: string; message: string; resumeName: string }) => Promise<void>;
 }) {
+  const resumeOptions = [...files].sort((a, b) => {
+    const aResume = a.kind === "resume" ? 0 : 1;
+    const bResume = b.kind === "resume" ? 0 : 1;
+    if (aResume !== bResume) return aResume - bResume;
+    return String(a.name).localeCompare(String(b.name));
+  });
+  const initial =
+    resumeOptions.find((f) => f.kind === "resume")?.name ||
+    resumeOptions[0]?.name ||
+    defaultResumeName ||
+    "resume.pdf";
   const [requirementId, setRequirementId] = useState(String(requirements[0]?.id || ""));
   const selectedReq = requirements.find((r) => String(r.id) === requirementId);
   const hiringManager = selectedReq?.hiringManager as { id?: string; name?: string } | undefined;
   const [clientPersonId, setClientPersonId] = useState(String(hiringManager?.id || ""));
-  const [resumeName, setResumeName] = useState("resume.pdf");
+  const [resumeName, setResumeName] = useState(initial);
+  const [customResume, setCustomResume] = useState(!resumeOptions.some((f) => f.name === initial));
   const [message, setMessage] = useState("Please find the attached profile for your open requirement.");
   return (
     <form
@@ -1878,7 +2416,7 @@ function SubmitForm({
           requirementId,
           clientPersonId: clientPersonId || String(hiringManager?.id || ""),
           message,
-          resumeName,
+          resumeName: resumeName.trim() || "resume.pdf",
         });
       }}
     >
@@ -1911,9 +2449,44 @@ function SubmitForm({
         </FieldSelect>
       </label>
       <label className="block text-sm">
-        Resume
-        <input className="w-full border rounded px-2 py-2" value={resumeName} onChange={(e) => setResumeName(e.target.value)} />
+        Resume / document name
+        {resumeOptions.length && !customResume ? (
+          <FieldSelect
+            wrapClassName="mt-1"
+            value={resumeName}
+            onChange={(e) => {
+              if (e.target.value === "__custom__") {
+                setCustomResume(true);
+                return;
+              }
+              setResumeName(e.target.value);
+            }}
+            required
+          >
+            {resumeOptions.map((f) => (
+              <option key={f.id || f.name} value={f.name}>
+                {f.name}
+                {f.kind === "resume" ? " (resume)" : ""}
+                {f.source === "JobsNProfiles" ? " · JNP" : " · Manual"}
+              </option>
+            ))}
+            <option value="__custom__">Other name…</option>
+          </FieldSelect>
+        ) : (
+          <input
+            className="mt-1 w-full border rounded px-2 py-2"
+            value={resumeName}
+            onChange={(e) => setResumeName(e.target.value)}
+            required
+          />
+        )}
       </label>
+      {customResume && resumeOptions.length ? (
+        <button type="button" className="text-xs text-blue-700 cursor-pointer" onClick={() => setCustomResume(false)}>
+          Choose from Files list
+        </button>
+      ) : null}
+      <p className="text-xs text-slate-500">Attachment label for Outlook: {resumeName.trim() || "resume.pdf"}</p>
       <textarea className="w-full border rounded px-2 py-2 h-28" value={message} onChange={(e) => setMessage(e.target.value)} />
       <div className="flex gap-2">
         <button className={btnPrimary}>Send</button>
@@ -2187,6 +2760,193 @@ function EditForm({
     </form>
   );
 }
+function toLocalInput(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function EmailForm({
+  to,
+  mailbox,
+  onClose,
+  onSave,
+}: {
+  to: string;
+  mailbox: string | null;
+  onClose: () => void;
+  onSave: (v: { to: string; subject: string; body: string }) => Promise<void>;
+}) {
+  const [dest, setDest] = useState(to);
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave({ to: dest, subject, body });
+      }}
+    >
+      <h2 className="text-lg font-semibold">Send Email</h2>
+      <p className="text-xs text-slate-500">
+        Compose here. Send through the signed-in user&apos;s Outlook mailbox. No template catalog.
+        {mailbox ? ` From ${mailbox}.` : " Map a mailbox in Settings first."}
+      </p>
+      <Label>To</Label>
+      <FieldInput type="email" required value={dest} onChange={(e) => setDest(e.target.value)} />
+      <Label>Subject</Label>
+      <FieldInput required value={subject} onChange={(e) => setSubject(e.target.value)} />
+      <textarea className="w-full border rounded px-2 py-2 h-36" required value={body} onChange={(e) => setBody(e.target.value)} />
+      <div className="flex gap-2">
+        <button className={btnPrimary} disabled={!mailbox}>
+          Send via Outlook
+        </button>
+        <button type="button" className={btnGhost} onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function MeetingForm({
+  people,
+  requirements,
+  defaultPersonId,
+  mailbox,
+  onClose,
+  onSave,
+}: {
+  people: { id: string; name: string; email: string; kind: string; title: string }[];
+  requirements: Record<string, unknown>[];
+  defaultPersonId: string;
+  mailbox: string | null;
+  onClose: () => void;
+  onSave: (v: {
+    personId: string;
+    title: string;
+    startsAt: string;
+    endsAt: string;
+    body: string;
+    extraAttendees: string;
+    teams: boolean;
+    requirementId?: string;
+    asInterview: boolean;
+  }) => Promise<void>;
+}) {
+  const startDefault = (() => {
+    const d = new Date();
+    d.setMinutes(0, 0, 0);
+    d.setHours(d.getHours() + 1);
+    return d;
+  })();
+  const [personId, setPersonId] = useState(defaultPersonId || people[0]?.id || "");
+  const selected = people.find((p) => p.id === personId);
+  const [title, setTitle] = useState(selected ? `Meeting with ${selected.name}` : "");
+  const [start, setStart] = useState(toLocalInput(startDefault));
+  const [duration, setDuration] = useState("30");
+  const [body, setBody] = useState("");
+  const [extra, setExtra] = useState("");
+  const [teams, setTeams] = useState(true);
+  const [asInterview, setAsInterview] = useState(selected?.kind === "candidate");
+  const [requirementId, setRequirementId] = useState(String(requirements[0]?.id || ""));
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const startsAt = new Date(start);
+        const endsAt = new Date(startsAt.getTime() + Number(duration) * 60000);
+        onSave({
+          personId,
+          title,
+          startsAt: startsAt.toISOString(),
+          endsAt: endsAt.toISOString(),
+          body,
+          extraAttendees: extra,
+          teams,
+          requirementId: asInterview ? requirementId : undefined,
+          asInterview,
+        });
+      }}
+    >
+      <h2 className="text-lg font-semibold">Schedule meeting</h2>
+      <p className="text-xs text-slate-500">
+        Creates a Microsoft Teams meeting on the mapped Outlook calendar and a TalentBridge calendar item. Wrap-up is required after scheduling.
+        {mailbox ? ` Organizer mailbox ${mailbox}.` : " Map a mailbox in Settings first."}
+      </p>
+      <label className="block text-sm">
+        With
+        <FieldSelect wrapClassName="mt-1" value={personId} onChange={(e) => {
+          const next = e.target.value;
+          setPersonId(next);
+          const p = people.find((x) => x.id === next);
+          if (p) {
+            setTitle((current) => (current.startsWith("Meeting with") || current.startsWith("Interview") ? `Meeting with ${p.name}` : current));
+            setAsInterview(p.kind === "candidate");
+          }
+        }} required>
+          <option value="">Select a person</option>
+          {people.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} {p.email ? `· ${p.email}` : ""} {p.kind === "candidate" ? "(candidate)" : p.kind === "client_person" ? "(client)" : ""}
+            </option>
+          ))}
+        </FieldSelect>
+      </label>
+      <Label>Title</Label>
+      <FieldInput required value={title} onChange={(e) => setTitle(e.target.value)} />
+      <Label>Start</Label>
+      <FieldInput type="datetime-local" required value={start} onChange={(e) => setStart(e.target.value)} />
+      <label className="block text-sm">
+        Duration
+        <FieldSelect wrapClassName="mt-1" value={duration} onChange={(e) => setDuration(e.target.value)}>
+          <option value="15">15 minutes</option>
+          <option value="30">30 minutes</option>
+          <option value="45">45 minutes</option>
+          <option value="60">60 minutes</option>
+        </FieldSelect>
+      </label>
+      <Label>Extra attendees</Label>
+      <FieldInput value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="other@client.com" />
+      <textarea className="w-full border rounded px-2 py-2 h-24" value={body} onChange={(e) => setBody(e.target.value)} placeholder="Agenda" />
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={teams} onChange={(e) => setTeams(e.target.checked)} />
+        Create Microsoft Teams meeting
+      </label>
+      {selected?.kind === "candidate" && requirements.length ? (
+        <>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={asInterview} onChange={(e) => setAsInterview(e.target.checked)} />
+            Also create an Interview on the selected job
+          </label>
+          {asInterview ? (
+            <label className="block text-sm">
+              Requirement
+              <FieldSelect wrapClassName="mt-1" value={requirementId} onChange={(e) => setRequirementId(e.target.value)} required>
+                {requirements.map((r) => (
+                  <option key={String(r.id)} value={String(r.id)}>
+                    {String((r.organization as { name?: string } | undefined)?.name || "")} — {String(r.title)}
+                  </option>
+                ))}
+              </FieldSelect>
+            </label>
+          ) : null}
+        </>
+      ) : null}
+      <div className="flex gap-2">
+        <button className={btnPrimary} disabled={!mailbox || !personId}>
+          Schedule
+        </button>
+        <button type="button" className={btnGhost} onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function NoteForm({ onClose, onSave }: { onClose: () => void; onSave: (body: string, vis: "shared" | "internal") => Promise<void> }) {
   const [body, setBody] = useState("");
   const [vis, setVis] = useState<"shared" | "internal">("shared");
@@ -2213,21 +2973,58 @@ function NoteForm({ onClose, onSave }: { onClose: () => void; onSave: (body: str
     </form>
   );
 }
-function JnpForm({ onClose, onSave }: { onClose: () => void; onSave: (id: string) => Promise<void> }) {
+function JnpForm({
+  onClose,
+  onSave,
+  mapped,
+  accessCode,
+}: {
+  onClose: () => void;
+  onSave: (id: string) => Promise<void>;
+  mapped?: boolean;
+  accessCode?: string;
+}) {
   const [id, setId] = useState("JNP-104582");
+  const denied =
+    accessCode === "requester_disabled"
+      ? "Your JobsNProfiles user is disabled. Re-enable it in JobsNProfiles, then sign in again."
+      : accessCode === "subscription_inactive"
+        ? "JobsNProfiles subscription is missing or expired. Renew it, then sign in again."
+        : accessCode === "requester_unknown"
+          ? "Mapped JobsNProfiles user was not found. Ask an administrator to re-authenticate the JNP map."
+          : accessCode === "tenant_not_allowed"
+            ? "JobsNProfiles is not allowed for this organization. A platform administrator must enable it on the tenant."
+            : accessCode === "pending" || accessCode === "error"
+              ? "JobsNProfiles access is still confirming from sign-in. You can try Pull; the first request will refresh access if needed."
+              : accessCode && accessCode !== "ok" && accessCode !== "not_mapped"
+                ? "JobsNProfiles access was not confirmed. Sign in again, or ask an administrator to Authenticate in Settings → JNP map."
+                : "";
   return (
     <form
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
+        if (!mapped) return;
         onSave(id);
       }}
     >
-      <h2 className="text-lg font-semibold">JobsNProfiles one-way sync</h2>
-      <p className="text-xs">Never writes back. Collision goes to duplicate queue.</p>
-      <input className="w-full border rounded px-2 py-2" value={id} onChange={(e) => setId(e.target.value)} />
+      <h2 className="text-lg font-semibold">Sync candidate from JobsNProfiles</h2>
+      <p className="text-xs">One-way candidate pull. Never writes back. Collision goes to the duplicate queue.</p>
+      <p className="text-xs text-slate-600">
+        Entitlement refreshes in the background at sign-in and again if the snapshot is older than 2 hours. Sync and preview are rate-limited per user and organization.
+      </p>
+      {!mapped && accessCode === "not_mapped" ? (
+        <p className="text-xs text-red-700">
+          No JobsNProfiles recruiter mapped for you, and this tenant has no JNP account id. Ask an administrator to map one in Settings → JNP map.
+        </p>
+      ) : null}
+      {!mapped && denied && accessCode !== "not_mapped" ? <p className="text-xs text-red-700">{denied}</p> : null}
+      {mapped && denied ? <p className="text-xs text-amber-800">{denied}</p> : null}
+      <input className="w-full border rounded px-2 py-2" value={id} onChange={(e) => setId(e.target.value)} disabled={!mapped} />
       <div className="flex gap-2">
-        <button className={btnPrimary}>Pull</button>
+        <button className={btnPrimary} disabled={!mapped}>
+          Pull
+        </button>
         <button type="button" className={btnGhost} onClick={onClose}>
           Cancel
         </button>

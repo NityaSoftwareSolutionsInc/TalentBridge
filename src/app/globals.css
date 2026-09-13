@@ -174,3 +174,72 @@ select:not([multiple])::-ms-expand {
     background-position: -100% 0;
   }
 }
+
+@keyframes tb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes tb-spin-rev {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+
+@keyframes tb-loader-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes tb-loader-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tb-spin {
+  animation: tb-spin 2.4s linear infinite;
+}
+
+.tb-spin-rev {
+  animation: tb-spin-rev 1.05s linear infinite;
+}
+
+.tb-loader-overlay {
+  animation: tb-loader-fade 180ms ease-out;
+}
+
+.tb-loader-card {
+  animation: tb-loader-rise 220ms ease-out;
+}
+
+.tb-loader-ring {
+  background: conic-gradient(
+    from 0deg,
+    rgba(37, 99, 235, 0) 0deg,
+    rgba(37, 99, 235, 0) 210deg,
+    rgba(37, 99, 235, 0.18) 280deg,
+    var(--color-accent) 360deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tb-spin,
+  .tb-spin-rev,
+  .tb-loader-overlay,
+  .tb-loader-card {
+    animation: none !important;
+  }
+}

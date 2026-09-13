@@ -94,6 +94,7 @@ export function Button({
   disabled,
   className,
   title,
+  href,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -102,6 +103,8 @@ export function Button({
   disabled?: boolean;
   className?: string;
   title?: string;
+  /** When set, renders as a link (for external actions like Open JobsNProfiles). */
+  href?: string;
 }) {
   const styles = {
     primary:
@@ -112,17 +115,25 @@ export function Button({
     danger:
       "bg-[var(--color-surface)] text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)] border-[var(--color-danger-border)]",
   };
+  const classNames = cn(
+    "inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] border px-3 h-8 text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none",
+    styles[variant],
+    className,
+  );
+  if (href && !disabled) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" title={title} className={classNames}>
+        {children}
+      </a>
+    );
+  }
   return (
     <button
       type={type}
       title={title}
       disabled={disabled}
       onClick={onClick}
-      className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-[var(--radius-md)] border px-3 h-8 text-[13px] font-medium transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none",
-        styles[variant],
-        className,
-      )}
+      className={classNames}
     >
       {children}
     </button>

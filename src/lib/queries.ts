@@ -11,12 +11,27 @@ import { audit } from "./audit";
 import { prisma } from "./db";
 import { integrations } from "@/integrations";
 import { jnpHttpConfigured } from "@/integrations/jobsNProfilesHttp";
+import { graphConfigured } from "@/integrations/graph";
+import type { JnpProfile } from "@/integrations/types";
 import type { Session } from "./auth";
 import { canSeePoAmounts } from "./rbac";
+import { listCalendarItems, listCalendarPeople } from "./calendar";
 import { tenantSettings } from "./settings";
 import { appBaseUrl, issuePasswordEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
 import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
+import {
+  codeFromJnpError,
+  jnpAccessDeniedMessage,
+  refreshJnpAccessForUser,
+  stampJnpAccessForUnmappedUsers,
+  storeJnpAccessSnapshot,
+} from "./jnp-access";
+import {
+  assertJnpPreviewRateLimit,
+  assertJnpSyncRateLimit,
+  ensureJnpCaller,
+} from "./jnp-gate";
 
 function personAuditFields(p: {
   name?: string | null;
@@ -136,6 +151,7 @@ export async function searchPeople(
     location: true,
     status: true,
     source: true,
+    createdAt: true,
     lastOutreachAt: true,
     nextAction: true,
     nextActionDueAt: true,
@@ -191,7 +207,7 @@ export async function searchPeople(
         ],
       },
       select: listSelect,
-      orderBy: { lastOutreachAt: "desc" },
+      orderBy: [{ createdAt: "desc" }, { lastOutreachAt: "desc" }],
       take: 100,
     });
     return people.map((c) => serializePersonList(c));
@@ -268,7 +284,7 @@ export async function searchPeople(
       ],
     },
     select: listSelect,
-    orderBy: { lastOutreachAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { lastOutreachAt: "desc" }],
     take: 100,
   });
 
@@ -292,6 +308,7 @@ export async function getPersonWorkspace(session: Session, personId: string) {
       interviews: { include: { requirement: true, organization: true } },
       placements: { include: { organization: true, requirement: true } },
       ownershipReqs: { where: { status: "pending" }, include: { requester: true } },
+      calendarEvents: { orderBy: { startsAt: "asc" }, take: 20 },
     },
   });
   if (!c) return null;
@@ -322,43 +339,129 @@ export async function getOrganizationWorkspace(session: Session, organizationId:
       files: true,
       activityEvents: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 40 },
       tasks: { include: { owner: true }, orderBy: { dueAt: "asc" } },
+      calendarEvents: { orderBy: { startsAt: "asc" }, take: 20 },
     },
   });
   if (!a) return null;
   return serializeOrganizationDetail(a, session);
 }
 
+function searchTokens(q: string) {
+  return [...new Set(q.split(/[\s,+/]+/).map((s) => s.trim()).filter((s) => s.length >= 2))];
+}
+
+function hayAny(hay: string, tokens: string[]) {
+  const h = hay.toLowerCase();
+  return tokens.some((t) => h.includes(t.toLowerCase()));
+}
+
+function formatSearchDate(value: Date) {
+  return value.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function conversationChannel(kind: string, source: string) {
+  const k = kind.toLowerCase();
+  const s = source.toLowerCase();
+  if (k.includes("whatsapp") || s.includes("whatsapp")) return "WhatsApp";
+  if (k === "email" || s.includes("outlook")) return "Email";
+  if (k === "meeting") return "Meeting";
+  if (k === "call" || s.includes("viotalk")) return "VioTalk";
+  if (k === "note") return "Note";
+  return "Activity";
+}
+
+function fileKindLabel(name: string, kind: string) {
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  if (["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt"].includes(ext)) return ext;
+  return kind || "file";
+}
+
 export async function globalSearch(session: Session, q: string) {
   const tenantId = session.tenantId;
-  if (!q.trim()) return { candidates: [], clients: [], vendors: [], conversations: [], files: [] };
+  const empty = {
+    candidates: [],
+    clients: [],
+    contacts: [],
+    companies: [],
+    vendors: [],
+    conversations: [],
+    documents: [],
+  };
+  const query = q.trim();
+  if (!query) return empty;
+  const tokens = searchTokens(query);
+  const needles = tokens.length ? tokens : [query];
 
   const [people, organizations, activityEvents, files] = await Promise.all([
     prisma.person.findMany({
       where: {
         tenantId,
-        OR: [
-          { name: { contains: q, mode: "insensitive" } },
-          { email: { contains: q, mode: "insensitive" } },
-          { title: { contains: q, mode: "insensitive" } },
-        ],
+        OR: needles.flatMap((t) => [
+          { name: { contains: t, mode: "insensitive" as const } },
+          { email: { contains: t, mode: "insensitive" as const } },
+          { title: { contains: t, mode: "insensitive" as const } },
+          { location: { contains: t, mode: "insensitive" as const } },
+        ]),
       },
-      take: 16,
+      include: {
+        affiliations: { include: { organization: { select: { id: true, name: true } } }, take: 1 },
+      },
+      take: 40,
     }),
     prisma.organization.findMany({
-      where: { tenantId, name: { contains: q, mode: "insensitive" } },
-      include: { roles: true },
-      take: 8,
+      where: {
+        tenantId,
+        OR: [
+          ...needles.map((t) => ({ name: { contains: t, mode: "insensitive" as const } })),
+          ...needles.map((t) => ({ industry: { contains: t, mode: "insensitive" as const } })),
+          {
+            requirements: {
+              some: {
+                OR: needles.flatMap((t) => [
+                  { title: { contains: t, mode: "insensitive" as const } },
+                  { location: { contains: t, mode: "insensitive" as const } },
+                ]),
+              },
+            },
+          },
+        ],
+      },
+      include: {
+        roles: true,
+        msaDocuments: { select: { id: true, status: true }, take: 1, orderBy: { createdAt: "desc" } },
+        requirements: {
+          where: { status: "open" },
+          orderBy: { openedAt: "desc" },
+          take: 1,
+          select: { title: true, location: true, skills: true },
+        },
+      },
+      take: 16,
     }),
     prisma.activityEvent.findMany({
       where: {
         tenantId,
-        OR: [{ summary: { contains: q, mode: "insensitive" } }, { body: { contains: q, mode: "insensitive" } }],
+        OR: needles.flatMap((t) => [
+          { summary: { contains: t, mode: "insensitive" as const } },
+          { body: { contains: t, mode: "insensitive" as const } },
+        ]),
       },
-      take: 8,
+      orderBy: { createdAt: "desc" },
+      take: 16,
     }),
     prisma.storedFile.findMany({
-      where: { tenantId, name: { contains: q, mode: "insensitive" } },
-      take: 8,
+      where: {
+        tenantId,
+        OR: needles.map((t) => ({ name: { contains: t, mode: "insensitive" as const } })),
+      },
+      orderBy: { createdAt: "desc" },
+      take: 12,
     }),
   ]);
 
@@ -367,34 +470,100 @@ export async function globalSearch(session: Session, q: string) {
       ? snippet
       : snippet.replace(/\bPO[- ]?\d+\b/gi, "[restricted]").replace(/recording/gi, "[restricted]");
 
+  const matchedPeople = people.filter((p) =>
+    hayAny(
+      [p.name, p.title, p.email, p.location, p.preferredLocation, p.portalCandidateId || "", p.skills.join(" ")].join(" "),
+      needles,
+    ),
+  );
+  const matchedOrgs = organizations.filter((o) =>
+    hayAny(
+      [o.name, o.industry, o.status, ...o.requirements.map((r) => `${r.title} ${r.location} ${r.skills.join(" ")}`)].join(" "),
+      needles,
+    ),
+  );
+
   return {
-    candidates: people
+    candidates: matchedPeople
       .filter((c) => c.kind === PersonKind.candidate)
-      .map((c) => ({ id: c.id, name: c.name, title: c.title, module: "candidates", type: "person" })),
-    clients: [
-      ...people
-        .filter((c) => c.kind === PersonKind.client_person)
-        .map((c) => ({ id: c.id, name: c.name, module: "clients", type: "person" })),
-      ...organizations
-        .filter((a) => a.roles.some((r) => r.role === "client"))
-        .map((a) => ({ id: a.id, name: a.name, module: "clients", type: "organization" })),
-    ],
-    vendors: [
-      ...people
-        .filter((c) => c.kind === PersonKind.vendor_person)
-        .map((c) => ({ id: c.id, name: c.name, module: "vendors", type: "person" })),
-      ...organizations
-        .filter((a) => a.roles.some((r) => r.role === "vendor"))
-        .map((a) => ({ id: a.id, name: a.name, module: "vendors", type: "organization" })),
-    ],
-    conversations: activityEvents.map((a) => ({
+      .slice(0, 8)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        title: c.title,
+        skills: c.skills.slice(0, 4),
+        location: c.location,
+        portalCandidateId: c.portalCandidateId || undefined,
+        availability: c.availability || undefined,
+        module: "candidates",
+        type: "person",
+      })),
+    clients: matchedOrgs
+      .filter((a) => a.roles.some((r) => r.role === OrganizationRoleKind.client))
+      .slice(0, 6)
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        subtitle: a.requirements[0]?.title ? `hiring ${a.requirements[0].title}` : a.industry,
+        module: "clients",
+        type: "organization",
+      })),
+    contacts: matchedPeople
+      .filter((c) => c.kind === PersonKind.client_person || c.kind === PersonKind.vendor_person)
+      .slice(0, 6)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        title: c.title,
+        company: c.affiliations[0]?.organization.name,
+        module: c.kind === PersonKind.vendor_person ? "vendors" : "clients",
+        type: "person",
+      })),
+    companies: matchedOrgs.slice(0, 6).map((a) => ({
       id: a.id,
-      name: strip(a.summary),
-      personId: a.personId,
-      organizationId: a.organizationId,
-      module: a.personId ? "candidates" : "clients",
+      name: a.name,
+      module: a.roles.some((r) => r.role === OrganizationRoleKind.vendor) ? "vendors" : "clients",
+      type: "organization",
+      chips: [
+        ...(a.msaDocuments.length ? [{ label: "MSA", tone: "blue" as const }] : []),
+        ...(a.status ? [{ label: a.status, tone: a.status === "active" ? ("green" as const) : ("slate" as const) }] : []),
+      ],
     })),
-    files: files.map((d) => ({ id: d.id, name: d.name, module: "clients" })),
+    vendors: matchedOrgs
+      .filter((a) => a.roles.some((r) => r.role === OrganizationRoleKind.vendor))
+      .slice(0, 6)
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        subtitle: a.industry,
+        module: "vendors",
+        type: "organization",
+      })),
+    conversations: activityEvents
+      .filter((a) => hayAny(`${a.summary} ${a.body}`, needles))
+      .slice(0, 6)
+      .map((a) => ({
+        id: a.id,
+        name: strip(a.summary),
+        snippet: strip((a.body || a.summary).replace(/\s+/g, " ").trim()).slice(0, 160),
+        channel: conversationChannel(a.kind, a.source),
+        occurredAt: formatSearchDate(a.createdAt),
+        personId: a.personId || a.organizationId || undefined,
+        module: a.personId ? "candidates" : "clients",
+        type: a.personId ? "person" : "organization",
+      })),
+    documents: files
+      .filter((d) => hayAny(d.name, needles))
+      .slice(0, 6)
+      .map((d) => ({
+        id: d.personId || d.organizationId || d.id,
+        name: d.name,
+        fileKind: fileKindLabel(d.name, d.kind),
+        updatedAt: d.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        personId: d.personId || undefined,
+        module: d.personId ? "candidates" : "clients",
+        type: d.personId ? "person" : "organization",
+      })),
   };
 }
 
@@ -541,6 +710,16 @@ export async function listTasks(session: Session) {
     include: { owner: true, person: true, organization: true, requirement: true },
     orderBy: { dueAt: "asc" },
   });
+}
+
+export async function listCalendar(session: Session) {
+  const [events, people] = await Promise.all([listCalendarItems(session), listCalendarPeople(session)]);
+  return {
+    events,
+    people,
+    graphLive: graphConfigured(),
+    mailbox: session.mailbox,
+  };
 }
 
 export async function listCommunications(session: Session) {
@@ -758,6 +937,422 @@ export async function submitProfile(
   return { submissionId: submission.id, activityId: activity.id, messageId: sent.messageId };
 }
 
+export async function sendEmail(
+  session: Session,
+  input: { personId: string; subject: string; body: string; to?: string },
+) {
+  const person = await prisma.person.findFirst({
+    where: { id: input.personId, tenantId: session.tenantId },
+    include: { affiliations: { take: 1 } },
+  });
+  if (!person) throw new Error("Contact not found");
+  if (outreachChannelBlocks(person).email) throw new Error("Do not reach is on — outbound email disabled.");
+  if (!session.mailbox) throw new Error("No mailbox mapped for Outlook send");
+  const to = String(input.to || person.email || "").trim();
+  if (!to || !to.includes("@")) throw new Error("A recipient email is required");
+  const subject = String(input.subject || "").trim();
+  const body = String(input.body || "").trim();
+  if (!subject) throw new Error("Subject is required");
+  if (!body) throw new Error("Message body is required");
+
+  const sent = await integrations.outlook.sendAsUser({
+    fromMailbox: session.mailbox,
+    to,
+    subject,
+    body,
+  });
+
+  const activity = await prisma.activityEvent.create({
+    data: {
+      tenantId: session.tenantId,
+      kind: "email",
+      summary: `Email: ${subject}`,
+      body,
+      source: "outlook",
+      externalId: sent.internetMessageId || sent.messageId,
+      actorId: session.userId,
+      personId: person.id,
+      organizationId: person.affiliations[0]?.organizationId,
+    },
+  });
+
+  await prisma.person.update({
+    where: { id: person.id },
+    data: { lastOutreachAt: new Date() },
+  });
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "send_email",
+    entityType: "activity_event",
+    entityId: activity.id,
+    after: { messageId: sent.messageId, to },
+  });
+
+  return { activityId: activity.id, messageId: sent.messageId };
+}
+
+export async function scheduleMeeting(
+  session: Session,
+  input: {
+    personId: string;
+    title?: string;
+    startsAt: string;
+    endsAt: string;
+    body?: string;
+    extraAttendees?: string;
+    teams?: boolean;
+    requirementId?: string;
+    asInterview?: boolean;
+  },
+) {
+  const person = await prisma.person.findFirst({
+    where: { id: input.personId, tenantId: session.tenantId },
+    include: { affiliations: { include: { organization: true }, take: 1 } },
+  });
+  if (!person) throw new Error("Contact not found");
+  if (!session.mailbox) throw new Error("No mailbox mapped for Outlook / Teams");
+  const startsAt = new Date(input.startsAt);
+  const endsAt = new Date(input.endsAt);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
+    throw new Error("Start and end times are required");
+  }
+  if (endsAt <= startsAt) throw new Error("End time must be after start");
+
+  const requirement = input.requirementId
+    ? await prisma.requirement.findFirst({
+        where: { id: input.requirementId, tenantId: session.tenantId },
+        include: { organization: true, submissions: { where: { candidateId: person.id }, take: 1 } },
+      })
+    : null;
+  if (input.requirementId && !requirement) throw new Error("Requirement not found");
+  if (input.asInterview && person.kind !== PersonKind.candidate) {
+    throw new Error("Interviews can only be scheduled against a candidate");
+  }
+  if (input.asInterview && !requirement) throw new Error("Select a Client job to schedule an interview");
+
+  const extra = String(input.extraAttendees || "")
+    .split(/[,;\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes("@"));
+  const attendees = [...new Set([person.email, session.email, ...extra].map((s) => s.trim()).filter((s) => s.includes("@")))];
+  const title =
+    String(input.title || "").trim() ||
+    (input.asInterview
+      ? `Interview · ${person.name}${requirement ? ` / ${requirement.title}` : ""}`
+      : `Meeting with ${person.name}`);
+  const body = String(input.body || "").trim();
+  const useTeams = input.teams !== false;
+
+  let teamsJoinUrl = "";
+  let graphEventId: string | undefined;
+  if (useTeams) {
+    const meeting = await integrations.teams.scheduleMeeting({
+      fromMailbox: session.mailbox,
+      subject: title,
+      body,
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+      attendees,
+    });
+    teamsJoinUrl = meeting.joinUrl;
+    graphEventId = meeting.graphEventId;
+  }
+
+  const organizationId = requirement?.organizationId || person.affiliations[0]?.organizationId || undefined;
+  let interviewId: string | undefined;
+  if (input.asInterview && requirement) {
+    const interview = await prisma.interview.create({
+      data: {
+        tenantId: session.tenantId,
+        candidateId: person.id,
+        organizationId: requirement.organizationId,
+        requirementId: requirement.id,
+        submissionId: requirement.submissions[0]?.id,
+        scheduledAt: startsAt,
+        endsAt,
+        location: useTeams ? "Microsoft Teams" : "",
+        teamsJoinUrl,
+        graphEventId,
+        outcome: "pending",
+      },
+    });
+    interviewId = interview.id;
+  }
+
+  const event = await prisma.calendarEvent.create({
+    data: {
+      tenantId: session.tenantId,
+      title,
+      kind: input.asInterview ? "interview" : "meeting",
+      startsAt,
+      endsAt,
+      location: useTeams ? "Microsoft Teams" : "",
+      teamsJoinUrl,
+      graphEventId,
+      organizerId: session.userId,
+      personId: person.id,
+      organizationId,
+      requirementId: requirement?.id,
+      submissionId: requirement?.submissions[0]?.id,
+      interviewId,
+      attendees,
+      body,
+      source: useTeams ? "teams" : "hub",
+    },
+  });
+
+  const activity = await prisma.activityEvent.create({
+    data: {
+      tenantId: session.tenantId,
+      kind: "meeting",
+      summary: title,
+      body: [body, teamsJoinUrl ? `Teams: ${teamsJoinUrl}` : ""].filter(Boolean).join("\n"),
+      source: useTeams ? "teams" : "talentbridge",
+      externalId: graphEventId,
+      actorId: session.userId,
+      personId: person.id,
+      organizationId,
+      requirementId: requirement?.id,
+    },
+  });
+
+  await prisma.person.update({
+    where: { id: person.id },
+    data: { lastOutreachAt: new Date() },
+  });
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "schedule_meeting",
+    entityType: "calendar_event",
+    entityId: event.id,
+    after: { graphEventId, teamsJoinUrl, interviewId },
+  });
+
+  return {
+    calendarEventId: event.id,
+    activityId: activity.id,
+    interviewId,
+    teamsJoinUrl,
+    graphEventId,
+  };
+}
+
+export async function ingestOutlookMail(session: Session) {
+  const maps =
+    session.role === "admin"
+      ? await prisma.mailboxMap.findMany({ where: { tenantId: session.tenantId } })
+      : session.mailbox
+        ? [{ mailbox: session.mailbox, userId: session.userId }]
+        : [];
+  if (!maps.length) throw new Error("No mailbox mapped for Outlook ingest");
+
+  const internal = new Set(maps.map((m) => normalizeEmail(m.mailbox)));
+  let created = 0;
+  let linked = 0;
+  let unmatched = 0;
+  let skipped = 0;
+
+  for (const map of maps) {
+    const messages = await integrations.outlook.listRecent(map.mailbox, { top: 40 });
+    for (const msg of messages) {
+      const ids = [msg.messageId, msg.internetMessageId].filter(Boolean) as string[];
+      if (!ids.length) continue;
+      const seen = await prisma.activityEvent.findFirst({
+        where: { tenantId: session.tenantId, externalId: { in: ids } },
+      });
+      if (seen) {
+        skipped += 1;
+        continue;
+      }
+      const knownSub = await prisma.submission.findFirst({
+        where: { tenantId: session.tenantId, emailMessageId: { in: ids } },
+      });
+      if (knownSub) {
+        skipped += 1;
+        continue;
+      }
+
+      const addresses = [msg.from, ...(msg.to || []), ...(msg.cc || [])]
+        .map(normalizeEmail)
+        .filter((e) => e && !internal.has(e));
+      const addressSet = new Set(addresses);
+      const people = addresses.length
+        ? (
+            await prisma.person.findMany({
+              where: {
+                tenantId: session.tenantId,
+                OR: [{ emailNormalized: { in: addresses } }, { email: { in: addresses } }],
+              },
+              include: { affiliations: { take: 1 } },
+            })
+          ).filter(
+            (p) =>
+              addressSet.has(p.emailNormalized) || addressSet.has(normalizeEmail(p.email)),
+          )
+        : [];
+      const uniquePeople = people.filter((p, i, all) => all.findIndex((x) => x.id === p.id) === i);
+
+      if (!uniquePeople.length) {
+        const openMail = await prisma.exceptionItem.findMany({
+          where: { tenantId: session.tenantId, kind: ExceptionKind.unmatched_mail, status: "open" },
+        });
+        const existingEx = openMail.find((row) => {
+          try {
+            const payload = JSON.parse(row.payload) as { messageId?: string };
+            return payload.messageId === msg.messageId;
+          } catch {
+            return row.detail.includes(msg.messageId);
+          }
+        });
+        if (!existingEx) {
+          await prisma.exceptionItem.create({
+            data: {
+              tenantId: session.tenantId,
+              kind: ExceptionKind.unmatched_mail,
+              title: msg.subject || "Unmatched Outlook mail",
+              detail: `${msg.from} → ${(msg.to || []).join(", ")}`,
+              payload: JSON.stringify({
+                messageId: msg.messageId,
+                internetMessageId: msg.internetMessageId,
+                from: msg.from,
+                to: msg.to,
+                subject: msg.subject,
+                sentAt: msg.sentAt,
+                folder: msg.folder,
+              }),
+            },
+          });
+          unmatched += 1;
+        } else {
+          skipped += 1;
+        }
+        continue;
+      }
+
+      const person = uniquePeople[0];
+      let submissionId: string | undefined;
+      let requirementId: string | undefined;
+      let organizationId = person.affiliations[0]?.organizationId;
+
+      const dash = msg.subject.includes("—") ? msg.subject.split("—") : msg.subject.includes(" - ") ? msg.subject.split(" - ") : [];
+      const subjectName = dash[0]?.trim().replace(/^(re|fw|fwd):\s*/i, "");
+      const subjectJob = dash.slice(1).join("—").trim();
+      if (subjectName && subjectJob) {
+        const candidate =
+          person.kind === PersonKind.candidate
+            ? person
+            : await prisma.person.findFirst({
+                where: {
+                  tenantId: session.tenantId,
+                  kind: PersonKind.candidate,
+                  name: { equals: subjectName, mode: "insensitive" },
+                },
+              });
+        const clientPerson =
+          person.kind === PersonKind.client_person
+            ? person
+            : uniquePeople.find((p) => p.kind === PersonKind.client_person);
+        if (candidate && clientPerson) {
+          const req = await prisma.requirement.findFirst({
+            where: {
+              tenantId: session.tenantId,
+              title: { contains: subjectJob, mode: "insensitive" },
+              organization: { affiliations: { some: { personId: clientPerson.id } } },
+            },
+          });
+          if (req) {
+            requirementId = req.id;
+            organizationId = req.organizationId;
+            const existing = await prisma.submission.findFirst({
+              where: { tenantId: session.tenantId, candidateId: candidate.id, requirementId: req.id },
+            });
+            if (existing) {
+              if (!existing.emailMessageId) {
+                await prisma.submission.update({
+                  where: { id: existing.id },
+                  data: { emailMessageId: msg.messageId, source: existing.source === "hub" ? existing.source : "outlook" },
+                });
+              }
+              submissionId = existing.id;
+              linked += 1;
+            } else {
+              const settings = await tenantSettings(session.tenantId);
+              const createdSub = await prisma.submission.create({
+                data: {
+                  tenantId: session.tenantId,
+                  candidateId: candidate.id,
+                  requirementId: req.id,
+                  organizationId: req.organizationId,
+                  clientPersonId: clientPerson.id,
+                  recruiterId: session.userId,
+                  bdmId: req.bdmId,
+                  stage: settings.submissionStages[0] ?? "Submitted",
+                  emailMessageId: msg.messageId,
+                  source: "outlook",
+                  sentAt: new Date(msg.sentAt),
+                },
+              });
+              submissionId = createdSub.id;
+              linked += 1;
+            }
+          }
+        }
+      }
+
+      await prisma.activityEvent.create({
+        data: {
+          tenantId: session.tenantId,
+          kind: "email",
+          summary: `${msg.folder === "sent" ? "Sent" : "Received"}: ${msg.subject || "(no subject)"}`,
+          body: msg.bodyPreview || "",
+          source: "outlook",
+          externalId: msg.internetMessageId || msg.messageId,
+          actorId: session.userId,
+          personId: person.id,
+          organizationId,
+          requirementId,
+          submissionId,
+        },
+      });
+      created += 1;
+    }
+  }
+
+  await prisma.provenance.create({
+    data: {
+      tenantId: session.tenantId,
+      entityType: "mailbox",
+      entityId: session.userId,
+      field: "ingest",
+      sourceSystem: "Outlook",
+      lastSyncedAt: new Date(),
+      syncStatus: "ok",
+      updatedBy: session.userId,
+    },
+  });
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "ingest_outlook",
+    entityType: "mailbox_map",
+    entityId: session.userId,
+    after: { created, linked, unmatched, skipped, adapter: integrations.outlook.configured ? "graph" : "stub" },
+  });
+
+  return {
+    created,
+    linked,
+    unmatched,
+    skipped,
+    adapter: integrations.outlook.configured ? "graph" : "stub",
+  };
+}
+
 export async function changeStage(session: Session, personId: string, stage: string) {
   if (!session.permissions.includes("change_stage")) {
     throw new Error("Stage change is permissioned (owner / sales / ops / admin)");
@@ -830,6 +1425,13 @@ export async function decideOwnership(session: Session, requestId: string, accep
     where: { id: requestId, tenantId: session.tenantId },
   });
   if (!req) throw new Error("Request not found");
+  const person = await prisma.person.findFirst({
+    where: { id: req.personId, tenantId: session.tenantId },
+    select: { id: true, ownerId: true },
+  });
+  if (!person) throw new Error("Person not found");
+  const before = { ownerId: person.ownerId, status: req.status, type: req.type };
+
   if (accept && req.type === "transfer") {
     await prisma.person.update({
       where: { id: req.personId },
@@ -837,18 +1439,69 @@ export async function decideOwnership(session: Session, requestId: string, accep
     });
   }
   if (accept && req.type === "collaboration") {
-    await prisma.personCoOwner.create({
-      data: { personId: req.personId, userId: req.requesterId },
-    });
+    try {
+      await prisma.personCoOwner.create({
+        data: { personId: req.personId, userId: req.requesterId },
+      });
+    } catch (e) {
+      if (!isUniqueViolation(e)) throw e;
+    }
   }
-  return prisma.ownershipRequest.update({
+  const row = await prisma.ownershipRequest.update({
     where: { id: requestId },
     data: { status: accept ? "accepted" : "dismissed" },
   });
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "ownership_decide",
+    entityType: "person",
+    entityId: req.personId,
+    before,
+    after: {
+      ownerId: accept && req.type === "transfer" ? req.requesterId : person.ownerId,
+      status: row.status,
+      type: req.type,
+      accepted: accept,
+      requestId: req.id,
+      requesterId: req.requesterId,
+    },
+  });
+  return row;
+}
+
+function normalizeJnpUserId(raw: unknown) {
+  const id = String(raw || "")
+    .trim()
+    .replace(/^JNP-/i, "");
+  if (!id) return "";
+  if (!/^\d{1,20}$/.test(id)) throw new Error("JobsNProfiles user id must be numeric");
+  return id;
+}
+
+async function authenticateJnpRequester(raw: unknown) {
+  const requesterUserId = normalizeJnpUserId(raw);
+  if (!requesterUserId) throw new Error("JobsNProfiles ID is required");
+  return integrations.jobsNProfiles.authenticate({ requesterUserId });
+}
+
+
+function jnpResumeDisplayName(profile: JnpProfile) {
+  const fileName = String(profile.resumeFileName || "").trim();
+  if (fileName) return fileName;
+  const title = String(profile.title || profile.resumeTitles?.[0] || "").trim();
+  if (title) {
+    const safe = title.replace(/[^\w.\- ]+/g, "").replace(/\s+/g, "_");
+    return `${safe || "resume"}.pdf`;
+  }
+  if (profile.resumeId != null) return `JNP_resume_${profile.resumeId}.pdf`;
+  return "resume.pdf";
 }
 
 export async function syncJnp(session: Session, portalCandidateId: string) {
-  const profile = await integrations.jobsNProfiles.fetchProfile(portalCandidateId);
+  assertJnpSyncRateLimit(session);
+  const caller = await ensureJnpCaller(session);
+  const profile = await integrations.jobsNProfiles.fetchProfile(portalCandidateId, caller);
   if (!profile) throw new Error("Portal profile not found");
 
   const emailNormalized = normalizeEmail(profile.email);
@@ -930,6 +1583,7 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
     timezone: profile.timezone || "",
     visaExpiry: profile.visaExpiry ? new Date(profile.visaExpiry) : null,
     portalCandidateId,
+    lastResume: jnpResumeDisplayName(profile),
   };
 
   const person = existingByPortal
@@ -954,6 +1608,39 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
       lastIndexedAt: new Date(),
     },
   });
+
+  const resumeExternalId =
+    profile.resumeId != null && String(profile.resumeId).trim()
+      ? String(profile.resumeId).trim()
+      : "";
+  const resumeName = jnpResumeDisplayName(profile);
+  if (resumeExternalId && resumeName) {
+    const existingFile = await prisma.storedFile.findFirst({
+      where: {
+        tenantId: session.tenantId,
+        personId: person.id,
+        source: "JobsNProfiles",
+        externalId: resumeExternalId,
+      },
+    });
+    if (existingFile) {
+      await prisma.storedFile.update({
+        where: { id: existingFile.id },
+        data: { name: resumeName, kind: "resume" },
+      });
+    } else {
+      await prisma.storedFile.create({
+        data: {
+          tenantId: session.tenantId,
+          personId: person.id,
+          kind: "resume",
+          name: resumeName,
+          source: "JobsNProfiles",
+          externalId: resumeExternalId,
+        },
+      });
+    }
+  }
 
   await prisma.externalEntityLink.upsert({
     where: {
@@ -1009,6 +1696,92 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
   });
 
   return { status: "upserted" as const, personId: person.id };
+}
+
+export async function addPersonFile(
+  session: Session,
+  input: {
+    personId: string;
+    name: string;
+    kind?: string;
+  },
+) {
+  const person = await prisma.person.findFirst({
+    where: { id: input.personId, tenantId: session.tenantId },
+  });
+  if (!person) throw new Error("Contact not found");
+  const name = String(input.name || "").trim();
+  if (!name) throw new Error("Document name is required");
+  if (name.length > 240) throw new Error("Document name is too long");
+  const kindRaw = String(input.kind || "other").trim().toLowerCase();
+  const kind = kindRaw === "resume" ? "resume" : "other";
+  const file = await prisma.storedFile.create({
+    data: {
+      tenantId: session.tenantId,
+      personId: person.id,
+      kind,
+      name,
+      source: "manual",
+    },
+  });
+  if (kind === "resume") {
+    await prisma.person.update({
+      where: { id: person.id },
+      data: { lastResume: name },
+    });
+  }
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "add_person_file",
+    entityType: "person",
+    entityId: person.id,
+    after: { fileId: file.id, name, kind, source: "manual" },
+  });
+  return file;
+}
+
+export async function previewPersonResume(session: Session, fileId: string) {
+  const file = await prisma.storedFile.findFirst({
+    where: {
+      id: fileId,
+      tenantId: session.tenantId,
+      personId: { not: null },
+    },
+    include: {
+      person: { select: { id: true, tenantId: true } },
+    },
+  });
+  if (!file || !file.person || file.person.tenantId !== session.tenantId) {
+    throw new Error("File not found");
+  }
+  if (file.source !== "JobsNProfiles" || !file.externalId) {
+    throw new Error("Preview is only available for JobsNProfiles resumes");
+  }
+  // externalId must be numeric JNP resume id
+  if (!/^\d{1,20}$/.test(String(file.externalId))) {
+    throw new Error("Invalid JobsNProfiles resume reference");
+  }
+  assertJnpPreviewRateLimit(session);
+  const caller = await ensureJnpCaller(session);
+  const preview = integrations.jobsNProfiles.previewResume
+    ? await integrations.jobsNProfiles.previewResume(file.externalId, caller)
+    : null;
+  if (!preview) throw new Error("Resume file not available from JobsNProfiles");
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "view_file",
+    entityType: "file",
+    entityId: file.id,
+    after: {
+      personId: file.personId,
+      kind: file.kind,
+      source: file.source,
+      preview: true,
+    },
+  });
+  return preview;
 }
 
 export async function createPerson(
@@ -1112,6 +1885,7 @@ export async function createPerson(
         personId: person.id,
         kind: "resume",
         name: resumeName,
+        source: "manual",
       },
     });
   }
@@ -1308,24 +2082,150 @@ export async function createRequirement(
 }
 
 export async function addNote(session: Session, personId: string, body: string, visibility: "shared" | "internal") {
-  return prisma.activityEvent.create({
+  const person = await prisma.person.findFirst({
+    where: { id: personId, tenantId: session.tenantId },
+    select: { id: true },
+  });
+  if (!person) throw new Error("Person not found");
+  const text = String(body || "").trim();
+  if (!text) throw new Error("Note cannot be empty");
+  const row = await prisma.activityEvent.create({
     data: {
       tenantId: session.tenantId,
       kind: visibility === "internal" ? "internal_note" : "note",
-      summary: body.slice(0, 80),
-      body,
+      summary: text.slice(0, 80),
+      body: text,
       actorId: session.userId,
       personId,
     },
   });
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "add_note",
+    entityType: "person",
+    entityId: personId,
+    after: { activityId: row.id, visibility, length: text.length },
+  });
+  return row;
 }
 
 export async function toggleDnc(session: Session, personId: string, on: boolean) {
   if (!["sales", "operations", "admin"].includes(session.role)) throw new Error("DNC change not permitted");
-  return prisma.person.update({
+  const person = await prisma.person.findFirst({
+    where: { id: personId, tenantId: session.tenantId },
+    select: { id: true, doNotReach: true },
+  });
+  if (!person) throw new Error("Person not found");
+  const updated = await prisma.person.update({
     where: { id: personId },
     data: { doNotReach: on },
   });
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "toggle_dnc",
+    entityType: "person",
+    entityId: personId,
+    before: { doNotReach: person.doNotReach },
+    after: { doNotReach: on },
+  });
+  return updated;
+}
+
+export async function viewCallArtifact(session: Session, activityId: string, kind: "recording" | "transcript") {
+  if (!session.permissions.includes("recording") || !session.recordingPlaybackAllowed) {
+    throw new Error("Recording access is not permitted");
+  }
+  const activity = await prisma.activityEvent.findFirst({
+    where: { id: activityId, tenantId: session.tenantId },
+  });
+  if (!activity) throw new Error("Activity not found");
+  const ref = kind === "recording" ? activity.recordingRef : activity.transcriptRef;
+  if (!ref) throw new Error(kind === "recording" ? "No recording on this activity" : "No transcript on this activity");
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: kind === "recording" ? "view_recording" : "view_transcript",
+    entityType: "activity",
+    entityId: activity.id,
+    after: {
+      kind,
+      personId: activity.personId,
+      recordingRef: kind === "recording" ? ref : undefined,
+      transcriptRef: kind === "transcript" ? ref : undefined,
+      playback: false,
+    },
+  });
+  return { kind, ref, playback: false };
+}
+
+export async function viewCommercial(session: Session, kind: "msa" | "po", id: string) {
+  if (kind === "msa") {
+    if (!session.permissions.includes("msa")) throw new Error("MSA access is not permitted");
+    const doc = await prisma.msaDocument.findFirst({
+      where: { id, tenantId: session.tenantId },
+      select: { id: true, number: true, status: true, organizationId: true },
+    });
+    if (!doc) throw new Error("MSA not found");
+    await audit({
+      tenantId: session.tenantId,
+      actorId: session.userId,
+      action: "view_msa",
+      entityType: "msa",
+      entityId: doc.id,
+      after: { number: doc.number, organizationId: doc.organizationId, download: false },
+    });
+    return { kind, id: doc.id, number: doc.number, status: doc.status, download: false };
+  }
+  if (!session.permissions.includes("po")) throw new Error("PO access is not permitted");
+  const doc = await prisma.purchaseOrder.findFirst({
+    where: { id, tenantId: session.tenantId },
+    select: { id: true, number: true, status: true, organizationId: true },
+  });
+  if (!doc) throw new Error("PO not found");
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "view_po",
+    entityType: "po",
+    entityId: doc.id,
+    after: { number: doc.number, organizationId: doc.organizationId, download: false },
+  });
+  return { kind, id: doc.id, number: doc.number, status: doc.status, download: false };
+}
+
+function csvCell(value: unknown) {
+  const s = String(value ?? "");
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+export async function exportDashboard(session: Session) {
+  if (!session.permissions.includes("export")) throw new Error("Export is permissioned");
+  const dash = await dashboard(session);
+  const header = ["section", "type", "title", "module", "recordId"].map(csvCell).join(",");
+  const kpiRows = Object.entries(dash.kpis).map(([key, value]) =>
+    [csvCell("kpi"), csvCell(key), csvCell(value), "", ""].join(","),
+  );
+  const riskRows = dash.risks.map((r) =>
+    [csvCell("risk"), csvCell(r.type), csvCell(r.title), csvCell(r.module), csvCell(r.recordId || "")].join(","),
+  );
+  const oppRows = dash.opportunities.map((o) =>
+    [csvCell("opportunity"), csvCell(o.type), csvCell(o.title), csvCell(o.module || ""), csvCell(o.recordId || "")].join(
+      ",",
+    ),
+  );
+  const csv = [header, ...kpiRows, ...riskRows, ...oppRows].join("\n");
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "export",
+    entityType: "report",
+    entityId: session.tenantId,
+    after: { format: "csv", module: "dashboard", rows: kpiRows.length + riskRows.length + oppRows.length },
+  });
+  return { csv, filename: `talentbridge-ops-${new Date().toISOString().slice(0, 10)}.csv` };
 }
 
 const LOGIN_ROLES = ["recruiter", "sales", "operations", "leadership", "admin"] as const;
@@ -1334,6 +2234,12 @@ const EXTRA_PERMISSIONS = ["recording", "export"] as const;
 function requireAdmin(session: Session) {
   if (!session.permissions.includes("admin") && session.role !== "admin") {
     throw new Error("Administrator only");
+  }
+}
+
+function requireTenantJnpAllowed(session: Session) {
+  if (!session.jnpAllowed) {
+    throw new Error(jnpAccessDeniedMessage("tenant_not_allowed"));
   }
 }
 
@@ -1417,11 +2323,11 @@ export async function settingsPayload(session: Session) {
   if (!session.permissions.includes("admin") && session.role !== "admin") {
     return { forbidden: true };
   }
-  const [userRows, maps, mailboxMaps, exceptions, auditEvents, settings, lastJnpSync, lastJnpException] =
+  const [userRows, maps, mailboxMaps, exceptions, auditEvents, settings, lastJnpSync, lastJnpException, lastOutlookIngest] =
     await Promise.all([
       prisma.user.findMany({
         where: { tenantId: session.tenantId },
-        include: { memberships: true, agentMap: true, mailboxMap: true },
+    include: { memberships: true, agentMap: true, mailboxMap: true, jnpMap: true },
         orderBy: { name: "asc" },
       }),
       prisma.vioTalkAgentMap.findMany({
@@ -1452,6 +2358,10 @@ export async function settingsPayload(session: Session) {
         },
         orderBy: { createdAt: "desc" },
       }),
+      prisma.provenance.findFirst({
+        where: { tenantId: session.tenantId, sourceSystem: "Outlook" },
+        orderBy: { lastSyncedAt: "desc" },
+      }),
     ]);
 
   const actorIds = [...new Set(auditEvents.map((e) => e.actorId))];
@@ -1463,6 +2373,7 @@ export async function settingsPayload(session: Session) {
     : [];
   const actorName = new Map(actors.map((a) => [a.id, a.name]));
   const jnpLive = jnpHttpConfigured();
+  const graphLive = graphConfigured();
 
   return {
     users: userRows.map((u) => ({
@@ -1478,6 +2389,9 @@ export async function settingsPayload(session: Session) {
       assignedNumber: u.agentMap?.assignedNumber ?? "",
       mailboxMapped: Boolean(u.mailboxMap),
       mailbox: u.mailboxMap?.mailbox ?? "",
+      jnpMapped: Boolean(u.jnpMap),
+      jnpUserId: u.jnpMap?.jnpUserId ?? "",
+      jnpEnabled: Boolean(u.jnpEnabled),
       ...userInviteFields(u),
     })),
     maps: maps.map((m) => ({
@@ -1520,11 +2434,16 @@ export async function settingsPayload(session: Session) {
       slaInterviewFeedbackDays: settings.slaInterviewFeedbackDays,
       slaClientLastOutreachDays: settings.slaClientLastOutreachDays,
       slaMsaExpiryDays: settings.slaMsaExpiryDays,
+      jnpAccountUserId: settings.jnpAccountUserId || "",
     },
     jnp: {
       oneWayIn: true,
       writeBack: false,
-      copy: "JobsNProfiles is one-way in. TalentBridge never writes submissions or profiles back.",
+      allowed: Boolean(session.jnpAllowed),
+      copy: "Map TalentBridge users to JobsNProfiles employer/recruiter ids. Candidate pull stays on the record — this tab does not sync candidates.",
+      authCopy:
+        "JobsNProfiles entitlement refreshes in the background at TalentBridge sign-in and again when the snapshot is older than 2 hours. Sync and resume preview are rate-limited per user and organization so pulls stay fast without checking subscription on every request.",
+      jnpAccountUserId: settings.jnpAccountUserId || "",
       lastException: lastJnpException
         ? {
             id: lastJnpException.id,
@@ -1549,10 +2468,26 @@ export async function settingsPayload(session: Session) {
         { name: "SENDGRID_FROM_EMAIL", present: Boolean(process.env.SENDGRID_FROM_EMAIL) },
         { name: "JNP_API_BASE_URL", present: Boolean(process.env.JNP_API_BASE_URL) },
         { name: "JNP_API_KEY", present: Boolean(process.env.JNP_API_KEY) },
+        { name: "MICROSOFT_GRAPH_TENANT_ID", present: Boolean(process.env.MICROSOFT_GRAPH_TENANT_ID) },
+        { name: "MICROSOFT_GRAPH_CLIENT_ID", present: Boolean(process.env.MICROSOFT_GRAPH_CLIENT_ID) },
+        { name: "MICROSOFT_GRAPH_CLIENT_SECRET", present: Boolean(process.env.MICROSOFT_GRAPH_CLIENT_SECRET) },
       ],
       adapterStatus: jnpLive
-        ? "JobsNProfiles uses the live HTTP adapter (JNP_API_BASE_URL + JNP_API_KEY). VioTalk and Outlook remain stubbed. Credentials stay in the secrets vault — this screen never collects API keys."
-        : "JobsNProfiles is on fixture stub until JNP_API_BASE_URL and JNP_API_KEY are set. VioTalk and Outlook are stubbed. Credentials stay in the secrets vault — this screen never collects API keys.",
+        ? "Live HTTP adapter. API key authenticates TalentBridge; the mapped recruiter id is checked against a live JobsNProfiles employer subscription."
+        : "Fixture stub until JNP_API_BASE_URL and JNP_API_KEY are set. TalentBridge still requires a mapped recruiter before candidate pull. Live JNP also rejects expired subscriptions.",
+    },
+    graph: {
+      copy: "Outlook is mailbox transport. Compose and send from TalentBridge as the mapped user. Graph also reads sent and inbound mail so outside-Outlook messages become timeline activity or unmatched review. Teams meetings are created on the same mailbox calendar.",
+      live: graphLive,
+      lastIngest: lastOutlookIngest
+        ? {
+            lastSyncedAt: lastOutlookIngest.lastSyncedAt ? lastOutlookIngest.lastSyncedAt.toISOString() : "",
+            syncStatus: lastOutlookIngest.syncStatus,
+          }
+        : null,
+      adapterStatus: graphLive
+        ? "Microsoft Graph is live (application permissions). Mail.Send, Mail.Read and Calendars.ReadWrite must be consented in Azure AD."
+        : "Outlook and Teams are stubbed until MICROSOFT_GRAPH_TENANT_ID, MICROSOFT_GRAPH_CLIENT_ID and MICROSOFT_GRAPH_CLIENT_SECRET are set. Hub send, ingest and Teams scheduling still run against the stub so the workspace can be demonstrated.",
     },
   };
 }
@@ -1714,6 +2649,14 @@ export async function completePasswordSetup(token: string, password: string) {
       passwordResetExpiresAt: null,
       passwordResetKind: null,
     },
+  });
+  await audit({
+    tenantId: user.tenantId,
+    actorId: user.id,
+    action: "password_set",
+    entityType: "user",
+    entityId: user.id,
+    after: { via: "invite_or_reset" },
   });
   return { email: user.email };
 }
@@ -1884,6 +2827,170 @@ export async function adminUpsertMailboxMap(
   return row;
 }
 
+export async function adminUpsertJnpMap(
+  session: Session,
+  input: { userId: string; jnpUserId?: string; clear?: boolean },
+) {
+  requireAdmin(session);
+  const clear = Boolean(input.clear);
+  if (!clear) requireTenantJnpAllowed(session);
+  const userId = String(input.userId || "");
+  const user = await prisma.user.findFirst({ where: { id: userId, tenantId: session.tenantId } });
+  if (!user) throw new Error("User not found in this tenant");
+  const existing = await prisma.jnpUserMap.findFirst({ where: { userId, tenantId: session.tenantId } });
+
+  if (clear) {
+    if (existing) {
+      await prisma.jnpUserMap.delete({ where: { id: existing.id } });
+      const settings = await tenantSettings(session.tenantId);
+      if (user.jnpEnabled && !settings.jnpAccountUserId) {
+        await prisma.user.update({ where: { id: userId }, data: { jnpEnabled: false } });
+      }
+      await audit({
+        tenantId: session.tenantId,
+        actorId: session.userId,
+        action: "admin_upsert_jnp_map",
+        entityType: "jnp_map",
+        entityId: userId,
+        before: { jnpUserId: existing.jnpUserId },
+        after: { cleared: true },
+      });
+    }
+    await refreshJnpAccessForUser(userId).catch(() => null);
+    return { cleared: true, userId };
+  }
+
+  let auth;
+  try {
+    auth = await authenticateJnpRequester(input.jnpUserId);
+  } catch (error) {
+    if (existing) await refreshJnpAccessForUser(userId).catch(() => null);
+    throw error;
+  }
+  const jnpUserId = auth.requesterUserId;
+  const packageEndDate = auth.packageEndDate ? String(auth.packageEndDate).slice(0, 10) : "";
+  const row = existing
+    ? await prisma.jnpUserMap.update({ where: { id: existing.id }, data: { jnpUserId } })
+    : await prisma.jnpUserMap.create({ data: { tenantId: session.tenantId, userId, jnpUserId } });
+  await storeJnpAccessSnapshot(userId, { ok: true, code: "ok", packageEndDate });
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "admin_upsert_jnp_map",
+    entityType: "jnp_map",
+    entityId: userId,
+    before: existing ? { jnpUserId: existing.jnpUserId } : undefined,
+    after: { jnpUserId, authenticated: true, packageEndDate: auth.packageEndDate ?? null },
+  });
+  return { ...row, authenticated: true, packageEndDate: auth.packageEndDate ?? null, adapter: auth.adapter };
+}
+
+export async function adminSetJnpAccount(
+  session: Session,
+  jnpAccountUserIdRaw: string,
+  opts?: { clear?: boolean },
+) {
+  requireAdmin(session);
+  if (!opts?.clear) requireTenantJnpAllowed(session);
+  const before = await tenantSettings(session.tenantId);
+  if (opts?.clear) {
+    const updated = await prisma.tenantSettings.update({
+      where: { tenantId: session.tenantId },
+      data: { jnpAccountUserId: "" },
+    });
+    await audit({
+      tenantId: session.tenantId,
+      actorId: session.userId,
+      action: "admin_set_jnp_account",
+      entityType: "tenant_settings",
+      entityId: updated.id,
+      before: { jnpAccountUserId: before.jnpAccountUserId },
+      after: { jnpAccountUserId: "", cleared: true },
+    });
+    await stampJnpAccessForUnmappedUsers(session.tenantId, {
+      ok: false,
+      code: "not_mapped",
+      packageEndDate: "",
+    }).catch(() => null);
+    return { jnpAccountUserId: "", cleared: true };
+  }
+
+  let auth;
+  try {
+    auth = await authenticateJnpRequester(jnpAccountUserIdRaw);
+  } catch (error) {
+    await stampJnpAccessForUnmappedUsers(session.tenantId, {
+      ok: false,
+      code: codeFromJnpError(error),
+      packageEndDate: "",
+    }).catch(() => null);
+    throw error;
+  }
+  const jnpAccountUserId = auth.requesterUserId;
+  const packageEndDate = auth.packageEndDate ? String(auth.packageEndDate).slice(0, 10) : "";
+  const updated = await prisma.tenantSettings.update({
+    where: { tenantId: session.tenantId },
+    data: { jnpAccountUserId },
+  });
+  await stampJnpAccessForUnmappedUsers(session.tenantId, { ok: true, code: "ok", packageEndDate });
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "admin_set_jnp_account",
+    entityType: "tenant_settings",
+    entityId: updated.id,
+    before: { jnpAccountUserId: before.jnpAccountUserId },
+    after: { jnpAccountUserId, authenticated: true, packageEndDate: auth.packageEndDate ?? null },
+  });
+  return {
+    jnpAccountUserId: updated.jnpAccountUserId,
+    authenticated: true,
+    packageEndDate: auth.packageEndDate ?? null,
+    adapter: auth.adapter,
+  };
+}
+
+export async function adminSetJnpEnabled(session: Session, userIdRaw: string, enabled: boolean) {
+  requireAdmin(session);
+  if (enabled) requireTenantJnpAllowed(session);
+  const userId = String(userIdRaw || "");
+  const user = await prisma.user.findFirst({
+    where: { id: userId, tenantId: session.tenantId },
+    include: { jnpMap: true },
+  });
+  if (!user) throw new Error("User not found in this tenant");
+  if (enabled) {
+    const settings = await tenantSettings(session.tenantId);
+    if (!user.jnpMap?.jnpUserId && !settings.jnpAccountUserId) {
+      throw new Error("Authenticate an Organization ID or Recruiter ID before enabling JobsNProfiles.");
+    }
+  }
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: { jnpEnabled: enabled },
+  });
+  if (enabled) {
+    await refreshJnpAccessForUser(updated.id).catch(() => null);
+  } else {
+    await storeJnpAccessSnapshot(updated.id, {
+      ok: false,
+      code: "disabled_locally",
+      packageEndDate: "",
+    });
+  }
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "admin_set_jnp_enabled",
+    entityType: "user",
+    entityId: user.id,
+    before: { jnpEnabled: user.jnpEnabled },
+    after: { jnpEnabled: enabled },
+  });
+  return { userId: updated.id, jnpEnabled: updated.jnpEnabled };
+}
+
 export async function adminResolveException(session: Session, exceptionId: string) {
   requireAdmin(session);
   const item = await prisma.exceptionItem.findFirst({
@@ -1933,7 +3040,8 @@ function serializePersonList(c: {
   location: string;
   status: string;
   source: string;
-    lastOutreachAt: Date | null;
+  createdAt: Date;
+  lastOutreachAt: Date | null;
   nextAction: string;
   nextActionDueAt?: Date | null;
   availability?: string;
@@ -1952,6 +3060,7 @@ function serializePersonList(c: {
     location: c.location,
     status: c.status,
     source: c.source,
+    createdAt: c.createdAt,
     lastOutreachAt: c.lastOutreachAt,
     nextAction: c.nextAction,
     nextActionDueAt: c.nextActionDueAt,
@@ -1986,6 +3095,7 @@ function serializePersonDetail(
       interviews: { include: { requirement: true; organization: true } };
       placements: { include: { organization: true; requirement: true } };
       ownershipReqs: { include: { requester: true } };
+      calendarEvents: true;
     };
   }>,
   session: Session,
@@ -2044,6 +3154,7 @@ function serializePersonDetail(
     })),
     submissions: c.candidateSubs,
     interviews: c.interviews,
+    meetings: c.calendarEvents,
     placements: c.placements,
     requirements: c.hiringManagerReqs,
     files: c.files,
@@ -2109,6 +3220,7 @@ function serializeOrganizationDetail(
       files: true;
       activityEvents: { include: { actor: true } };
       tasks: { include: { owner: true } };
+      calendarEvents: true;
     };
   }>,
   session: Session,
@@ -2129,6 +3241,7 @@ function serializeOrganizationDetail(
     requirements: a.requirements,
     submissions: a.submissions,
     interviews: a.interviews,
+    meetings: a.calendarEvents,
     placements: a.placements,
     files: a.files,
     activityEvents: a.activityEvents,

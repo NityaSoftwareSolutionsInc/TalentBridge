@@ -1,5 +1,9 @@
 export type JnpProfile = {
   portalCandidateId: string;
+  /** Primary JNP resume row id when known. */
+  resumeId?: string | number;
+  /** Filename from jnp_resume_files when known. */
+  resumeFileName?: string;
   name: string;
   email: string;
   phone: string;
@@ -25,9 +29,29 @@ export type JnpProfile = {
   timezone?: string;
 };
 
+export type JnpCaller = {
+  requesterUserId: string;
+};
+
+export type JnpAuthResult = {
+  requesterUserId: string;
+  adminUserId?: string;
+  email?: string;
+  plan?: string;
+  packageEndDate?: string | null;
+  adapter: "live" | "stub";
+};
+
 export interface JobsNProfilesAdapter {
-  fetchProfile(portalCandidateId: string): Promise<JnpProfile | null>;
+  authenticate(caller: JnpCaller): Promise<JnpAuthResult>;
+  fetchProfile(portalCandidateId: string, caller: JnpCaller): Promise<JnpProfile | null>;
   listUpdatedProfiles(): Promise<JnpProfile[]>;
+  /** Stream/download primary resume file by JNP resume id. Returns null if unavailable. */
+  previewResume?(resumeId: string, caller: JnpCaller): Promise<{
+    fileName: string;
+    contentType: string;
+    body: ArrayBuffer;
+  } | null>;
 }
 
 export type VioTalkCallRequest = {
@@ -52,22 +76,59 @@ export interface VioTalkAdapter {
 
 export type OutlookSendRequest = {
   fromMailbox: string;
-  to: string;
+  to: string | string[];
+  cc?: string[];
   subject: string;
   body: string;
-  attachments: { name: string }[];
+  attachments?: { name: string; contentType?: string; contentBytes?: string }[];
+};
+
+export type OutlookSendResult = {
+  messageId: string;
+  internetMessageId?: string;
 };
 
 export type OutlookMessage = {
   messageId: string;
+  internetMessageId?: string;
+  conversationId?: string;
   from: string;
   to: string[];
+  cc?: string[];
   subject: string;
   sentAt: string;
-  matched: boolean;
+  bodyPreview?: string;
+  folder: "inbox" | "sent";
+  hasAttachments?: boolean;
+  matched?: boolean;
 };
 
 export interface OutlookAdapter {
-  sendAsUser(req: OutlookSendRequest): Promise<{ messageId: string }>;
-  listUnmatched(): Promise<OutlookMessage[]>;
+  configured: boolean;
+  sendAsUser(req: OutlookSendRequest): Promise<OutlookSendResult>;
+  listRecent(
+    mailbox: string,
+    opts?: { folder?: "inbox" | "sent"; top?: number },
+  ): Promise<OutlookMessage[]>;
+}
+
+export type TeamsMeetingRequest = {
+  fromMailbox: string;
+  subject: string;
+  body?: string;
+  startsAt: string;
+  endsAt: string;
+  attendees: string[];
+  timezone?: string;
+};
+
+export type TeamsMeetingResult = {
+  graphEventId: string;
+  joinUrl: string;
+  webLink?: string;
+};
+
+export interface TeamsAdapter {
+  configured: boolean;
+  scheduleMeeting(req: TeamsMeetingRequest): Promise<TeamsMeetingResult>;
 }

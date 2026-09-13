@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { Workspace } from "@/components/Workspace";
+import { TbLoader } from "@/components/TbLoader";
 
 export default async function ModulePage({
   params,
@@ -8,7 +9,7 @@ export default async function ModulePage({
 }) {
   const { module } = await params;
   return (
-    <Suspense fallback={<div className="p-8">Loading workspace…</div>}>
+    <Suspense fallback={<TbLoader variant="page" hint="Loading workspace" />}>
       <Workspace moduleKey={module} />
     </Suspense>
   );

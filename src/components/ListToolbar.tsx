@@ -71,8 +71,15 @@ export function sortRecords<T extends Record<string, unknown>>(rows: T[], sort: 
       if (!bT) return -1;
       return aT - bT;
     });
-  } else {
+  } else if (sort === "outreach") {
     copy.sort((a, b) => time(b.lastOutreachAt) - time(a.lastOutreachAt));
+  } else {
+    // Default: newest added first, then most recent outreach
+    copy.sort((a, b) => {
+      const byCreated = time(b.createdAt) - time(a.createdAt);
+      if (byCreated !== 0) return byCreated;
+      return time(b.lastOutreachAt) - time(a.lastOutreachAt);
+    });
   }
   return copy;
 }
@@ -254,7 +261,8 @@ export function ListToolbar({
               value={filters.sort || "recent"}
               onChange={(e) => onFilter("sort", e.target.value === "recent" ? "" : e.target.value)}
             >
-              <option value="recent">Most recent</option>
+              <option value="recent">Newest added</option>
+              <option value="outreach">Last outreach</option>
               <option value="name">Name A–Z</option>
               <option value="followup">Next follow-up</option>
             </FieldSelect>
@@ -390,6 +398,7 @@ function searchPlaceholder(moduleKey: string) {
   if (moduleKey === "clients") return "Search client people...";
   if (moduleKey === "candidates") return "Search candidates...";
   if (moduleKey === "vendors") return "Search vendor people...";
+  if (moduleKey === "calendar") return "Search TalentBridge meetings...";
   if (moduleKey === "dashboard" || moduleKey === "reports") return "Filter risks...";
   return "Search...";
 }

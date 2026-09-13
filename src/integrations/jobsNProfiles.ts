@@ -4,6 +4,8 @@ import { jobsNProfilesHttp, jnpHttpConfigured } from "./jobsNProfilesHttp";
 const FIXTURES: JnpProfile[] = [
   {
     portalCandidateId: "JNP-104582",
+    resumeId: "1045821",
+    resumeFileName: "Anil_Reddy_Java.pdf",
     name: "Anil Reddy",
     email: "anil.reddy@example.com",
     phone: "+1-415-555-0182",
@@ -29,6 +31,8 @@ const FIXTURES: JnpProfile[] = [
   },
   {
     portalCandidateId: "JNP-204901",
+    resumeId: "2049011",
+    resumeFileName: "Maya_Chen_DevOps.pdf",
     name: "Maya Chen",
     email: "maya.chen@example.com",
     phone: "+1-206-555-0144",
@@ -55,11 +59,34 @@ const FIXTURES: JnpProfile[] = [
 ];
 
 export const jobsNProfilesStub: JobsNProfilesAdapter = {
-  async fetchProfile(portalCandidateId) {
+  async authenticate(caller) {
+    const requesterUserId = String(caller?.requesterUserId || "").trim();
+    if (!requesterUserId) throw new Error("JobsNProfiles requester is required");
+    return { requesterUserId, adapter: "stub" as const };
+  },
+  async fetchProfile(portalCandidateId, caller) {
+    if (!String(caller?.requesterUserId || "").trim()) {
+      throw new Error("JobsNProfiles requester is required");
+    }
     return FIXTURES.find((p) => p.portalCandidateId === portalCandidateId) ?? null;
   },
   async listUpdatedProfiles() {
     return FIXTURES;
+  },
+  async previewResume(resumeId, caller) {
+    if (!String(caller?.requesterUserId || "").trim()) {
+      throw new Error("JobsNProfiles requester is required");
+    }
+    const profile = FIXTURES.find((p) => String(p.resumeId) === String(resumeId));
+    if (!profile) return null;
+    const text = `Stub resume preview for ${profile.name} (${profile.title}).\nResume file: ${profile.resumeFileName || "resume.pdf"}\n`;
+    const encoded = new TextEncoder().encode(text);
+    const body = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
+    return {
+      fileName: profile.resumeFileName || `resume-${resumeId}.txt`,
+      contentType: "text/plain; charset=utf-8",
+      body,
+    };
   },
 };
 

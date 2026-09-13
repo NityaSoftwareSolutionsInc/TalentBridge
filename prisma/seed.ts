@@ -29,7 +29,8 @@ async function main() {
     data: {
       name: "Northstar Staffing",
       enabled: true,
-      settings: { create: {} },
+      jnpAllowed: true,
+      settings: { create: { jnpAccountUserId: "1001" } },
     },
   });
 
@@ -37,6 +38,7 @@ async function main() {
     data: {
       name: "Ghost Corp",
       enabled: true,
+      jnpAllowed: false,
       settings: { create: {} },
     },
   });
@@ -59,6 +61,10 @@ async function main() {
         mailboxMap: {
           create: { tenantId: northstar.id, mailbox: "sarah.mitchell@northstar.example" },
         },
+        jnpMap: {
+          create: { tenantId: northstar.id, jnpUserId: "1001" },
+        },
+        jnpEnabled: true,
       },
     }),
     prisma.user.create({
@@ -419,7 +425,7 @@ async function main() {
     },
   });
 
-  await prisma.interview.create({
+  const interview = await prisma.interview.create({
     data: {
       tenantId: northstar.id,
       candidateId: anil.id,
@@ -427,7 +433,52 @@ async function main() {
       requirementId: javaReq.id,
       submissionId: submission.id,
       scheduledAt: daysAgo(1),
+      endsAt: new Date(daysAgo(1).getTime() + 45 * 60000),
+      location: "Microsoft Teams",
+      teamsJoinUrl: "https://teams.microsoft.com/l/meetup-join/talentbridge-seed/anil-java",
+      graphEventId: "teams-seed-anil-java",
       outcome: "pending",
+    },
+  });
+
+  await prisma.calendarEvent.create({
+    data: {
+      tenantId: northstar.id,
+      title: "Interview · Anil Reddy / Senior Java Developer",
+      kind: "interview",
+      startsAt: interview.scheduledAt,
+      endsAt: interview.endsAt || new Date(interview.scheduledAt.getTime() + 45 * 60000),
+      location: "Microsoft Teams",
+      teamsJoinUrl: interview.teamsJoinUrl,
+      graphEventId: interview.graphEventId,
+      organizerId: sarah.id,
+      personId: anil.id,
+      organizationId: acme.id,
+      requirementId: javaReq.id,
+      submissionId: submission.id,
+      interviewId: interview.id,
+      attendees: ["anil.reddy@example.com", "jennifer.lawson@acme.example", "sarah.mitchell@northstar.example"],
+      body: "Screening with Jennifer Walsh.",
+      source: "teams",
+    },
+  });
+
+  await prisma.calendarEvent.create({
+    data: {
+      tenantId: northstar.id,
+      title: "Teams call with Jennifer Walsh",
+      kind: "meeting",
+      startsAt: daysFromNow(2),
+      endsAt: new Date(daysFromNow(2).getTime() + 30 * 60000),
+      location: "Microsoft Teams",
+      teamsJoinUrl: "https://teams.microsoft.com/l/meetup-join/talentbridge-seed/jennifer-q2",
+      graphEventId: "teams-seed-jennifer-q2",
+      organizerId: james.id,
+      personId: jennifer.id,
+      organizationId: acme.id,
+      attendees: ["jennifer.lawson@acme.example", "james.dalton@northstar.example"],
+      body: "Q2 hiring plan follow-up.",
+      source: "teams",
     },
   });
 
@@ -616,6 +667,7 @@ async function main() {
       status: "low",
       ceiling: 250000,
       utilized: 231000,
+      expectedExhaustion: daysFromNow(12),
     },
   });
 
@@ -635,12 +687,14 @@ async function main() {
         tenantId: northstar.id,
         kind: "resume",
         name: "Anil_Reddy_Java.pdf",
+        source: "manual",
         personId: anil.id,
       },
       {
         tenantId: northstar.id,
         kind: "other",
         name: "Acme_Hiring_Plan_2025.pdf",
+        source: "manual",
         organizationId: acme.id,
         personId: jennifer.id,
       },
@@ -648,6 +702,7 @@ async function main() {
         tenantId: northstar.id,
         kind: "other",
         name: "Job_Requirements.pdf",
+        source: "manual",
         organizationId: acme.id,
       },
     ],

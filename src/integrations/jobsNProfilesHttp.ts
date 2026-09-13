@@ -5,6 +5,7 @@ type JnpApiProfileResponse = {
   found?: boolean;
   portalCandidateId?: string;
   resumeId?: number | string;
+  resumeFileName?: string;
   name?: string;
   email?: string;
   phone?: string;
@@ -50,9 +51,64 @@ function apiKey(): string {
   return (process.env.JNP_API_KEY || "").trim();
 }
 
+export class JnpRequestError extends Error {
+  code: string;
+  constructor(message: string, code = "") {
+    super(message);
+    this.name = "JnpRequestError";
+    this.code = code;
+  }
+}
+
+function parseJnpError(res: Response, text: string, fallback: string) {
+  let code = "";
+  let message = fallback;
+  try {
+    const data = JSON.parse(text) as { error?: string; code?: string };
+    if (data.error) message = data.error;
+    if (data.code) code = data.code;
+  } catch {
+    if (text) message = `${fallback}: ${text.slice(0, 200)}`;
+  }
+  if (res.status === 401) return new JnpRequestError("JobsNProfiles API key rejected", "unauthorized");
+  if (res.status === 403) {
+    if (code === "subscription_inactive") {
+      return new JnpRequestError(
+        "JobsNProfiles subscription is missing or expired for the mapped employer",
+        code,
+      );
+    }
+    if (code === "requester_unknown") {
+      return new JnpRequestError("Mapped JobsNProfiles user was not found", code);
+    }
+    if (code === "requester_disabled") {
+      return new JnpRequestError("Mapped JobsNProfiles user is disabled", code);
+    }
+    return new JnpRequestError(message || "JobsNProfiles denied this requester", code);
+  }
+  if (res.status === 400 && code === "requester_required") {
+    return new JnpRequestError("JobsNProfiles requires an identified employer on this request", code);
+  }
+  return new JnpRequestError(`${fallback} (${res.status}): ${message}`.slice(0, 240), code);
+}
+
+async function jnpPost(path: string, body: Record<string, unknown>, timeoutMs = 20000) {
+  return fetch(`${baseUrl()}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey(),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
+
 function toJnpProfile(data: JnpApiProfileResponse, fallbackId: string): JnpProfile {
   return {
     portalCandidateId: String(data.portalCandidateId || fallbackId),
+    resumeId: data.resumeId != null && String(data.resumeId).trim() ? data.resumeId : undefined,
+    resumeFileName: String(data.resumeFileName || "").trim() || undefined,
     name: String(data.name || "").trim(),
     email: String(data.email || "").trim(),
     phone: String(data.phone || "").trim(),
@@ -81,27 +137,64 @@ function toJnpProfile(data: JnpApiProfileResponse, fallbackId: string): JnpProfi
 }
 
 export const jobsNProfilesHttp: JobsNProfilesAdapter = {
-  async fetchProfile(portalCandidateId) {
+  async authenticate(caller) {
+    const requesterUserId = String(caller?.requesterUserId || "").trim();
+    if (!requesterUserId) throw new Error("JobsNProfiles requester is required");
+    if (!jnpHttpConfigured()) throw new Error("JobsNProfiles is not connected");
+
+    let res: Response;
+    try {
+      res = await jnpPost("/talentbridge/authenticate", { requester_user_id: requesterUserId }, 8000);
+    } catch (error) {
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      throw new JnpRequestError(
+        timedOut ? "JobsNProfiles authentication timed out" : "JobsNProfiles could not be reached",
+        "error",
+      );
+    }
+    const text = await res.text().catch(() => "");
+    if (!res.ok) throw parseJnpError(res, text, "JobsNProfiles authentication failed");
+
+    let data: {
+      requester_user_id?: string;
+      admin_user_id?: string;
+      email?: string;
+      plan?: string;
+      package_end_date?: string | Date | null;
+    } = {};
+    try {
+      data = JSON.parse(text) as typeof data;
+    } catch {
+      /* body already consumed as text */
+    }
+    const packageEndDate = data.package_end_date
+      ? String(data.package_end_date).slice(0, 10)
+      : null;
+    return {
+      requesterUserId: String(data.requester_user_id || requesterUserId),
+      adminUserId: data.admin_user_id ? String(data.admin_user_id) : undefined,
+      email: data.email ? String(data.email) : undefined,
+      plan: data.plan ? String(data.plan) : undefined,
+      packageEndDate,
+      adapter: "live" as const,
+    };
+  },
+  async fetchProfile(portalCandidateId, caller) {
     const userId = normalizePortalCandidateId(portalCandidateId);
     if (!userId) return null;
     if (!jnpHttpConfigured()) return null;
+    const requesterUserId = String(caller?.requesterUserId || "").trim();
+    if (!requesterUserId) throw new Error("JobsNProfiles requester is required");
 
-    const res = await fetch(`${baseUrl()}/talentbridge/get_candidate_profile`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey(),
-      },
-      body: JSON.stringify({ user_id: userId }),
+    const res = await jnpPost("/talentbridge/get_candidate_profile", {
+      user_id: userId,
+      requester_user_id: requesterUserId,
     });
 
     if (res.status === 404) return null;
-    if (res.status === 401) {
-      throw new Error("JobsNProfiles API key rejected");
-    }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`JobsNProfiles profile fetch failed (${res.status}): ${text.slice(0, 200)}`);
+      throw parseJnpError(res, text, "JobsNProfiles profile fetch failed");
     }
 
     const data = (await res.json()) as JnpApiProfileResponse;
@@ -111,5 +204,41 @@ export const jobsNProfilesHttp: JobsNProfilesAdapter = {
 
   async listUpdatedProfiles() {
     return [];
+  },
+
+  async previewResume(resumeId, caller) {
+    const id = String(resumeId || "").trim();
+    if (!id || !jnpHttpConfigured()) return null;
+    const requesterUserId = String(caller?.requesterUserId || "").trim();
+    if (!requesterUserId) throw new Error("JobsNProfiles requester is required");
+
+    const res = await fetch(`${baseUrl()}/talentbridge/preview_resume`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey(),
+      },
+      body: JSON.stringify({ resume_id: id, requester_user_id: requesterUserId }),
+      redirect: "follow",
+    });
+
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw parseJnpError(res, text, "JobsNProfiles resume preview failed");
+    }
+
+    const contentType = res.headers.get("content-type") || "application/octet-stream";
+    if (contentType.includes("application/json")) {
+      const data = (await res.json().catch(() => null)) as { found?: boolean; error?: string } | null;
+      if (!data || data.found === false) return null;
+      return null;
+    }
+
+    const disposition = res.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+    const fileName = match?.[1] ? decodeURIComponent(match[1].replace(/"/g, "")) : `resume-${id}.pdf`;
+    const body = await res.arrayBuffer();
+    return { fileName, contentType, body };
   },
 };

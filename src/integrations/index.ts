@@ -1,9 +1,11 @@
 import { createJobsNProfilesAdapter } from "./jobsNProfiles";
-import { outlookStub } from "./outlook";
+import { createOutlookAdapter } from "./outlook";
+import { createTeamsAdapter } from "./teams";
 import { vioTalkStub } from "./vioTalk";
 
 export const integrations = {
   jobsNProfiles: createJobsNProfilesAdapter(),
   vioTalk: vioTalkStub,
-  outlook: outlookStub,
+  outlook: createOutlookAdapter(),
+  teams: createTeamsAdapter(),
 };

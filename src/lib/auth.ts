@@ -17,6 +17,13 @@ export type Session = {
   landing: string;
   vioTalkMapped: boolean;
   mailbox: string | null;
+  jnpUserId: string | null;
+  jnpEnabled: boolean;
+  jnpAllowed: boolean;
+  jnpAccessOk: boolean;
+  jnpAccessCode: string;
+  jnpPackageEndDate: string;
+  jnpCheckedAt: string | null;
   recordingPlaybackAllowed: boolean;
 };
 
@@ -36,6 +43,7 @@ export async function getSession(): Promise<Session | null> {
       memberships: true,
       agentMap: true,
       mailboxMap: true,
+      jnpMap: true,
       tenant: { include: { settings: true } },
     },
   });
@@ -60,6 +68,13 @@ export async function getSession(): Promise<Session | null> {
     landing: ROLE_LANDING[role],
     vioTalkMapped: Boolean(user.agentMap),
     mailbox: user.mailboxMap?.mailbox ?? null,
+    jnpUserId: user.jnpMap?.jnpUserId || user.tenant.settings?.jnpAccountUserId || null,
+    jnpEnabled: Boolean(user.jnpEnabled) && Boolean(user.tenant.jnpAllowed),
+    jnpAllowed: Boolean(user.tenant.jnpAllowed),
+    jnpAccessOk: Boolean(user.jnpAccessOk) && Boolean(user.tenant.jnpAllowed),
+    jnpAccessCode: String(user.jnpAccessCode || ""),
+    jnpPackageEndDate: String(user.jnpPackageEndDate || ""),
+    jnpCheckedAt: user.jnpCheckedAt ? user.jnpCheckedAt.toISOString() : null,
     recordingPlaybackAllowed: user.tenant.settings?.recordingPlaybackAllowed ?? false,
   };
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Avatar, Button, FieldInput, FieldSelect, Label, Tag, Tabs, cn } from "./workspace-ui";
+import { TbLoader } from "./TbLoader";
 
 type AdminUser = {
   id: string;
@@ -16,6 +17,9 @@ type AdminUser = {
   assignedNumber: string;
   mailboxMapped: boolean;
   mailbox: string;
+  jnpMapped: boolean;
+  jnpUserId: string;
+  jnpEnabled: boolean;
   passwordSet?: boolean;
   passwordSetAt?: string | null;
   inviteStatus?: "not_invited" | "pending" | "expired" | "accepted";
@@ -62,17 +66,19 @@ type AuditRow = {
   createdAt: string;
 };
 
-type JnpStatus = {
-  oneWayIn?: boolean;
-  writeBack?: boolean;
+type GraphStatus = {
   copy?: string;
-  lastException?: { kind: string; title: string; detail: string; status: string; createdAt: string } | null;
-  lastSync?: { externalId: string; lastSyncedAt: string; syncStatus: string } | null;
-  secretsVault?: { name: string; present: boolean }[];
+  live?: boolean;
+  lastIngest?: { lastSyncedAt: string; syncStatus: string } | null;
   adapterStatus?: string;
 };
 
-const TABS = ["User details", "VioTalk map", "Mailbox map", "JNP sync", "Queues", "Audit"] as const;
+type JnpStatus = {
+  jnpAccountUserId?: string;
+  allowed?: boolean;
+};
+
+const TABS = ["User details", "VioTalk map", "Mailbox map", "JNP map", "Queues", "Audit"] as const;
 const ROLES = ["recruiter", "sales", "operations", "leadership", "admin"] as const;
 const QUEUE_KINDS = ["unmatched_mail", "unmatched_call", "duplicate", "failed_sync"] as const;
 const EXTRA_PERMS = ["recording", "export"] as const;
@@ -102,6 +108,18 @@ function fmtTime(v: string) {
   return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+function fmtDate(v: string) {
+  const d = new Date(v.includes("T") ? v : `${v}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return v;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function jnpAuthMessage(result: { authenticated?: boolean; packageEndDate?: string | null } | null) {
+  if (!result?.authenticated) return "";
+  if (result.packageEndDate) return `Authenticated. Subscription is active until ${fmtDate(result.packageEndDate)}.`;
+  return "Authenticated. This ID can pull candidates.";
+}
+
 function parseJson(raw: string) {
   if (!raw) return null;
   try {
@@ -128,7 +146,7 @@ export function SettingsPane({
   onAction,
 }: {
   data: Record<string, unknown> | null;
-  session: { userId?: string; permissions: string[]; role?: string; recordingPlaybackAllowed?: boolean } | null;
+  session: { userId?: string; permissions: string[]; role?: string; recordingPlaybackAllowed?: boolean; jnpAllowed?: boolean } | null;
   busy: boolean;
   selectedUserId?: string | null;
   onAction: (payload: Record<string, unknown>) => Promise<unknown>;
@@ -138,8 +156,6 @@ export function SettingsPane({
   const [openExceptionId, setOpenExceptionId] = useState<string | null>(null);
   const [auditQ, setAuditQ] = useState("");
   const [auditFilter, setAuditFilter] = useState("all");
-  const [jnpId, setJnpId] = useState("JNP-104582");
-  const [jnpBanner, setJnpBanner] = useState("");
   const [editForm, setEditForm] = useState({
     name: "",
     title: "",
@@ -149,7 +165,11 @@ export function SettingsPane({
   });
   const [vioDrafts, setVioDrafts] = useState<Record<string, { vioTalkUserId: string; assignedNumber: string }>>({});
   const [mailDrafts, setMailDrafts] = useState<Record<string, string>>({});
+  const [jnpUserDrafts, setJnpUserDrafts] = useState<Record<string, string>>({});
+  const [jnpAccountDraft, setJnpAccountDraft] = useState("");
+  const [jnpAuthNotice, setJnpAuthNotice] = useState("");
   const [inviteNotice, setInviteNotice] = useState("");
+  const [ingestNotice, setIngestNotice] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [adminPasswordConfirm, setAdminPasswordConfirm] = useState("");
 
@@ -159,16 +179,25 @@ export function SettingsPane({
   const isSelf = Boolean(session?.userId && selected?.id === session.userId);
   const exceptions = (Array.isArray(data?.exceptions) ? data.exceptions : []) as ExceptionRow[];
   const auditEvents = (Array.isArray(data?.auditEvents) ? data.auditEvents : []) as AuditRow[];
-  const settings = (data?.settings || {}) as { recordingPlaybackAllowed?: boolean };
+  const settings = (data?.settings || {}) as { recordingPlaybackAllowed?: boolean; jnpAccountUserId?: string };
   const jnp = (data?.jnp || {}) as JnpStatus;
+  const jnpAllowed = Boolean(session?.jnpAllowed ?? jnp.allowed);
+  const graph = (data?.graph || {}) as GraphStatus;
   const playbackAllowed = Boolean(settings.recordingPlaybackAllowed);
   const canPlay = playbackAllowed && Boolean(session?.permissions.includes("recording"));
+  const tabs = jnpAllowed ? TABS : TABS.filter((item) => item !== "JNP map");
+
+  useEffect(() => {
+    if (!jnpAllowed && tab === "JNP map") setTab("User details");
+  }, [jnpAllowed, tab]);
 
   useEffect(() => {
     setVioDrafts(
       Object.fromEntries(users.map((u) => [u.id, { vioTalkUserId: u.vioTalkUserId, assignedNumber: u.assignedNumber }])),
     );
     setMailDrafts(Object.fromEntries(users.map((u) => [u.id, u.mailbox])));
+    setJnpUserDrafts(Object.fromEntries(users.map((u) => [u.id, u.jnpUserId])));
+    setJnpAccountDraft(String((data?.settings as { jnpAccountUserId?: string } | undefined)?.jnpAccountUserId || (data?.jnp as JnpStatus | undefined)?.jnpAccountUserId || ""));
   }, [data]);
 
   useEffect(() => {
@@ -199,12 +228,31 @@ export function SettingsPane({
       if (auditFilter === "submit" && e.action !== "submit_profile") return false;
       if (auditFilter === "ownership" && !e.action.startsWith("ownership")) return false;
       if (auditFilter === "jnp" && e.action !== "jnp_sync") return false;
-      if (auditFilter === "person" && !["create_person", "update_person"].includes(e.action)) return false;
+      if (auditFilter === "person" && !["create_person", "update_person", "add_note", "toggle_dnc"].includes(e.action))
+        return false;
+      if (auditFilter === "outlook" && !["send_email", "ingest_outlook"].includes(e.action)) return false;
+      if (auditFilter === "teams" && e.action !== "schedule_meeting") return false;
+      if (
+        auditFilter === "access" &&
+        !["view_file", "view_recording", "view_transcript", "view_msa", "view_po", "export"].includes(e.action)
+      ) {
+        return false;
+      }
+      if (auditFilter === "auth" && !["login", "login_failed", "logout", "password_set"].includes(e.action)) return false;
       if (
         auditFilter === "role-map" &&
-        !["admin_create_user", "admin_update_user", "admin_upsert_viotalk_map", "admin_upsert_mailbox_map"].includes(
-          e.action,
-        )
+        ![
+          "admin_create_user",
+          "admin_update_user",
+          "admin_upsert_viotalk_map",
+          "admin_upsert_mailbox_map",
+          "admin_upsert_jnp_map",
+          "admin_set_jnp_account",
+          "admin_set_jnp_enabled",
+          "admin_set_password",
+          "admin_send_password_email",
+          "password_set",
+        ].includes(e.action)
       ) {
         return false;
       }
@@ -227,7 +275,7 @@ export function SettingsPane({
     return <div className="p-8 text-sm text-slate-600">Settings hidden for this role.</div>;
   }
   if (!data) {
-    return <div className="p-8 text-sm text-slate-500">Loading administrator workspace…</div>;
+    return <TbLoader variant="inline" hint="Loading administrator workspace" />;
   }
 
   function toggleExtra(list: string[], perm: string) {
@@ -289,19 +337,22 @@ export function SettingsPane({
     }
   }
 
-  async function syncPortal() {
-    setJnpBanner("");
-    const result = (await onAction({ action: "jnp_sync", portalCandidateId: jnpId })) as
-      | { status?: string; existingId?: string }
-      | null;
-    if (!result) return;
-    if (result.status === "collision") {
-      setJnpBanner(
-        `Collision on portal ${jnpId} — existing record ${result.existingId || ""}. Never auto-merged; sent to the duplicate queue.`,
-      );
-    } else if (result.status === "upserted") {
-      setJnpBanner(`Synced ${jnpId} one-way in. No write-back to JobsNProfiles.`);
+  async function authenticateJnp(kind: "organization" | "recruiter") {
+    setJnpAuthNotice("");
+    if (kind === "organization") {
+      const result = (await onAction({ action: "admin_set_jnp_account", jnpAccountUserId: jnpAccountDraft })) as
+        | { authenticated?: boolean; packageEndDate?: string | null }
+        | null;
+      setJnpAuthNotice(jnpAuthMessage(result));
+      return;
     }
+    if (!selected) return;
+    const result = (await onAction({
+      action: "admin_upsert_jnp_map",
+      userId: selected.id,
+      jnpUserId: jnpUserDrafts[selected.id] || "",
+    })) as { authenticated?: boolean; packageEndDate?: string | null } | null;
+    setJnpAuthNotice(jnpAuthMessage(result));
   }
 
   const openException = filteredQueues.find((e) => e.id === openExceptionId) ?? null;
@@ -344,7 +395,7 @@ export function SettingsPane({
         </div>
       </header>
 
-      <Tabs items={[...TABS]} value={tab} onChange={(t) => setTab(t as (typeof TABS)[number])} />
+      <Tabs items={[...tabs]} value={tab} onChange={(t) => setTab(t as (typeof TABS)[number])} />
 
       <div className="p-4 sm:p-5 space-y-5">
         {tab === "User details" ? (
@@ -374,6 +425,9 @@ export function SettingsPane({
                       </Tag>
                       <Tag tone={selected.mailboxMapped ? "green" : "slate"}>
                         Mailbox {selected.mailboxMapped ? "mapped" : "unmapped"}
+                      </Tag>
+                      <Tag tone={selected.jnpEnabled ? "green" : "slate"}>
+                        JNP {selected.jnpEnabled ? "Enabled" : "Disabled"}
                       </Tag>
                     </div>
                   </div>
@@ -612,7 +666,7 @@ export function SettingsPane({
           ) : (
           <section>
             <h2 className="text-sm font-semibold text-slate-900">Mailbox map · {selected.name}</h2>
-            <p className="text-xs text-slate-600 mb-3">Unmapped users cannot Submit Profile.</p>
+            <p className="text-xs text-slate-600 mb-3">Unmapped users cannot Submit Profile, send Outlook mail, or schedule Teams meetings.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl items-end">
               <div className="sm:col-span-2">
                 <Label>Mailbox</Label>
@@ -640,67 +694,141 @@ export function SettingsPane({
                 </Button>
               </div>
             </div>
+            <div className="mt-6 space-y-3 max-w-xl">
+              <h3 className="text-sm font-semibold text-slate-900">Outlook / Teams (Microsoft Graph)</h3>
+              <p className="text-xs text-slate-600">{graph.copy}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Tag tone={graph.live ? "green" : "slate"}>{graph.live ? "Graph live" : "Graph stub"}</Tag>
+                <span className="text-xs text-slate-500">
+                  Last ingest{" "}
+                  {graph.lastIngest?.lastSyncedAt ? `${fmtTime(graph.lastIngest.lastSyncedAt)} · ${graph.lastIngest.syncStatus}` : "none yet"}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600">{graph.adapterStatus}</p>
+              <Button
+                disabled={busy}
+                onClick={async () => {
+                  setIngestNotice("");
+                  const result = (await onAction({ action: "ingest_outlook" })) as
+                    | { created?: number; linked?: number; unmatched?: number; skipped?: number; adapter?: string }
+                    | null;
+                  if (result) {
+                    setIngestNotice(
+                      `Ingest (${result.adapter || "stub"}): ${result.created || 0} timeline, ${result.linked || 0} linked to submissions, ${result.unmatched || 0} unmatched, ${result.skipped || 0} skipped.`,
+                    );
+                  }
+                }}
+              >
+                Ingest Outlook mail
+              </Button>
+              {ingestNotice ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">{ingestNotice}</div>
+              ) : null}
+            </div>
           </section>
           )
         ) : null}
 
-        {tab === "JNP sync" ? (
-          <section className="space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-900">JobsNProfiles sync status</h2>
-              <p className="text-xs text-slate-600 mt-1">{jnp.copy}</p>
-            </div>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[13px]">
+        {tab === "JNP map" ? (
+          <section>
+            <h2 className="text-sm font-semibold text-slate-900">
+              JobsNProfiles map{selected ? ` · ${selected.name}` : ""}
+            </h2>
+            <p className="text-xs text-slate-600 mb-3">
+              Enable JobsNProfiles only for users who should pull candidates. The organization must be allowed by a platform administrator first. Access refreshes at sign-in (background) and again after 2 hours — not on every resume sync.
+            </p>
+            <div className="max-w-xl space-y-4">
+              {selected ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-[13px] font-medium text-slate-800">JobsNProfiles</span>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      onAction({ action: "admin_set_jnp_enabled", userId: selected.id, enabled: !selected.jnpEnabled })
+                    }
+                    className={cn(
+                      "relative h-5 w-9 rounded-full transition-colors cursor-pointer disabled:opacity-40",
+                      selected.jnpEnabled ? "bg-[var(--color-accent)]" : "bg-[var(--color-border-strong)]",
+                    )}
+                    title={selected.jnpEnabled ? "Disable JobsNProfiles for this user" : "Enable JobsNProfiles for this user"}
+                  >
+                    <span
+                      className={cn(
+                        "absolute top-0.5 left-0.5 h-4 w-4 rounded-full bg-white transition-transform",
+                        selected.jnpEnabled && "translate-x-4",
+                      )}
+                    />
+                  </button>
+                  <span className="text-[13px] text-slate-700">{selected.jnpEnabled ? "Enabled" : "Disabled"}</span>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Select a user to enable or disable JobsNProfiles for them.</p>
+              )}
               <div>
-                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Direction</dt>
-                <dd className="text-slate-900">One-way in · no write-back</dd>
+                <Label>Organization ID</Label>
+                <div className="flex gap-2">
+                  <div className="min-w-0 flex-1">
+                    <FieldInput
+                      value={jnpAccountDraft}
+                      onChange={(e) => setJnpAccountDraft(e.target.value)}
+                      placeholder="Company admin ID"
+                    />
+                  </div>
+                  <Button disabled={busy || !jnpAccountDraft.trim()} onClick={() => authenticateJnp("organization")}>
+                    Authenticate
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={busy || !settings.jnpAccountUserId}
+                    onClick={async () => {
+                      setJnpAuthNotice("");
+                      const result = await onAction({ action: "admin_set_jnp_account", clear: true });
+                      if (result) setJnpAuthNotice("Organization ID cleared.");
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">Used when a user has no recruiter ID.</p>
               </div>
-              <div>
-                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Last sync</dt>
-                <dd className="text-slate-900">
-                  {jnp.lastSync
-                    ? `${jnp.lastSync.externalId} · ${fmtTime(jnp.lastSync.lastSyncedAt)} · ${jnp.lastSync.syncStatus}`
-                    : "None yet"}
-                </dd>
-              </div>
-              <div className="sm:col-span-2">
-                <dt className="text-[11px] uppercase tracking-wide text-slate-500">Last exception</dt>
-                <dd className="text-slate-900">
-                  {jnp.lastException
-                    ? `${jnp.lastException.title} · ${KIND_LABEL[jnp.lastException.kind] ?? jnp.lastException.kind} · ${jnp.lastException.status}`
-                    : "None"}
-                </dd>
-              </div>
-            </dl>
-            <div>
-              <h3 className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">Secrets vault</h3>
-              <p className="text-xs text-slate-600 mb-2">{jnp.adapterStatus}</p>
-              <ul className="text-[13px] space-y-1">
-                {(jnp.secretsVault || []).map((s) => (
-                  <li key={s.name} className="flex items-center gap-2">
-                    <Tag tone={s.present ? "green" : "red"}>{s.present ? "Present" : "Missing"}</Tag>
-                    <span className="text-slate-800">{s.name}</span>
-                    <span className="text-slate-500">— value never shown</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="max-w-md space-y-2">
-              <Label>Portal candidate ID</Label>
-              <FieldInput value={jnpId} onChange={(e) => setJnpId(e.target.value)} />
-              <Button disabled={busy} onClick={syncPortal}>
-                Sync portal ID
-              </Button>
-              {jnpBanner ? (
-                <div
-                  className={cn(
-                    "rounded-md border px-3 py-2 text-xs",
-                    jnpBanner.startsWith("Collision")
-                      ? "border-amber-200 bg-amber-50 text-amber-900"
-                      : "border-emerald-200 bg-emerald-50 text-emerald-900",
-                  )}
-                >
-                  {jnpBanner}
+              {selected ? (
+                <div>
+                  <Label>Recruiter ID</Label>
+                  <div className="flex gap-2">
+                    <div className="min-w-0 flex-1">
+                      <FieldInput
+                        value={jnpUserDrafts[selected.id] || ""}
+                        onChange={(e) => setJnpUserDrafts({ ...jnpUserDrafts, [selected.id]: e.target.value })}
+                        placeholder="Recruiter user ID"
+                      />
+                    </div>
+                    <Button
+                      disabled={busy || !String(jnpUserDrafts[selected.id] || "").trim()}
+                      onClick={() => authenticateJnp("recruiter")}
+                    >
+                      Authenticate
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={busy || !selected.jnpMapped}
+                      onClick={async () => {
+                        setJnpAuthNotice("");
+                        const result = await onAction({ action: "admin_upsert_jnp_map", userId: selected.id, clear: true });
+                        if (result) setJnpAuthNotice("Recruiter ID cleared.");
+                      }}
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">Optional. Overrides the organization ID for this user.</p>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Select a user to authenticate a recruiter ID.</p>
+              )}
+              {jnpAuthNotice ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                  {jnpAuthNotice}
                 </div>
               ) : null}
             </div>
@@ -799,12 +927,16 @@ export function SettingsPane({
                 <Label>Filter</Label>
                 <FieldSelect value={auditFilter} onChange={(e) => setAuditFilter(e.target.value)}>
                   <option value="all">All events</option>
-                  <option value="person">Create / update person</option>
-                  <option value="jnp">JNP sync</option>
+                  <option value="person">Person / notes / DNC</option>
+                  <option value="jnp">JNP candidate sync</option>
+                  <option value="outlook">Outlook send / ingest</option>
+                  <option value="teams">Teams meetings</option>
                   <option value="wrap-up">Wrap-up</option>
                   <option value="submit">Submit</option>
                   <option value="ownership">Ownership</option>
-                  <option value="role-map">Role / map changes</option>
+                  <option value="access">Views / downloads / export</option>
+                  <option value="auth">Login / logout</option>
+                  <option value="role-map">Role / map / password</option>
                 </FieldSelect>
               </div>
             </div>
@@ -850,7 +982,7 @@ export function SettingsPane({
 }
 
 function auditAfterLabel(e: AuditRow) {
-  const sensitive = /recording|msa|po|export/i.test(`${e.action} ${e.entityType} ${e.after}`);
+  const sensitive = /recording|transcript|msa|po|export|view_file/i.test(`${e.action} ${e.entityType} ${e.after}`);
   if (sensitive) {
     const parsed = parseJson(e.after);
     if (parsed && typeof parsed === "object") {

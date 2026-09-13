@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { TalentBridgeMark, TbLoader } from "@/components/TbLoader";
 
 type UserRow = { id: string; name: string; email: string; title: string; role: string; tenant: string };
 
@@ -62,7 +63,10 @@ function LoginForm() {
   return (
     <main className="min-h-screen bg-[#0b1f3a] text-white flex items-center justify-center p-8">
       <div className="w-full max-w-xl rounded-2xl bg-white text-slate-900 p-8 shadow-2xl">
-        <p className="text-sm uppercase tracking-wide text-blue-700 font-semibold">TalentBridge POC</p>
+        <div className="flex items-center gap-3">
+          <TalentBridgeMark size={36} />
+          <p className="text-sm uppercase tracking-wide text-blue-700 font-semibold">TalentBridge POC</p>
+        </div>
         <h1 className="mt-1 text-2xl font-semibold">Sign in</h1>
         <p className="mt-2 text-sm text-slate-600">
           Invited users sign in with email and password. Demo picker remains for seed users without a password.
@@ -134,7 +138,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<TbLoader variant="page" hint="Loading sign-in" />}>
       <LoginForm />
     </Suspense>
   );

@@ -95,10 +95,12 @@ model PlatformAdmin {
 }
 
 model Tenant {
-  id        String   @id @default(uuid())
-  name      String
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String   @id @default(uuid())
+  name        String
+  enabled     Boolean  @default(true)
+  /// Platform entitlement: JobsNProfiles is available in this tenant. Set by Global Admin.
+  jnpAllowed  Boolean  @default(false) @map("jnp_allowed")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   users            User[]
   memberships      Membership[]
@@ -120,9 +122,11 @@ model Tenant {
   exceptions       ExceptionItem[]
   agentMaps        VioTalkAgentMap[]
   mailboxMaps      MailboxMap[]
+  jnpUserMaps      JnpUserMap[]
   interviews       Interview[]
   placements       Placement[]
   externalLinks    ExternalEntityLink[]
+  calendarEvents   CalendarEvent[]
 
   @@map("tenants")
   @@schema("talentbridge")
@@ -140,6 +144,8 @@ model TenantSettings {
   slaClientLastOutreachDays Int      @default(21) @map("sla_client_last_outreach_days")
   slaMsaExpiryDays         Int      @default(30) @map("sla_msa_expiry_days")
   recordingPlaybackAllowed Boolean  @default(false) @map("recording_playback_allowed")
+  /// JobsNProfiles employer account (jnp_users.id) used when a TalentBridge user has no personal JNP map.
+  jnpAccountUserId         String   @default("") @map("jnp_account_user_id")
 
   @@map("tenant_settings")
   @@schema("talentbridge")
@@ -160,6 +166,13 @@ model User {
   passwordResetTokenHash  String?   @map("password_reset_token_hash")
   passwordResetExpiresAt  DateTime? @map("password_reset_expires_at")
   passwordResetKind       String?   @map("password_reset_kind")
+  /// When false, this user does not see JobsNProfiles candidate sync in the workspace.
+  jnpEnabled              Boolean   @default(false) @map("jnp_enabled")
+  /// Snapshot from JobsNProfiles /authenticate at TalentBridge login (not rechecked on each sync).
+  jnpAccessOk             Boolean   @default(false) @map("jnp_access_ok")
+  jnpAccessCode           String    @default("") @map("jnp_access_code")
+  jnpPackageEndDate       String    @default("") @map("jnp_package_end_date")
+  jnpCheckedAt            DateTime? @map("jnp_checked_at")
 
   memberships         Membership[]
   ownedPeople         Person[]              @relation("PersonOwner")
@@ -169,10 +182,12 @@ model User {
   activityEvents      ActivityEvent[]       @relation("ActivityEventActor")
   agentMap            VioTalkAgentMap?
   mailboxMap          MailboxMap?
+  jnpMap              JnpUserMap?
   ownershipRequested  OwnershipRequest[]    @relation("OwnershipRequester")
   ownershipTarget     OwnershipRequest[]    @relation("OwnershipTarget")
   assignedReqs        RequirementRecruiter[]
   bdms                Requirement[]         @relation("RequirementBdm")
+  organizedEvents     CalendarEvent[]       @relation("CalendarOrganizer")
 
   @@unique([tenantId, email])
   @@map("users")
@@ -217,6 +232,7 @@ model Organization {
   tasks          Task[]
   interviews     Interview[]
   placements     Placement[]
+  calendarEvents CalendarEvent[]
 
   @@index([tenantId, lastOutreachAt])
   @@index([tenantId, ownerId])
@@ -294,6 +310,7 @@ model Person {
   interviews       Interview[]
   placements       Placement[]
   ownershipReqs    OwnershipRequest[] @relation("OwnershipPerson")
+  calendarEvents   CalendarEvent[]
 
   @@index([tenantId, kind])
   @@index([tenantId, emailNormalized])
@@ -381,6 +398,7 @@ model Requirement {
   tasks          Task[]
   interviews     Interview[]
   placements     Placement[]
+  calendarEvents CalendarEvent[]
 
   @@index([tenantId, status])
   @@index([tenantId, organizationId, status])
@@ -428,6 +446,7 @@ model Submission {
   interviews     Interview[]
   placements     Placement[]
   tasks          Task[]
+  calendarEvents CalendarEvent[]
 
   @@index([tenantId, stage])
   /// Exclude-already-submitted + candidate history
@@ -452,9 +471,15 @@ model Interview {
   submissionId   String?      @map("submission_id")
   submission     Submission?  @relation(fields: [submissionId], references: [id])
   scheduledAt    DateTime     @map("scheduled_at")
+  endsAt         DateTime?    @map("ends_at")
+  location       String       @default("")
+  teamsJoinUrl   String       @default("") @map("teams_join_url")
+  graphEventId   String?      @map("graph_event_id")
   feedbackAt     DateTime?    @map("feedback_at")
   outcome        String       @default("pending")
   createdAt      DateTime     @default(now()) @map("created_at")
+
+  calendarEvents CalendarEvent[]
 
   @@index([tenantId, outcome, scheduledAt])
   @@index([tenantId, candidateId])
@@ -547,11 +572,49 @@ model Task {
   sourceEventId  String?   @map("source_event_id")
   sourceEvent    ActivityEvent? @relation(fields: [sourceEventId], references: [id])
   createdAt      DateTime  @default(now()) @map("created_at")
+  calendarEvents CalendarEvent[]
 
   @@index([tenantId, status, dueAt])
   @@index([tenantId, ownerId, status, dueAt])
   @@index([tenantId, personId, status])
   @@map("tasks")
+  @@schema("talentbridge")
+}
+
+model CalendarEvent {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title          String
+  kind           String
+  startsAt       DateTime @map("starts_at")
+  endsAt         DateTime @map("ends_at")
+  location       String   @default("")
+  teamsJoinUrl   String   @default("") @map("teams_join_url")
+  graphEventId   String?  @map("graph_event_id")
+  organizerId    String   @map("organizer_id")
+  organizer      User     @relation("CalendarOrganizer", fields: [organizerId], references: [id])
+  personId       String?  @map("person_id")
+  person         Person?  @relation(fields: [personId], references: [id])
+  organizationId String?  @map("organization_id")
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  requirementId  String?  @map("requirement_id")
+  requirement    Requirement? @relation(fields: [requirementId], references: [id])
+  submissionId   String?  @map("submission_id")
+  submission     Submission? @relation(fields: [submissionId], references: [id])
+  interviewId    String?  @map("interview_id")
+  interview      Interview? @relation(fields: [interviewId], references: [id])
+  taskId         String?  @map("task_id")
+  task           Task?    @relation(fields: [taskId], references: [id])
+  attendees      String[] @default([])
+  body           String   @default("")
+  source         String   @default("hub")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, startsAt])
+  @@index([tenantId, personId, startsAt])
+  @@index([tenantId, graphEventId])
+  @@map("calendar_events")
   @@schema("talentbridge")
 }
 
@@ -579,6 +642,10 @@ model StoredFile {
   tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   kind           String   @default("other")
   name           String
+  /// manual | JobsNProfiles — where this file reference came from.
+  source         String   @default("manual")
+  /// External system id (e.g. JNP resume_id) when source is JobsNProfiles.
+  externalId     String?  @map("external_id")
   version        Int      @default(1)
   organizationId String?  @map("organization_id")
   organization   Organization? @relation(fields: [organizationId], references: [id])
@@ -588,6 +655,7 @@ model StoredFile {
 
   @@index([tenantId, personId])
   @@index([tenantId, organizationId])
+  @@index([tenantId, personId, source, externalId])
   @@map("files")
   @@schema("talentbridge")
 }
@@ -767,5 +835,19 @@ model MailboxMap {
   mailbox   String
 
   @@map("mailbox_maps")
+  @@schema("talentbridge")
+}
+
+/// Maps a TalentBridge user to a JobsNProfiles employer/recruiter id (jnp_users.id).
+model JnpUserMap {
+  id        String @id @default(uuid())
+  tenantId  String @map("tenant_id")
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String @unique @map("user_id")
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jnpUserId String @map("jnp_user_id")
+
+  @@index([tenantId])
+  @@map("jnp_user_maps")
   @@schema("talentbridge")
 }

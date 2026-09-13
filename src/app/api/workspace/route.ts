@@ -3,6 +3,7 @@ import { getSession } from "@/lib/auth";
 import {
   dashboard,
   globalSearch,
+  listCalendar,
   listCommunications,
   listRequirements,
   listTasks,
@@ -45,8 +46,12 @@ export async function GET(req: Request) {
   if (module === "dashboard") {
     return NextResponse.json({ dashboard: await dashboard(session), badges });
   }
-  if (module === "tasks" || module === "calendar") {
+  if (module === "tasks") {
     return NextResponse.json({ tasks: await listTasks(session), badges });
+  }
+  if (module === "calendar") {
+    const [calendar, requirements] = await Promise.all([listCalendar(session), listRequirements(session)]);
+    return NextResponse.json({ calendar, requirements, badges });
   }
   if (module === "communications") {
     return NextResponse.json({ activityEvents: await listCommunications(session), badges });

@@ -6,6 +6,7 @@ import {
   Briefcase,
   CheckCircle2,
   ClipboardList,
+  Download,
   Inbox,
   ListTodo,
   Sparkles,
@@ -123,9 +124,11 @@ export function DashList({
 export function DashPane({
   dash,
   onOpen,
+  onExport,
 }: {
   dash: Record<string, unknown> | null;
   onOpen: (module: string, id?: string | null) => void;
+  onExport?: () => void;
 }) {
   const kpis = (dash?.kpis as Record<string, number>) || {};
   const risks = (dash?.risks as Risk[]) || [];
@@ -142,6 +145,12 @@ export function DashPane({
             not a separate reporting product.
           </p>
         </div>
+        {onExport ? (
+          <Button onClick={onExport} className="shrink-0">
+            <Download className="h-4 w-4" />
+            Export CSV
+          </Button>
+        ) : null}
       </header>
 
       <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Bell,
   FileText,
@@ -10,6 +10,7 @@ import {
   PanelLeftOpen,
   Search,
   Settings,
+  X,
 } from "lucide-react";
 import {
   Avatar,
@@ -19,6 +20,8 @@ import {
   MenuItem,
   NAV_ITEMS,
 } from "./workspace-ui";
+import { TalentBridgeMark } from "./TbLoader";
+import { firstHitHref, GlobalSearchPanel, type GlobalHit } from "./GlobalSearchPanel";
 
 export type AppShellSession = {
   name: string;
@@ -29,13 +32,7 @@ export type AppShellSession = {
 
 export type AppShellMenu = "none" | "help" | "user" | "bell" | string;
 
-export type GlobalHit = {
-  id: string;
-  name: string;
-  module?: string;
-  personId?: string;
-  type?: string;
-};
+export type { GlobalHit };
 
 type AppShellProps = {
   moduleKey: string;
@@ -72,6 +69,28 @@ export function AppShell({
 }: AppShellProps) {
   const isAdmin = Boolean(session?.permissions?.includes("admin") || session?.role === "admin");
   const navItems = NAV_ITEMS.filter((item) => item.key !== "settings" || !session || isAdmin);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!searchRef.current?.contains(e.target as Node)) onClearHits();
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClearHits();
+    }
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClearHits]);
+
+  function updateQuery(value: string) {
+    setQuery(value);
+    onSearchGlobal(value);
+  }
 
   return (
     <div className="h-screen flex bg-[var(--color-canvas)] text-[var(--color-text)]">
@@ -91,11 +110,7 @@ export function AppShell({
         )}
       >
         <div className={cn("flex items-center border-b border-white/10", navCollapsed ? "flex-col gap-2 px-1.5 py-3" : "px-3 py-3 gap-2")}>
-          <span className="relative h-7 w-7 shrink-0" aria-hidden>
-            <span className="absolute left-0.5 top-1 h-3.5 w-3.5 rounded-full bg-sky-400/90" />
-            <span className="absolute right-0.5 top-1 h-3.5 w-3.5 rounded-full bg-blue-500/90" />
-            <span className="absolute left-1.5 top-3 h-3.5 w-3.5 rounded-full bg-slate-400/80" />
-          </span>
+          <TalentBridgeMark size={28} />
           {!navCollapsed ? (
             <div className="min-w-0 flex-1">
               <div className="text-[10px] uppercase tracking-wider text-blue-200/90">TalentBridge</div>
@@ -196,40 +211,55 @@ export function AppShell({
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center gap-2 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0">
-          <div className="relative flex-1 min-w-0">
+        <header className="flex items-center gap-3 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0">
+          <div className="relative w-full max-w-[420px] shrink-0" ref={searchRef}>
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
             <input
-              className="w-full h-8 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] pl-8 pr-3 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none hover:border-[var(--color-border-strong)] focus:bg-[var(--color-surface)] focus:border-[var(--color-focus)] focus:ring-2 focus:ring-[var(--color-focus-ring)]"
-              placeholder="Search candidates, clients, organizations, conversations and files."
+              className="w-full h-9 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-muted)] pl-8 pr-8 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none hover:border-[var(--color-border-strong)] focus:bg-[var(--color-surface)] focus:border-[var(--color-focus)] focus:ring-2 focus:ring-[var(--color-focus-ring)]"
+              placeholder="Search candidates, clients, conversations and files"
               aria-label="Global search"
-              onChange={(e) => onSearchGlobal(e.target.value)}
+              value={query}
+              onChange={(e) => updateQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter") return;
+                const href = firstHitHref(globalHits);
+                if (!href) return;
+                e.preventDefault();
+                onClearHits();
+                onNavigate(href);
+              }}
             />
+            {query ? (
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-400 hover:text-slate-700 cursor-pointer"
+                aria-label="Clear search"
+                onClick={() => {
+                  setQuery("");
+                  onClearHits();
+                }}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
             {globalHits ? (
-              <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto text-[12px] border border-[var(--color-border)] rounded-[var(--radius-md)] p-2 space-y-1 bg-[var(--color-surface)] shadow-[var(--shadow-md)]">
-                {Object.entries(globalHits).map(([group, rows]) =>
-                  rows?.length ? (
-                    <div key={group}>
-                      <div className="uppercase text-[var(--color-text-muted)] text-[10px] font-semibold px-1">{group}</div>
-                      {rows.map((row) => (
-                        <button
-                          key={String(row.id)}
-                          type="button"
-                          className="block w-full text-left hover:bg-[var(--color-surface-muted)] hover:text-[var(--color-accent)] rounded px-2 py-1 cursor-pointer"
-                          onClick={() => {
-                            onClearHits();
-                            onNavigate(`/${row.module}?id=${row.personId || row.id}&type=${row.type || "person"}`);
-                          }}
-                        >
-                          {String(row.name)}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null,
-                )}
-              </div>
+              <GlobalSearchPanel
+                query={query}
+                hits={globalHits}
+                onOpen={(href) => {
+                  onClearHits();
+                  onNavigate(href);
+                }}
+                onViewAll={(module) => {
+                  onClearHits();
+                  onNavigate(`/${module}?q=${encodeURIComponent(query)}`);
+                }}
+                onClose={onClearHits}
+              />
             ) : null}
           </div>
+
+          <div className="flex-1 min-w-0" />
 
           {primaryAction}
 
