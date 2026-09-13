@@ -22,6 +22,8 @@ async function main() {
       email: "global.admin@talentbridge.example",
       name: "Global Admin",
       passwordHash: await hashPassword("ChangeMe123!"),
+      passwordChangedAt: new Date(),
+      mustChangePassword: false,
     },
   });
 

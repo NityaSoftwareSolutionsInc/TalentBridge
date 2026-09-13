@@ -30,6 +30,9 @@ import {
   syncJnp,
   toggleDnc,
   updatePerson,
+  upsertEmailSignature,
+  deleteEmailSignature,
+  setDefaultEmailSignature,
   viewCallArtifact,
   viewCommercial,
   wrapUp,
@@ -72,6 +75,33 @@ export async function POST(req: Request) {
             subject: String(body.subject || ""),
             body: String(body.body || ""),
             to: body.to as string | undefined,
+            cc: body.cc as string | undefined,
+            includeSignature: body.includeSignature !== false,
+            signatureId: body.signatureId as string | undefined,
+          }),
+        );
+      case "upsert_email_signature":
+        return NextResponse.json(
+          await upsertEmailSignature(session, {
+            id: body.id as string | undefined,
+            userId: body.userId as string | undefined,
+            name: body.name as string | undefined,
+            body: body.body as string | undefined,
+            isDefault: body.isDefault as boolean | undefined,
+          }),
+        );
+      case "set_default_email_signature":
+        return NextResponse.json(
+          await setDefaultEmailSignature(session, {
+            id: String(body.id || ""),
+            userId: body.userId as string | undefined,
+          }),
+        );
+      case "delete_email_signature":
+        return NextResponse.json(
+          await deleteEmailSignature(session, {
+            id: String(body.id || ""),
+            userId: body.userId as string | undefined,
           }),
         );
       case "schedule_meeting":

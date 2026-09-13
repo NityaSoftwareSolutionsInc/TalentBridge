@@ -48,6 +48,10 @@ type Session = {
   jnpAllowed?: boolean;
   jnpAccessOk?: boolean;
   jnpAccessCode?: string;
+  emailSignatures?: { id: string; name: string; body: string; isDefault: boolean }[];
+  emailSignatureName?: string;
+  emailSignatureBody?: string;
+  emailSignatureEnabled?: boolean;
   recordingPlaybackAllowed?: boolean;
 };
 
@@ -224,7 +228,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     if (data.activityEvents) setActivityEvents(data.activityEvents);
     if (data.requirements) setRequirements(data.requirements);
     if (data.users) setUsers(data.users);
-    if (data.settings || data.maps || data.forbidden) setSettings(data);
+    if (data.settings || data.maps || data.users || data.mode) setSettings(data);
     if (data.items) setList(data.items);
     if (data.reports) setDash({ kpis: data.reports, risks: data.risks });
     if (data.badges) setBadges(data.badges);
@@ -243,15 +247,30 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     load().catch((e) => setError(String(e)));
   }, [load]);
 
+  const isAdmin = Boolean(session?.permissions?.includes("admin") || session?.role === "admin");
+  const settingsPersonal = moduleKey === "settings" && !isAdmin;
+
   useEffect(() => {
     if (selectedId) return;
+    if (moduleKey === "settings") {
+      const settingsUsers = (settings?.users as { id: string }[] | undefined) || [];
+      const selfId = session?.userId;
+      const pick =
+        (!isAdmin && selfId && settingsUsers.some((u) => u.id === selfId) ? selfId : null) ||
+        (settingsUsers[0]?.id ?? null);
+      if (!pick) return;
+      const next = new URLSearchParams(params.toString());
+      next.set("id", pick);
+      router.replace(`/${moduleKey}?${next.toString()}`);
+      return;
+    }
     if (!list.length) return;
     if (!["candidates", "clients", "vendors"].includes(moduleKey)) return;
     const next = new URLSearchParams(params.toString());
     next.set("id", String(list[0].id));
     next.set("type", "person");
     router.replace(`/${moduleKey}?${next.toString()}`);
-  }, [list, selectedId, moduleKey, params, router]);
+  }, [list, selectedId, moduleKey, params, router, settings, session?.userId, isAdmin]);
 
   useEffect(() => {
     if (!selectedId || ["settings", "calendar", "dashboard", "reports", "tasks", "communications", "msa-po"].includes(moduleKey)) {
@@ -407,7 +426,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   })();
 
   const primaryAction =
-    moduleKey === "settings" ? (
+    moduleKey === "settings" && isAdmin ? (
       <Button onClick={() => setDrawer("create-user")}>
         <Plus className="h-4 w-4" />
         Add user
@@ -449,10 +468,14 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
           {moduleKey === "settings" ? (
             <div className="px-3.5 pt-3 pb-3 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
               <div className="flex items-center gap-2 min-h-7">
-                <h2 className="font-semibold text-[15px] leading-none text-[var(--color-text)]">Users</h2>
-                <span className="shrink-0 inline-flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--color-text-muted)]">
-                  {((settings?.users as unknown[]) || []).length}
-                </span>
+                <h2 className="font-semibold text-[15px] leading-none text-[var(--color-text)]">
+                  {settingsPersonal ? "My account" : "Users"}
+                </h2>
+                {!settingsPersonal ? (
+                  <span className="shrink-0 inline-flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--color-text-muted)]">
+                    {((settings?.users as unknown[]) || []).length}
+                  </span>
+                ) : null}
               </div>
             </div>
           ) : (
@@ -1229,8 +1252,20 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
             {drawer === "email" ? (
               <EmailForm
                 to={String(record?.email || "")}
+                contactName={String(record?.name || "")}
                 mailbox={session?.mailbox || null}
+                signatures={session?.emailSignatures || []}
                 onClose={() => setDrawer("none")}
+                onSaveSignature={async (vals) => {
+                  const data = await act({
+                    action: "upsert_email_signature",
+                    id: vals.id,
+                    name: vals.name,
+                    body: vals.body,
+                    isDefault: vals.isDefault,
+                  });
+                  return Boolean(data);
+                }}
                 onSave={async (vals) => {
                   const data = await act({ action: "send_email", personId: selectedId, ...vals });
                   if (data) {
@@ -2767,38 +2802,303 @@ function toLocalInput(d: Date) {
 
 function EmailForm({
   to,
+  contactName,
   mailbox,
+  signatures,
   onClose,
   onSave,
+  onSaveSignature,
 }: {
   to: string;
+  contactName?: string;
   mailbox: string | null;
+  signatures: { id: string; name: string; body: string; isDefault: boolean }[];
   onClose: () => void;
-  onSave: (v: { to: string; subject: string; body: string }) => Promise<void>;
+  onSave: (v: {
+    to: string;
+    cc: string;
+    subject: string;
+    body: string;
+    includeSignature: boolean;
+    signatureId?: string;
+  }) => Promise<void>;
+  onSaveSignature: (v: {
+    id?: string;
+    name: string;
+    body: string;
+    isDefault: boolean;
+  }) => Promise<boolean>;
 }) {
+  const defaultSig = signatures.find((s) => s.isDefault) || signatures[0] || null;
   const [dest, setDest] = useState(to);
+  const [cc, setCc] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [selectedSigId, setSelectedSigId] = useState(defaultSig?.id || "");
+  const [includeSignature, setIncludeSignature] = useState(Boolean(defaultSig?.body?.trim()));
+  const [editingSignature, setEditingSignature] = useState(false);
+  const [creatingSignature, setCreatingSignature] = useState(false);
+  const [sigName, setSigName] = useState(defaultSig?.name || "Default");
+  const [sigBody, setSigBody] = useState(defaultSig?.body || "");
+  const [sigDefault, setSigDefault] = useState(true);
+  const [sigBusy, setSigBusy] = useState(false);
+  const [sigNotice, setSigNotice] = useState("");
+
+  useEffect(() => {
+    const nextDefault = signatures.find((s) => s.isDefault) || signatures[0] || null;
+    const stillSelected = signatures.find((s) => s.id === selectedSigId);
+    const pick = stillSelected || nextDefault;
+    setSelectedSigId(pick?.id || "");
+    setIncludeSignature(Boolean(pick?.body?.trim()));
+    if (!editingSignature && !creatingSignature) {
+      setSigName(pick?.name || "Default");
+      setSigBody(pick?.body || "");
+      setSigDefault(Boolean(pick?.isDefault || !signatures.length));
+    }
+  }, [signatures]);
+
+  const activeSig = signatures.find((s) => s.id === selectedSigId) || defaultSig;
+  const previewSignature =
+    includeSignature && (editingSignature || creatingSignature ? sigBody : activeSig?.body || "").trim()
+      ? (editingSignature || creatingSignature ? sigBody : activeSig?.body || "").trim()
+      : "";
+  const canSend = Boolean(mailbox && dest.trim() && subject.trim() && body.trim());
+
   return (
     <form
-      className="space-y-3"
+      className="space-y-4"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave({ to: dest, subject, body });
+        onSave({
+          to: dest,
+          cc,
+          subject,
+          body,
+          includeSignature,
+          signatureId: selectedSigId || undefined,
+        });
       }}
     >
-      <h2 className="text-lg font-semibold">Send Email</h2>
-      <p className="text-xs text-slate-500">
-        Compose here. Send through the signed-in user&apos;s Outlook mailbox. No template catalog.
-        {mailbox ? ` From ${mailbox}.` : " Map a mailbox in Settings first."}
-      </p>
-      <Label>To</Label>
-      <FieldInput type="email" required value={dest} onChange={(e) => setDest(e.target.value)} />
-      <Label>Subject</Label>
-      <FieldInput required value={subject} onChange={(e) => setSubject(e.target.value)} />
-      <textarea className="w-full border rounded px-2 py-2 h-36" required value={body} onChange={(e) => setBody(e.target.value)} />
-      <div className="flex gap-2">
-        <button className={btnPrimary} disabled={!mailbox}>
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900">Send Email</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Compose in TalentBridge and send as the signed-in Outlook mailbox. Signatures are personal identity footers —
+          not a template catalog.
+        </p>
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="flex flex-wrap items-center gap-2 text-[13px]">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">From</span>
+          <span className="font-medium text-slate-900">{mailbox || "No mailbox mapped"}</span>
+          {contactName ? (
+            <>
+              <span className="text-slate-300">·</span>
+              <span className="text-slate-600">Regarding {contactName}</span>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <Label>To</Label>
+          <FieldInput
+            type="email"
+            required
+            value={dest}
+            onChange={(e) => setDest(e.target.value)}
+            placeholder="recipient@company.com"
+          />
+        </div>
+        <div>
+          <Label>Cc</Label>
+          <FieldInput
+            value={cc}
+            onChange={(e) => setCc(e.target.value)}
+            placeholder="optional@company.com, another@company.com"
+          />
+        </div>
+        <div>
+          <Label>Subject</Label>
+          <FieldInput
+            required
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="Subject line"
+          />
+        </div>
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <Label>Message</Label>
+            <span className="text-[11px] text-slate-500">{body.length} characters</span>
+          </div>
+          <textarea
+            className="h-40 w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+            required
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Write your message…"
+          />
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-slate-200 bg-white">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-3 py-2">
+          <label className="flex items-center gap-2 text-[13px] text-slate-800">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-300 text-blue-600"
+              checked={includeSignature}
+              disabled={!activeSig?.body?.trim() && !sigBody.trim()}
+              onChange={(e) => setIncludeSignature(e.target.checked)}
+            />
+            Attach signature
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            {signatures.length > 1 ? (
+              <select
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[13px] text-slate-800"
+                value={selectedSigId}
+                onChange={(e) => {
+                  setSelectedSigId(e.target.value);
+                  setIncludeSignature(true);
+                  setEditingSignature(false);
+                  setCreatingSignature(false);
+                }}
+              >
+                {signatures.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                    {s.isDefault ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+            ) : activeSig ? (
+              <span className="text-[13px] text-slate-500">({activeSig.name})</span>
+            ) : null}
+            <button
+              type="button"
+              className="text-[13px] font-medium text-blue-700 hover:underline cursor-pointer"
+              onClick={() => {
+                if (creatingSignature) {
+                  setCreatingSignature(false);
+                  return;
+                }
+                setCreatingSignature(true);
+                setEditingSignature(false);
+                setSigName("New signature");
+                setSigBody("");
+                setSigDefault(!signatures.length);
+                setSigNotice("");
+              }}
+            >
+              {creatingSignature ? "Cancel new" : "New"}
+            </button>
+            {activeSig ? (
+              <button
+                type="button"
+                className="text-[13px] font-medium text-blue-700 hover:underline cursor-pointer"
+                onClick={() => {
+                  setEditingSignature((v) => !v);
+                  setCreatingSignature(false);
+                  setSigName(activeSig.name);
+                  setSigBody(activeSig.body);
+                  setSigDefault(activeSig.isDefault);
+                  setSigNotice("");
+                }}
+              >
+                {editingSignature ? "Close editor" : "Edit"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        {editingSignature || creatingSignature ? (
+          <div className="space-y-3 p-3">
+            <p className="text-xs text-slate-500">
+              Saved to your TalentBridge profile. Manage all signatures in Settings → Email signature.
+            </p>
+            <div>
+              <Label>Signature name</Label>
+              <FieldInput value={sigName} onChange={(e) => setSigName(e.target.value)} placeholder="Default" />
+            </div>
+            <div>
+              <Label>Signature body</Label>
+              <textarea
+                className="mt-1 h-28 w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                value={sigBody}
+                onChange={(e) => setSigBody(e.target.value)}
+                placeholder={"Regards,\nYour Name\nTitle | Company\nPhone"}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-[13px] text-slate-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                checked={sigDefault}
+                onChange={(e) => setSigDefault(e.target.checked)}
+              />
+              Set as default signature
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={btnPrimary}
+                disabled={sigBusy}
+                onClick={async () => {
+                  setSigBusy(true);
+                  setSigNotice("");
+                  try {
+                    const ok = await onSaveSignature({
+                      id: creatingSignature ? undefined : activeSig?.id,
+                      name: sigName || "Default",
+                      body: sigBody,
+                      isDefault: sigDefault,
+                    });
+                    if (ok) {
+                      setSigNotice("Signature saved.");
+                      setIncludeSignature(Boolean(sigBody.trim()));
+                      setEditingSignature(false);
+                      setCreatingSignature(false);
+                    }
+                  } finally {
+                    setSigBusy(false);
+                  }
+                }}
+              >
+                {sigBusy ? "Saving…" : creatingSignature ? "Create signature" : "Save signature"}
+              </button>
+              <button
+                type="button"
+                className={btnGhost}
+                disabled={sigBusy}
+                onClick={() => {
+                  setEditingSignature(false);
+                  setCreatingSignature(false);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+            {sigNotice ? <p className="text-xs text-emerald-700">{sigNotice}</p> : null}
+          </div>
+        ) : previewSignature ? (
+          <div className="px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Signature preview</p>
+            <pre className="mt-1 whitespace-pre-wrap border-t border-slate-100 pt-2 font-sans text-[12px] text-slate-700">
+              {previewSignature}
+            </pre>
+          </div>
+        ) : (
+          <p className="px-3 py-2 text-xs text-slate-500">
+            No signature saved yet. Create one here or in Settings → Email signature.
+          </p>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        <button className={btnPrimary} disabled={!canSend}>
           Send via Outlook
         </button>
         <button type="button" className={btnGhost} onClick={onClose}>

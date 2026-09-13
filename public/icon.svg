@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="TalentBridge">
+  <rect width="48" height="48" rx="11" fill="#0b1f3a"/>
+  <defs>
+    <linearGradient id="a" x1="8" y1="6" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7dd3fc"/><stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="b" x1="20" y1="6" x2="40" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3b82f6"/><stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+    <linearGradient id="c" x1="14" y1="20" x2="34" y2="42" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#cbd5e1"/><stop offset="1" stop-color="#64748b"/>
+    </linearGradient>
+  </defs>
+  <circle cx="18" cy="17.5" r="12.5" fill="url(#a)"/>
+  <circle cx="30" cy="17.5" r="12.5" fill="url(#b)"/>
+  <circle cx="24" cy="29.5" r="12.5" fill="url(#c)"/>
+</svg>

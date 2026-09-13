@@ -2,7 +2,9 @@
 
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { TalentBridgeMark, TbLoader } from "@/components/TbLoader";
+import { ArrowRight, Eye, EyeOff, Lock } from "lucide-react";
+import { AuthShell } from "@/components/AuthShell";
+import { TbLoader } from "@/components/TbLoader";
 
 function SetPasswordForm() {
   const router = useRouter();
@@ -10,6 +12,7 @@ function SetPasswordForm() {
   const token = params.get("token") || "";
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -39,51 +42,80 @@ function SetPasswordForm() {
   }
 
   return (
-    <main className="min-h-screen bg-[#0b1f3a] text-white flex items-center justify-center p-8">
-      <form onSubmit={submit} className="w-full max-w-md rounded-2xl bg-white text-slate-900 p-8 shadow-2xl space-y-4">
-        <div className="flex items-center gap-3">
-          <TalentBridgeMark size={36} />
-          <p className="text-sm uppercase tracking-wide text-blue-700 font-semibold">TalentBridge</p>
+    <AuthShell
+      headline="Activate your TalentBridge access"
+      subcopy="Set a password from your invitation or reset link. The link is single-use and expires for security."
+    >
+      <div className="mb-7">
+        <div className="auth-kicker">
+          <span className="auth-kicker-dot" aria-hidden />
+          Account setup
         </div>
-        <h1 className="text-2xl font-semibold">Set your password</h1>
-        <p className="text-sm text-slate-600">
-          This link comes from an administrator invitation or password reset. It can be used once.
+        <h1 className="mt-3 font-[family-name:var(--font-auth-display)] text-[2rem] leading-[1.15] tracking-[-0.025em] text-slate-950">
+          Activate your account
+        </h1>
+        <p className="mt-2.5 text-[14px] leading-[1.55] text-slate-500">
+          Use the link from your invitation email to set a password (at least 8 characters). You can sign in with your
+          work email only after activation.
         </p>
-        {!token ? <p className="text-sm text-red-600">This link is missing a token. Ask an administrator to send a new email.</p> : null}
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
+      </div>
+
+      {!token ? (
+        <div className="auth-banner auth-banner-err mb-5" role="alert">
+          This link is missing a token. Ask an administrator to send a new email.
+        </div>
+      ) : null}
+      {error ? (
+        <div className="auth-banner auth-banner-err mb-5" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      <form onSubmit={submit} className="space-y-5">
         <label className="block">
-          <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">New password</span>
-          <input
-            type="password"
-            required
-            minLength={8}
-            autoComplete="new-password"
-            className="h-10 w-full rounded-md border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <span className="auth-label">New password</span>
+          <div className="auth-field">
+            <Lock className="auth-field-icon" aria-hidden />
+            <input
+              type={showPassword ? "text" : "password"}
+              required
+              minLength={8}
+              autoComplete="new-password"
+              className="auth-input auth-input-trailing"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <button
+              type="button"
+              className="auth-field-action"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={() => setShowPassword((v) => !v)}
+            >
+              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
         </label>
         <label className="block">
-          <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Confirm password</span>
-          <input
-            type="password"
-            required
-            minLength={8}
-            autoComplete="new-password"
-            className="h-10 w-full rounded-md border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-          />
+          <span className="auth-label">Confirm password</span>
+          <div className="auth-field">
+            <Lock className="auth-field-icon" aria-hidden />
+            <input
+              type={showPassword ? "text" : "password"}
+              required
+              minLength={8}
+              autoComplete="new-password"
+              className="auth-input"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
+          </div>
         </label>
-        <button
-          type="submit"
-          disabled={busy || !token}
-          className="w-full h-10 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 cursor-pointer"
-        >
-          {busy ? "Saving…" : "Save password and continue"}
+        <button type="submit" disabled={busy || !token} className="auth-primary">
+          <span>{busy ? "Activating…" : "Activate and continue"}</span>
+          {!busy ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
         </button>
       </form>
-    </main>
+    </AuthShell>
   );
 }
 

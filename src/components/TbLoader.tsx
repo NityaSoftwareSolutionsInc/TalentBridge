@@ -1,9 +1,12 @@
 "use client";
 
+import { useId } from "react";
+
 function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+/** Primary mark — three overlapping nodes (people / systems / outcomes). */
 export function TalentBridgeMark({
   size = 28,
   className,
@@ -11,6 +14,10 @@ export function TalentBridgeMark({
   size?: number;
   className?: string;
 }) {
+  const uid = useId().replace(/:/g, "");
+  const a = `tb-mark-a-${uid}`;
+  const b = `tb-mark-b-${uid}`;
+  const c = `tb-mark-c-${uid}`;
   return (
     <svg
       viewBox="0 0 48 48"
@@ -19,10 +26,72 @@ export function TalentBridgeMark({
       className={cn("shrink-0", className)}
       aria-hidden
     >
-      <circle cx="18" cy="17.5" r="12.5" fill="#38bdf8" fillOpacity="0.92" />
-      <circle cx="30" cy="17.5" r="12.5" fill="#2563eb" fillOpacity="0.92" />
-      <circle cx="24" cy="29.5" r="12.5" fill="#94a3b8" fillOpacity="0.88" />
+      <defs>
+        <linearGradient id={a} x1="8" y1="6" x2="28" y2="30" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#7dd3fc" />
+          <stop offset="1" stopColor="#38bdf8" />
+        </linearGradient>
+        <linearGradient id={b} x1="20" y1="6" x2="40" y2="30" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#3b82f6" />
+          <stop offset="1" stopColor="#1d4ed8" />
+        </linearGradient>
+        <linearGradient id={c} x1="14" y1="20" x2="34" y2="42" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#cbd5e1" />
+          <stop offset="1" stopColor="#64748b" />
+        </linearGradient>
+      </defs>
+      <circle cx="18" cy="17.5" r="12.5" fill={`url(#${a})`} fillOpacity="0.95" />
+      <circle cx="30" cy="17.5" r="12.5" fill={`url(#${b})`} fillOpacity="0.94" />
+      <circle cx="24" cy="29.5" r="12.5" fill={`url(#${c})`} fillOpacity="0.9" />
     </svg>
+  );
+}
+
+/** Full lockup for auth and branded surfaces. */
+export function TalentBridgeLogo({
+  size = 40,
+  theme = "light",
+  product = "Contact Manager",
+  className,
+}: {
+  size?: number;
+  theme?: "light" | "dark";
+  product?: string | null;
+  className?: string;
+}) {
+  const dark = theme === "dark";
+  return (
+    <div className={cn("flex items-center gap-3", className)}>
+      <span
+        className={cn(
+          "grid place-items-center rounded-[10px] ring-1",
+          dark ? "bg-white/8 ring-white/15" : "bg-slate-50 ring-slate-200/80",
+        )}
+        style={{ width: size + 10, height: size + 10 }}
+      >
+        <TalentBridgeMark size={size} />
+      </span>
+      <div className="min-w-0 leading-tight">
+        <div
+          className={cn(
+            "font-[family-name:var(--font-auth-display)] text-[1.35rem] tracking-[-0.02em]",
+            dark ? "text-white" : "text-slate-950",
+          )}
+        >
+          TalentBridge
+        </div>
+        {product ? (
+          <div
+            className={cn(
+              "mt-0.5 text-[11px] font-medium uppercase tracking-[0.16em]",
+              dark ? "text-sky-200/80" : "text-slate-500",
+            )}
+          >
+            {product}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

@@ -2,10 +2,31 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken, clearSessionCookie } from "@/lib/jwt";
 
-const PUBLIC_PATHS = ["/login", "/set-password", "/api/login", "/api/users", "/api/logout", "/api/password"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/set-password",
+  "/api/login",
+  "/api/users",
+  "/api/logout",
+  "/api/password",
+  "/api/forgot-password",
+  "/api/support-session",
+];
+
+const PUBLIC_ASSETS = new Set([
+  "/icon.svg",
+  "/icon-32.png",
+  "/apple-touch-icon.png",
+  "/opengraph-image",
+  "/twitter-image",
+  "/favicon.ico",
+  "/favicon-v2.ico",
+]);
 
 function isPublic(pathname: string) {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) || pathname.startsWith("/_next");
+  if (pathname.startsWith("/_next")) return true;
+  if (PUBLIC_ASSETS.has(pathname)) return true;
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 export async function middleware(req: NextRequest) {
@@ -29,5 +50,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!_next/static|_next/image).*)"],
 };

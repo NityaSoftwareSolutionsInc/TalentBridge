@@ -28,6 +28,7 @@ export type AppShellSession = {
   title: string;
   role?: string;
   permissions?: string[];
+  supportMode?: { readOnly: true; platformAdminId: string } | null;
 } | null;
 
 export type AppShellMenu = "none" | "help" | "user" | "bell" | string;
@@ -67,8 +68,7 @@ export function AppShell({
   primaryAction,
   children,
 }: AppShellProps) {
-  const isAdmin = Boolean(session?.permissions?.includes("admin") || session?.role === "admin");
-  const navItems = NAV_ITEMS.filter((item) => item.key !== "settings" || !session || isAdmin);
+  const navItems = NAV_ITEMS;
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLDivElement>(null);
 
@@ -210,7 +210,13 @@ export function AppShell({
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0">
+        {session?.supportMode ? (
+          <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-950">
+            Support access (read-only) — you are viewing this tenant as Global Admin support. Session expires in 30
+            minutes.
+          </div>
+        ) : null}
         <header className="flex items-center gap-3 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface)] shrink-0">
           <div className="relative w-full max-w-[420px] shrink-0" ref={searchRef}>
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--color-text-muted)] pointer-events-none" />
@@ -306,17 +312,15 @@ export function AppShell({
             </button>
             {menu === "user" ? (
               <div className="absolute right-0 mt-1 z-30 w-52 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)] py-1">
-                {isAdmin ? (
-                  <MenuItem
-                    icon={Settings}
-                    onClick={() => {
-                      onMenuChange("none");
-                      onNavigate("/settings");
-                    }}
-                  >
-                    Settings
-                  </MenuItem>
-                ) : null}
+                <MenuItem
+                  icon={Settings}
+                  onClick={() => {
+                    onMenuChange("none");
+                    onNavigate("/settings");
+                  }}
+                >
+                  Settings
+                </MenuItem>
                 <MenuItem icon={LogOut} onClick={onSignOut}>
                   Log out
                 </MenuItem>

@@ -17,7 +17,7 @@ import type { Session } from "./auth";
 import { canSeePoAmounts } from "./rbac";
 import { listCalendarItems, listCalendarPeople } from "./calendar";
 import { tenantSettings } from "./settings";
-import { appBaseUrl, issuePasswordEmail, type PasswordMailKind } from "./account-mail";
+import { appBaseUrl, issuePasswordEmail, sendPasswordChangedEmail, sendUserDisabledEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
 import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
 import {
@@ -939,7 +939,15 @@ export async function submitProfile(
 
 export async function sendEmail(
   session: Session,
-  input: { personId: string; subject: string; body: string; to?: string },
+  input: {
+    personId: string;
+    subject: string;
+    body: string;
+    to?: string;
+    cc?: string;
+    includeSignature?: boolean;
+    signatureId?: string;
+  },
 ) {
   const person = await prisma.person.findFirst({
     where: { id: input.personId, tenantId: session.tenantId },
@@ -955,11 +963,40 @@ export async function sendEmail(
   if (!subject) throw new Error("Subject is required");
   if (!body) throw new Error("Message body is required");
 
+  const includeSignature = input.includeSignature !== false;
+  let signature = "";
+  let signatureId: string | null = null;
+  if (includeSignature) {
+    const wantedId = String(input.signatureId || "").trim();
+    const fromSession = wantedId
+      ? session.emailSignatures?.find((s) => s.id === wantedId)
+      : session.emailSignatures?.find((s) => s.isDefault) || session.emailSignatures?.[0];
+    if (fromSession?.body?.trim()) {
+      signature = fromSession.body.trim();
+      signatureId = fromSession.id;
+    } else if (wantedId) {
+      const row = await prisma.emailSignature.findFirst({
+        where: { id: wantedId, tenantId: session.tenantId, userId: session.userId },
+      });
+      signature = String(row?.body || "").trim();
+      signatureId = row?.id || null;
+    } else {
+      signature = String(session.emailSignatureBody || "").trim();
+    }
+  }
+  const fullBody = includeSignature && signature ? `${body}\n\n--\n${signature}` : body;
+
+  const cc = String(input.cc || "")
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter((s) => s.includes("@"));
+
   const sent = await integrations.outlook.sendAsUser({
     fromMailbox: session.mailbox,
     to,
+    cc: cc.length ? cc : undefined,
     subject,
-    body,
+    body: fullBody,
   });
 
   const activity = await prisma.activityEvent.create({
@@ -967,7 +1004,7 @@ export async function sendEmail(
       tenantId: session.tenantId,
       kind: "email",
       summary: `Email: ${subject}`,
-      body,
+      body: fullBody,
       source: "outlook",
       externalId: sent.internetMessageId || sent.messageId,
       actorId: session.userId,
@@ -987,11 +1024,23 @@ export async function sendEmail(
     action: "send_email",
     entityType: "activity_event",
     entityId: activity.id,
-    after: { messageId: sent.messageId, to },
+    after: {
+      messageId: sent.messageId,
+      to,
+      cc,
+      includeSignature: includeSignature && Boolean(signature),
+      signatureId,
+    },
   });
 
   return { activityId: activity.id, messageId: sent.messageId };
 }
+
+export {
+  upsertEmailSignature,
+  deleteEmailSignature,
+  setDefaultEmailSignature,
+} from "./email-signatures";
 
 export async function scheduleMeeting(
   session: Session,
@@ -2320,14 +2369,130 @@ async function assertNotLastAdmin(
 }
 
 export async function settingsPayload(session: Session) {
-  if (!session.permissions.includes("admin") && session.role !== "admin") {
-    return { forbidden: true };
+  const isAdmin = session.permissions.includes("admin") || session.role === "admin";
+
+  function mapUser(u: {
+    id: string;
+    name: string;
+    email: string;
+    title: string;
+    enabled: boolean;
+    emailSignatureName: string;
+    emailSignatureBody: string;
+    emailSignatureEnabled: boolean;
+    jnpEnabled: boolean;
+    inviteSentAt?: Date | null;
+    passwordHash?: string | null;
+    passwordSetAt?: Date | null;
+    passwordResetKind?: string | null;
+    passwordResetExpiresAt?: Date | null;
+    memberships: { role: TbRole; permissions: string[] }[];
+    agentMap: { vioTalkUserId: string; assignedNumber: string } | null;
+    mailboxMap: { mailbox: string } | null;
+    jnpMap: { jnpUserId: string } | null;
+    emailSignatures?: { id: string; name: string; body: string; isDefault: boolean }[];
+  }) {
+    let signatures = (u.emailSignatures || []).map((s) => ({
+      id: s.id,
+      name: s.name,
+      body: s.body,
+      isDefault: s.isDefault,
+    }));
+    if (!signatures.length && String(u.emailSignatureBody || "").trim()) {
+      signatures = [
+        {
+          id: "",
+          name: u.emailSignatureName || "Default",
+          body: u.emailSignatureBody || "",
+          isDefault: true,
+        },
+      ];
+    }
+    const defaultSig = signatures.find((s) => s.isDefault) || signatures[0] || null;
+    return {
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      title: u.title,
+      enabled: u.enabled,
+      role: u.memberships[0]?.role ?? TbRole.recruiter,
+      extraPermissions: u.memberships[0]?.permissions ?? [],
+      vioTalkMapped: Boolean(u.agentMap),
+      vioTalkUserId: u.agentMap?.vioTalkUserId ?? "",
+      assignedNumber: u.agentMap?.assignedNumber ?? "",
+      mailboxMapped: Boolean(u.mailboxMap),
+      mailbox: u.mailboxMap?.mailbox ?? "",
+      emailSignatures: signatures,
+      emailSignatureName: defaultSig?.name || "Default",
+      emailSignatureBody: defaultSig?.body || "",
+      emailSignatureEnabled: Boolean(defaultSig?.body?.trim()),
+      jnpMapped: Boolean(u.jnpMap),
+      jnpUserId: u.jnpMap?.jnpUserId ?? "",
+      jnpEnabled: Boolean(u.jnpEnabled),
+      ...userInviteFields(u),
+    };
   }
+
+  if (!isAdmin) {
+    const me = await prisma.user.findFirst({
+      where: { id: session.userId, tenantId: session.tenantId },
+      include: {
+        memberships: true,
+        agentMap: true,
+        mailboxMap: true,
+        jnpMap: true,
+        emailSignatures: { orderBy: [{ isDefault: "desc" }, { name: "asc" }] },
+      },
+    });
+    if (me && !me.emailSignatures.length && String(me.emailSignatureBody || "").trim()) {
+      const { migrateLegacyEmailSignature } = await import("./email-signatures");
+      await migrateLegacyEmailSignature(me);
+      const refreshed = await prisma.user.findFirst({
+        where: { id: me.id },
+        include: {
+          memberships: true,
+          agentMap: true,
+          mailboxMap: true,
+          jnpMap: true,
+          emailSignatures: { orderBy: [{ isDefault: "desc" }, { name: "asc" }] },
+        },
+      });
+      return {
+        mode: "personal" as const,
+        users: refreshed ? [mapUser(refreshed)] : [],
+        maps: [],
+        mailboxMaps: [],
+        exceptions: [],
+        auditEvents: [],
+        settings: {},
+        jnp: { allowed: Boolean(session.jnpAllowed) },
+        graph: {},
+      };
+    }
+    return {
+      mode: "personal" as const,
+      users: me ? [mapUser(me)] : [],
+      maps: [],
+      mailboxMaps: [],
+      exceptions: [],
+      auditEvents: [],
+      settings: {},
+      jnp: { allowed: Boolean(session.jnpAllowed) },
+      graph: {},
+    };
+  }
+
   const [userRows, maps, mailboxMaps, exceptions, auditEvents, settings, lastJnpSync, lastJnpException, lastOutlookIngest] =
     await Promise.all([
       prisma.user.findMany({
         where: { tenantId: session.tenantId },
-    include: { memberships: true, agentMap: true, mailboxMap: true, jnpMap: true },
+        include: {
+          memberships: true,
+          agentMap: true,
+          mailboxMap: true,
+          jnpMap: true,
+          emailSignatures: { orderBy: [{ isDefault: "desc" }, { name: "asc" }] },
+        },
         orderBy: { name: "asc" },
       }),
       prisma.vioTalkAgentMap.findMany({
@@ -2376,24 +2541,8 @@ export async function settingsPayload(session: Session) {
   const graphLive = graphConfigured();
 
   return {
-    users: userRows.map((u) => ({
-      id: u.id,
-      name: u.name,
-      email: u.email,
-      title: u.title,
-      enabled: u.enabled,
-      role: u.memberships[0]?.role ?? TbRole.recruiter,
-      extraPermissions: u.memberships[0]?.permissions ?? [],
-      vioTalkMapped: Boolean(u.agentMap),
-      vioTalkUserId: u.agentMap?.vioTalkUserId ?? "",
-      assignedNumber: u.agentMap?.assignedNumber ?? "",
-      mailboxMapped: Boolean(u.mailboxMap),
-      mailbox: u.mailboxMap?.mailbox ?? "",
-      jnpMapped: Boolean(u.jnpMap),
-      jnpUserId: u.jnpMap?.jnpUserId ?? "",
-      jnpEnabled: Boolean(u.jnpEnabled),
-      ...userInviteFields(u),
-    })),
+    mode: "admin" as const,
+    users: userRows.map(mapUser),
     maps: maps.map((m) => ({
       id: m.id,
       userId: m.userId,
@@ -2579,7 +2728,8 @@ export async function adminSendPasswordEmail(
     userId,
     "You cannot send a password invitation or reset for your own account",
   );
-  const kind: PasswordMailKind = input.kind === "invite" ? "invite" : "reset";
+  const kind: PasswordMailKind =
+    input.kind === "invite" ? "invite" : input.kind === "forgot" ? "forgot" : "reset";
   const result = await issuePasswordEmail({
     userId,
     tenantId: session.tenantId,
@@ -2624,6 +2774,12 @@ export async function adminSetPassword(session: Session, input: { userId: string
     entityId: user.id,
     after: { email: user.email },
   });
+  await sendPasswordChangedEmail({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    tenantId: user.tenantId,
+  });
   return { id: user.id, passwordSet: true };
 }
 
@@ -2657,6 +2813,12 @@ export async function completePasswordSetup(token: string, password: string) {
     entityType: "user",
     entityId: user.id,
     after: { via: "invite_or_reset" },
+  });
+  await sendPasswordChangedEmail({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    tenantId: user.tenantId,
   });
   return { email: user.email };
 }
@@ -2728,6 +2890,15 @@ export async function adminUpdateUser(
     before,
     after: { name: nextName, title: nextTitle, enabled: nextEnabled, role: nextRole, extraPermissions },
   });
+
+  if (existing.enabled && !nextEnabled) {
+    await sendUserDisabledEmail({
+      email: user.email,
+      name: nextName,
+      tenantName: session.tenantName,
+    });
+  }
+
   return { id: user.id, name: user.name, enabled: user.enabled, role: nextRole };
 }
 

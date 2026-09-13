@@ -65,6 +65,24 @@ export async function POST(req: Request) {
       });
       return NextResponse.json({ error: "This organization is disabled" }, { status: 403 });
     }
+    if (user.tenant.maintenanceMode) {
+      await audit({
+        tenantId: user.tenantId,
+        actorId: user.id,
+        action: "login_failed",
+        entityType: "session",
+        entityId: user.id,
+        after: { method: "password", reason: "maintenance" },
+      });
+      const message =
+        String(user.tenant.maintenanceMessage || "").trim() ||
+        "This organization is temporarily unavailable for maintenance.";
+      return NextResponse.json({ error: message }, { status: 503 });
+    }
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
     return finishLogin(user, role, "password");
   }
 
@@ -86,8 +104,18 @@ export async function POST(req: Request) {
     });
     return NextResponse.json({ error: "This organization is disabled" }, { status: 403 });
   }
+  if (user.tenant.maintenanceMode) {
+    const message =
+      String(user.tenant.maintenanceMessage || "").trim() ||
+      "This organization is temporarily unavailable for maintenance.";
+    return NextResponse.json({ error: message }, { status: 503 });
+  }
   const role = user.memberships[0]?.role;
   if (!role) return NextResponse.json({ error: "No role on user" }, { status: 403 });
 
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { lastLoginAt: new Date() },
+  });
   return finishLogin(user, role, "demo_picker");
 }

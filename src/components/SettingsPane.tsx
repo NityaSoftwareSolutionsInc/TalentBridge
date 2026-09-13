@@ -17,6 +17,10 @@ type AdminUser = {
   assignedNumber: string;
   mailboxMapped: boolean;
   mailbox: string;
+  emailSignatures?: { id: string; name: string; body: string; isDefault: boolean }[];
+  emailSignatureName?: string;
+  emailSignatureBody?: string;
+  emailSignatureEnabled?: boolean;
   jnpMapped: boolean;
   jnpUserId: string;
   jnpEnabled: boolean;
@@ -78,7 +82,9 @@ type JnpStatus = {
   allowed?: boolean;
 };
 
-const TABS = ["User details", "VioTalk map", "Mailbox map", "JNP map", "Queues", "Audit"] as const;
+const ADMIN_TABS = ["User details", "VioTalk map", "Mailbox map", "Email signature", "JNP map", "Queues", "Audit"] as const;
+const PERSONAL_TABS = ["Email signature"] as const;
+type SettingsTab = (typeof ADMIN_TABS)[number];
 const ROLES = ["recruiter", "sales", "operations", "leadership", "admin"] as const;
 const QUEUE_KINDS = ["unmatched_mail", "unmatched_call", "duplicate", "failed_sync"] as const;
 const EXTRA_PERMS = ["recording", "export"] as const;
@@ -151,7 +157,9 @@ export function SettingsPane({
   selectedUserId?: string | null;
   onAction: (payload: Record<string, unknown>) => Promise<unknown>;
 }) {
-  const [tab, setTab] = useState<(typeof TABS)[number]>("User details");
+  const admin = Boolean(session?.permissions.includes("admin") || session?.role === "admin");
+  const personalMode = !admin;
+  const [tab, setTab] = useState<SettingsTab>(personalMode ? "Email signature" : "User details");
   const [queueKind, setQueueKind] = useState<string>("all");
   const [openExceptionId, setOpenExceptionId] = useState<string | null>(null);
   const [auditQ, setAuditQ] = useState("");
@@ -165,6 +173,8 @@ export function SettingsPane({
   });
   const [vioDrafts, setVioDrafts] = useState<Record<string, { vioTalkUserId: string; assignedNumber: string }>>({});
   const [mailDrafts, setMailDrafts] = useState<Record<string, string>>({});
+  const [sigEditId, setSigEditId] = useState<string | "new" | null>(null);
+  const [sigDraft, setSigDraft] = useState({ name: "Default", body: "", isDefault: false });
   const [jnpUserDrafts, setJnpUserDrafts] = useState<Record<string, string>>({});
   const [jnpAccountDraft, setJnpAccountDraft] = useState("");
   const [jnpAuthNotice, setJnpAuthNotice] = useState("");
@@ -173,9 +183,10 @@ export function SettingsPane({
   const [adminPassword, setAdminPassword] = useState("");
   const [adminPasswordConfirm, setAdminPasswordConfirm] = useState("");
 
-  const admin = Boolean(session?.permissions.includes("admin") || session?.role === "admin");
   const users = (Array.isArray(data?.users) ? data.users : []) as AdminUser[];
-  const selected = users.find((u) => u.id === selectedUserId) ?? null;
+  const selected =
+    users.find((u) => u.id === selectedUserId) ??
+    (personalMode ? users.find((u) => u.id === session?.userId) ?? users[0] ?? null : null);
   const isSelf = Boolean(session?.userId && selected?.id === session.userId);
   const exceptions = (Array.isArray(data?.exceptions) ? data.exceptions : []) as ExceptionRow[];
   const auditEvents = (Array.isArray(data?.auditEvents) ? data.auditEvents : []) as AuditRow[];
@@ -185,11 +196,19 @@ export function SettingsPane({
   const graph = (data?.graph || {}) as GraphStatus;
   const playbackAllowed = Boolean(settings.recordingPlaybackAllowed);
   const canPlay = playbackAllowed && Boolean(session?.permissions.includes("recording"));
-  const tabs = jnpAllowed ? TABS : TABS.filter((item) => item !== "JNP map");
+  const tabs = personalMode
+    ? [...PERSONAL_TABS]
+    : jnpAllowed
+      ? [...ADMIN_TABS]
+      : ADMIN_TABS.filter((item) => item !== "JNP map");
 
   useEffect(() => {
-    if (!jnpAllowed && tab === "JNP map") setTab("User details");
-  }, [jnpAllowed, tab]);
+    if (personalMode && tab !== "Email signature") setTab("Email signature");
+  }, [personalMode, tab]);
+
+  useEffect(() => {
+    if (!personalMode && !jnpAllowed && tab === "JNP map") setTab("User details");
+  }, [jnpAllowed, personalMode, tab]);
 
   useEffect(() => {
     setVioDrafts(
@@ -197,6 +216,7 @@ export function SettingsPane({
     );
     setMailDrafts(Object.fromEntries(users.map((u) => [u.id, u.mailbox])));
     setJnpUserDrafts(Object.fromEntries(users.map((u) => [u.id, u.jnpUserId])));
+    setSigEditId(null);
     setJnpAccountDraft(String((data?.settings as { jnpAccountUserId?: string } | undefined)?.jnpAccountUserId || (data?.jnp as JnpStatus | undefined)?.jnpAccountUserId || ""));
   }, [data]);
 
@@ -264,18 +284,8 @@ export function SettingsPane({
     });
   }, [auditEvents, auditFilter, auditQ, selectedUserId]);
 
-  if (session && !admin) {
-    return (
-      <div className="p-8 text-sm text-slate-600">
-        Settings is administrator-only. Restricted fields stay omitted rather than 403ing the workspace.
-      </div>
-    );
-  }
-  if (data?.forbidden) {
-    return <div className="p-8 text-sm text-slate-600">Settings hidden for this role.</div>;
-  }
   if (!data) {
-    return <TbLoader variant="inline" hint="Loading administrator workspace" />;
+    return <TbLoader variant="inline" hint={personalMode ? "Loading your settings" : "Loading administrator workspace"} />;
   }
 
   function toggleExtra(list: string[], perm: string) {
@@ -360,11 +370,15 @@ export function SettingsPane({
   return (
     <div className="min-h-full bg-[var(--color-surface)]">
       <header className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3">
-        <h1 className="text-xl font-semibold text-[var(--color-text)]">Settings</h1>
+        <h1 className="text-xl font-semibold text-[var(--color-text)]">
+          {personalMode ? "My settings" : "Settings"}
+        </h1>
         <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
-          Administrator workspace for this tenant. VioTalk number inventory stays in VioTalk; TalentBridge only maps
-          user → agent / mailbox.
+          {personalMode
+            ? "Personal preferences for how you work in TalentBridge. Email signature is first — more options can land here later."
+            : "Administrator workspace for this tenant. VioTalk number inventory stays in VioTalk; TalentBridge only maps user → agent / mailbox."}
         </p>
+        {!personalMode ? (
         <div className="mt-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-2 text-xs text-[var(--color-text-secondary)] leading-relaxed">
           <span className="font-medium text-[var(--color-text)]">Privacy. </span>
           Candidates, clients and vendors never log in. DNC blocks outbound call, WhatsApp and email. Search snippets
@@ -393,9 +407,10 @@ export function SettingsPane({
             <span>{playbackAllowed ? "On" : "Off"}</span>
           </span>
         </div>
+        ) : null}
       </header>
 
-      <Tabs items={[...tabs]} value={tab} onChange={(t) => setTab(t as (typeof TABS)[number])} />
+      <Tabs items={[...tabs]} value={tab} onChange={(t) => setTab(t as SettingsTab)} />
 
       <div className="p-4 sm:p-5 space-y-5">
         {tab === "User details" ? (
@@ -726,6 +741,223 @@ export function SettingsPane({
               ) : null}
             </div>
           </section>
+          )
+        ) : null}
+
+        {tab === "Email signature" ? (
+          !selected ? (
+            <p className="text-sm text-slate-500">
+              {personalMode ? "Your user record is unavailable." : "Select a user to manage Outlook email signatures."}
+            </p>
+          ) : (
+            <section className="max-w-2xl space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-900">
+                    {personalMode ? "Your email signatures" : `Email signatures · ${selected.name}`}
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Keep multiple identity footers and mark one as default for Outlook send. This is not a message
+                    template catalog.
+                  </p>
+                </div>
+                <Button
+                  variant="secondary"
+                  disabled={busy || (selected.emailSignatures || []).length >= 10}
+                  onClick={() => {
+                    setSigEditId("new");
+                    setSigDraft({
+                      name: "New signature",
+                      body: "",
+                      isDefault: !(selected.emailSignatures || []).length,
+                    });
+                  }}
+                >
+                  Add signature
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                {(selected.emailSignatures || []).length === 0 && sigEditId !== "new" ? (
+                  <p className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] px-4 py-6 text-sm text-slate-500">
+                    No signatures yet. Add one to attach on Outlook send.
+                  </p>
+                ) : null}
+                {(selected.emailSignatures || []).map((sig) => (
+                  <div
+                    key={sig.id || sig.name}
+                    className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-white p-4"
+                  >
+                    {sigEditId === sig.id ? (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-end justify-between gap-3">
+                          <div className="min-w-[12rem] flex-1">
+                            <Label>Signature name</Label>
+                            <FieldInput
+                              value={sigDraft.name}
+                              onChange={(e) => setSigDraft({ ...sigDraft, name: e.target.value })}
+                              placeholder="Default"
+                            />
+                          </div>
+                          <label className="flex items-center gap-2 pb-2 text-[13px] text-slate-700">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                              checked={sigDraft.isDefault || sig.isDefault}
+                              disabled={sig.isDefault}
+                              onChange={(e) => setSigDraft({ ...sigDraft, isDefault: e.target.checked })}
+                            />
+                            Default
+                          </label>
+                        </div>
+                        <div>
+                          <Label>Signature body</Label>
+                          <textarea
+                            className="mt-1 h-36 w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                            value={sigDraft.body}
+                            onChange={(e) => setSigDraft({ ...sigDraft, body: e.target.value })}
+                            placeholder={"Regards,\nSarah Mitchell\nNorthstar Staffing\n+1-800-555-0101"}
+                          />
+                          <p className="mt-1 text-[11px] text-slate-500">{sigDraft.body.length}/4000</p>
+                        </div>
+                        {sigDraft.body.trim() ? (
+                          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Preview</p>
+                            <pre className="mt-1 whitespace-pre-wrap font-sans text-[13px] text-slate-800">{sigDraft.body}</pre>
+                          </div>
+                        ) : null}
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            disabled={busy}
+                            onClick={() =>
+                              onAction({
+                                action: "upsert_email_signature",
+                                id: sig.id,
+                                userId: selected.id,
+                                name: sigDraft.name,
+                                body: sigDraft.body,
+                                isDefault: sigDraft.isDefault || sig.isDefault,
+                              })
+                            }
+                          >
+                            Save
+                          </Button>
+                          <Button variant="secondary" disabled={busy} onClick={() => setSigEditId(null)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-900">{sig.name}</p>
+                            {sig.isDefault ? <Tag tone="green">Default</Tag> : null}
+                          </div>
+                          <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap font-sans text-[12px] text-slate-600">
+                            {sig.body.trim() || "(empty)"}
+                          </pre>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {!sig.isDefault && sig.id ? (
+                            <Button
+                              variant="secondary"
+                              disabled={busy}
+                              onClick={() =>
+                                onAction({
+                                  action: "set_default_email_signature",
+                                  id: sig.id,
+                                  userId: selected.id,
+                                })
+                              }
+                            >
+                              Make default
+                            </Button>
+                          ) : null}
+                          <Button
+                            variant="secondary"
+                            disabled={busy || !sig.id}
+                            onClick={() => {
+                              setSigEditId(sig.id);
+                              setSigDraft({ name: sig.name, body: sig.body, isDefault: sig.isDefault });
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            disabled={busy || !sig.id}
+                            onClick={() =>
+                              onAction({
+                                action: "delete_email_signature",
+                                id: sig.id,
+                                userId: selected.id,
+                              })
+                            }
+                          >
+                            Delete
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {sigEditId === "new" ? (
+                  <div className="space-y-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">New signature</p>
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <div className="min-w-[12rem] flex-1">
+                        <Label>Signature name</Label>
+                        <FieldInput
+                          value={sigDraft.name}
+                          onChange={(e) => setSigDraft({ ...sigDraft, name: e.target.value })}
+                          placeholder="Default"
+                        />
+                      </div>
+                      <label className="flex items-center gap-2 pb-2 text-[13px] text-slate-700">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300 text-blue-600"
+                          checked={sigDraft.isDefault}
+                          onChange={(e) => setSigDraft({ ...sigDraft, isDefault: e.target.checked })}
+                        />
+                        Set as default
+                      </label>
+                    </div>
+                    <div>
+                      <Label>Signature body</Label>
+                      <textarea
+                        className="mt-1 h-36 w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                        value={sigDraft.body}
+                        onChange={(e) => setSigDraft({ ...sigDraft, body: e.target.value })}
+                        placeholder={"Regards,\nSarah Mitchell\nNorthstar Staffing\n+1-800-555-0101"}
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">{sigDraft.body.length}/4000</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        disabled={busy}
+                        onClick={() =>
+                          onAction({
+                            action: "upsert_email_signature",
+                            userId: selected.id,
+                            name: sigDraft.name,
+                            body: sigDraft.body,
+                            isDefault: sigDraft.isDefault,
+                          })
+                        }
+                      >
+                        Create signature
+                      </Button>
+                      <Button variant="secondary" disabled={busy} onClick={() => setSigEditId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            </section>
           )
         ) : null}
 

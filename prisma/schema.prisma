@@ -83,24 +83,41 @@ enum InsightStatus {
 }
 
 model PlatformAdmin {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  name         String
-  passwordHash String   @map("password_hash")
-  enabled      Boolean  @default(true)
-  createdAt    DateTime @default(now()) @map("created_at")
+  id                     String    @id @default(uuid())
+  email                  String    @unique
+  name                   String
+  passwordHash           String    @map("password_hash")
+  enabled                Boolean   @default(true)
+  createdAt              DateTime  @default(now()) @map("created_at")
+  passwordResetTokenHash String?   @map("password_reset_token_hash")
+  passwordResetExpiresAt DateTime? @map("password_reset_expires_at")
+  mustChangePassword     Boolean   @default(false) @map("must_change_password")
+  passwordChangedAt      DateTime? @map("password_changed_at")
+  lastLoginAt            DateTime? @map("last_login_at")
+  failedLoginCount       Int       @default(0) @map("failed_login_count")
+  lockedUntil            DateTime? @map("locked_until")
+  inviteSentAt           DateTime? @map("invite_sent_at")
 
   @@map("platform_admins")
   @@schema("talentbridge")
 }
 
 model Tenant {
-  id          String   @id @default(uuid())
-  name        String
-  enabled     Boolean  @default(true)
+  id                  String   @id @default(uuid())
+  name                String
+  enabled             Boolean  @default(true)
   /// Platform entitlement: JobsNProfiles is available in this tenant. Set by Global Admin.
-  jnpAllowed  Boolean  @default(false) @map("jnp_allowed")
-  createdAt   DateTime @default(now()) @map("created_at")
+  jnpAllowed          Boolean  @default(false) @map("jnp_allowed")
+  outlookAllowed      Boolean  @default(true) @map("outlook_allowed")
+  viotalkAllowed      Boolean  @default(true) @map("viotalk_allowed")
+  maintenanceMode     Boolean  @default(false) @map("maintenance_mode")
+  maintenanceMessage  String   @default("") @map("maintenance_message")
+  legalName           String   @default("") @map("legal_name")
+  billingContact      String   @default("") @map("billing_contact")
+  region              String   @default("")
+  notes               String   @default("")
+  accountOwner        String   @default("") @map("account_owner")
+  createdAt           DateTime @default(now()) @map("created_at")
 
   users            User[]
   memberships      Membership[]
@@ -127,6 +144,7 @@ model Tenant {
   placements       Placement[]
   externalLinks    ExternalEntityLink[]
   calendarEvents   CalendarEvent[]
+  emailSignatures  EmailSignature[]
 
   @@map("tenants")
   @@schema("talentbridge")
@@ -160,6 +178,7 @@ model User {
   title         String   @default("")
   enabled       Boolean  @default(true)
   createdAt     DateTime @default(now()) @map("created_at")
+  lastLoginAt   DateTime? @map("last_login_at")
   passwordHash            String?   @map("password_hash")
   passwordSetAt           DateTime? @map("password_set_at")
   inviteSentAt            DateTime? @map("invite_sent_at")
@@ -173,6 +192,10 @@ model User {
   jnpAccessCode           String    @default("") @map("jnp_access_code")
   jnpPackageEndDate       String    @default("") @map("jnp_package_end_date")
   jnpCheckedAt            DateTime? @map("jnp_checked_at")
+  /// Legacy single-signature fields — migrated into EmailSignature rows; kept for one-time backfill.
+  emailSignatureName      String    @default("Default") @map("email_signature_name")
+  emailSignatureBody      String    @default("") @map("email_signature_body")
+  emailSignatureEnabled   Boolean   @default(true) @map("email_signature_enabled")
 
   memberships         Membership[]
   ownedPeople         Person[]              @relation("PersonOwner")
@@ -188,9 +211,28 @@ model User {
   assignedReqs        RequirementRecruiter[]
   bdms                Requirement[]         @relation("RequirementBdm")
   organizedEvents     CalendarEvent[]       @relation("CalendarOrganizer")
+  emailSignatures     EmailSignature[]
 
   @@unique([tenantId, email])
   @@map("users")
+  @@schema("talentbridge")
+}
+
+/// Personal Outlook identity footers (not a message template catalog). One per user may be isDefault.
+model EmailSignature {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String   @default("Default")
+  body      String   @default("")
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId, userId])
+  @@map("email_signatures")
   @@schema("talentbridge")
 }
 
@@ -751,6 +793,45 @@ model PlatformAuditEvent {
   @@index([tenantId, createdAt])
   @@index([actorId, createdAt])
   @@map("platform_audit_events")
+  @@schema("talentbridge")
+}
+
+/// Transactional email delivery from Admin / platform flows (invite, reset, notices).
+model PlatformEmailLog {
+  id            String   @id @default(uuid())
+  kind          String
+  toEmail       String   @map("to_email")
+  subject       String
+  status        String
+  providerId    String   @default("") @map("provider_id")
+  error         String   @default("")
+  tenantId      String?  @map("tenant_id")
+  actorId       String?  @map("actor_id")
+  relatedUserId String?  @map("related_user_id")
+  previewUrl    String   @default("") @map("preview_url")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([toEmail, createdAt])
+  @@map("platform_email_logs")
+  @@schema("talentbridge")
+}
+
+/// Global Admin login attempts (success and failure).
+model PlatformLoginEvent {
+  id              String   @id @default(uuid())
+  platformAdminId String?  @map("platform_admin_id")
+  email           String
+  success         Boolean
+  reason          String   @default("")
+  ip              String   @default("")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([email, createdAt])
+  @@index([platformAdminId, createdAt])
+  @@map("platform_login_events")
   @@schema("talentbridge")
 }
 

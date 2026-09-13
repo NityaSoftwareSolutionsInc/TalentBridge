@@ -1,19 +1,35 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { TalentBridgeMark, TbLoader } from "@/components/TbLoader";
+import { ArrowRight, ChevronDown, Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { AuthShell } from "@/components/AuthShell";
+import { TbLoader } from "@/components/TbLoader";
 
 type UserRow = { id: string; name: string; email: string; title: string; role: string; tenant: string };
+
+function roleLabel(role: string) {
+  const map: Record<string, string> = {
+    recruiter: "Recruiter",
+    sales: "Sales / BDM",
+    operations: "Operations",
+    leadership: "Leadership",
+    admin: "Administrator",
+  };
+  return map[role] || role;
+}
 
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"signin" | "forgot">("signin");
   const signedOut = params.get("signedOut") === "1";
   const passwordSet = params.get("passwordSet") === "1";
 
@@ -23,6 +39,16 @@ function LoginForm() {
       .then(setUsers)
       .catch(() => setError("Database is not ready. Run npm run db:setup"));
   }, []);
+
+  const tenants = useMemo(() => {
+    const map = new Map<string, UserRow[]>();
+    for (const u of users) {
+      const list = map.get(u.tenant) || [];
+      list.push(u);
+      map.set(u.tenant, list);
+    }
+    return [...map.entries()];
+  }, [users]);
 
   async function enter(res: Response) {
     if (!res.ok) {
@@ -37,6 +63,7 @@ function LoginForm() {
   async function signInWithPassword(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setNotice("");
     setBusy(true);
     try {
       const res = await fetch("/api/login", {
@@ -50,89 +77,227 @@ function LoginForm() {
     }
   }
 
+  async function requestReset(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setNotice(data.message || "If that email is registered, a reset link has been sent.");
+      setMode("signin");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function choose(userId: string) {
     setError("");
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
-    });
-    await enter(res);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId }),
+      });
+      await enter(res);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
-    <main className="min-h-screen bg-[#0b1f3a] text-white flex items-center justify-center p-8">
-      <div className="w-full max-w-xl rounded-2xl bg-white text-slate-900 p-8 shadow-2xl">
-        <div className="flex items-center gap-3">
-          <TalentBridgeMark size={36} />
-          <p className="text-sm uppercase tracking-wide text-blue-700 font-semibold">TalentBridge POC</p>
+    <AuthShell>
+      <div className="mb-7">
+        <div className="auth-kicker">
+          <span className="auth-kicker-dot" aria-hidden />
+          {mode === "forgot" ? "Account recovery" : "Organization sign-in"}
         </div>
-        <h1 className="mt-1 text-2xl font-semibold">Sign in</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          Invited users sign in with email and password. Demo picker remains for seed users without a password.
+        <h1 className="mt-3 font-[family-name:var(--font-auth-display)] text-[2rem] leading-[1.15] tracking-[-0.025em] text-slate-950">
+          {mode === "forgot" ? "Reset your password" : "Sign in"}
+        </h1>
+        <p className="mt-2.5 text-[14px] leading-[1.55] text-slate-500">
+          {mode === "forgot"
+            ? "Enter your work email. If an account exists, we will send a one-time reset link."
+            : "Use the email and password issued for your TalentBridge tenant."}
         </p>
-        {signedOut ? (
-          <p className="mt-3 text-sm text-emerald-700">You have been signed out. Sign in again to continue.</p>
-        ) : null}
-        {passwordSet ? (
-          <p className="mt-3 text-sm text-emerald-700">Password saved. Sign in with your email and password.</p>
-        ) : null}
-        {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
+      </div>
 
-        <form onSubmit={signInWithPassword} className="mt-6 space-y-3">
+      {signedOut ? (
+        <div className="auth-banner auth-banner-ok mb-5" role="status">
+          You have been signed out. Sign in again to continue.
+        </div>
+      ) : null}
+      {passwordSet ? (
+        <div className="auth-banner auth-banner-ok mb-5" role="status">
+          Password saved. Sign in with your email and password.
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="auth-banner auth-banner-ok mb-5" role="status">
+          {notice}
+        </div>
+      ) : null}
+      {error ? (
+        <div className="auth-banner auth-banner-err mb-5" role="alert">
+          {error}
+        </div>
+      ) : null}
+
+      {mode === "signin" ? (
+        <form onSubmit={signInWithPassword} className="space-y-5">
           <label className="block">
-            <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Email</span>
-            <input
-              type="email"
-              required
-              autoComplete="username"
-              className="h-10 w-full rounded-md border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
+            <span className="auth-label">Work email</span>
+            <div className="auth-field">
+              <Mail className="auth-field-icon" aria-hidden />
+              <input
+                type="email"
+                required
+                autoComplete="username"
+                autoFocus
+                className="auth-input"
+                placeholder="name@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
           </label>
           <label className="block">
-            <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500 mb-1">Password</span>
-            <input
-              type="password"
-              required
-              autoComplete="current-password"
-              className="h-10 w-full rounded-md border border-slate-200 px-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            <div className="mb-1.5 flex items-center justify-between gap-3">
+              <span className="auth-label auth-label-inline">Password</span>
+              <button
+                type="button"
+                className="auth-text-link"
+                onClick={() => {
+                  setMode("forgot");
+                  setError("");
+                  setNotice("");
+                }}
+              >
+                Forgot password?
+              </button>
+            </div>
+            <div className="auth-field">
+              <Lock className="auth-field-icon" aria-hidden />
+              <input
+                type={showPassword ? "text" : "password"}
+                required
+                autoComplete="current-password"
+                className="auth-input auth-input-trailing"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                className="auth-field-action"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+                onClick={() => setShowPassword((v) => !v)}
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </label>
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full h-10 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-40 cursor-pointer"
-          >
-            {busy ? "Signing in…" : "Sign in"}
+
+          <button type="submit" disabled={busy} className="auth-primary">
+            <span>{busy ? "Signing in…" : "Continue"}</span>
+            {!busy ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
           </button>
         </form>
+      ) : (
+        <form onSubmit={requestReset} className="space-y-5">
+          <label className="block">
+            <span className="auth-label">Work email</span>
+            <div className="auth-field">
+              <Mail className="auth-field-icon" aria-hidden />
+              <input
+                type="email"
+                required
+                autoComplete="username"
+                autoFocus
+                className="auth-input"
+                placeholder="name@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+          </label>
+          <button type="submit" disabled={busy} className="auth-primary">
+            <span>{busy ? "Sending…" : "Send reset link"}</span>
+            {!busy ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
+          </button>
+          <button
+            type="button"
+            className="auth-secondary"
+            onClick={() => {
+              setMode("signin");
+              setError("");
+            }}
+          >
+            Back to sign in
+          </button>
+        </form>
+      )}
 
-        <div className="mt-8 pt-6 border-t border-slate-200">
-          <h2 className="text-sm font-semibold text-slate-900">POC demo switcher</h2>
-          <p className="mt-1 text-xs text-slate-500">Seed users can still be opened without a password.</p>
-          <ul className="mt-3 space-y-2">
-            {users.map((u) => (
-              <li key={u.id}>
-                <button
-                  type="button"
-                  onClick={() => choose(u.id)}
-                  className="w-full text-left rounded-lg border border-slate-200 px-4 py-3 hover:border-blue-600 hover:bg-blue-50 cursor-pointer"
-                >
-                  <div className="font-medium">{u.name}</div>
-                  <div className="text-xs text-slate-500">
-                    {u.role} · {u.title} · {u.tenant}
+      {mode === "signin" && users.length > 0 ? (
+        <details className="auth-demo">
+          <summary className="auth-demo-summary">
+            <span className="min-w-0">
+              <span className="block text-[13px] font-semibold text-slate-800">Demonstration access</span>
+              <span className="mt-0.5 block text-[11px] font-normal text-slate-500">
+                Seed personas for POC walkthroughs · {users.length} users
+              </span>
+            </span>
+            <ChevronDown className="auth-demo-chevron h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+          </summary>
+          <div className="auth-demo-panel">
+            <p className="text-[12px] leading-4 text-slate-500">
+              Production users should sign in with email and password above.
+            </p>
+            <div className="mt-3 max-h-[220px] space-y-4 overflow-y-auto pr-1">
+              {tenants.map(([tenant, rows]) => (
+                <div key={tenant}>
+                  <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    {tenant}
                   </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </main>
+                  <ul className="space-y-1.5">
+                    {rows.map((u) => (
+                      <li key={u.id}>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => choose(u.id)}
+                          className="auth-demo-user"
+                        >
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-slate-100 text-[11px] font-semibold text-slate-700">
+                            {u.name
+                              .split(" ")
+                              .map((p) => p[0])
+                              .slice(0, 2)
+                              .join("")}
+                          </span>
+                          <span className="min-w-0 flex-1 text-left">
+                            <span className="block truncate text-[13px] font-medium text-slate-900">{u.name}</span>
+                            <span className="block truncate text-[11px] text-slate-500">
+                              {roleLabel(u.role)} · {u.title}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </details>
+      ) : null}
+    </AuthShell>
   );
 }
 
