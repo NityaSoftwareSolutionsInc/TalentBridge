@@ -1,3 +1,18 @@
+# Full stack: Postgres + schema/seed + TalentBridge app + Admin app
+#
+# Folder layout (siblings required):
+#   .../Talent-Bridge/          (this compose file)
+#   .../Admin-Talent-Bridge/    (admin Dockerfile)
+#
+# Usage:
+#   cp .env.example .env          # set AUTH_JWT_SECRET + public URLs
+#   docker compose up -d --build
+#
+# Local npm workflow (DB only):
+#   docker compose up -d db
+
+name: talentbridge
+
 services:
   db:
     image: postgres:16-alpine
@@ -7,7 +22,7 @@ services:
       POSTGRES_PASSWORD: talentbridge
       POSTGRES_DB: talentbridge
     ports:
-      # 5435 avoids clashes on shared hosts (5433/5434 often used by other projects)
+      # Host 5435 avoids clashes with other projects on shared servers
       - "127.0.0.1:5435:5432"
     volumes:
       - talentbridge_pg:/var/lib/postgresql/data
@@ -17,6 +32,71 @@ services:
       interval: 3s
       timeout: 5s
       retries: 20
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    container_name: talentbridge-migrate
+    environment:
+      DATABASE_URL: postgresql://talentbridge:talentbridge@db:5432/talentbridge?schema=talentbridge
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+    container_name: talentbridge-app
+    environment:
+      # Inside Docker, DB host is the compose service name (not localhost)
+      DATABASE_URL: postgresql://talentbridge:talentbridge@db:5432/talentbridge?schema=talentbridge
+      NODE_ENV: production
+      PORT: "3011"
+      HOSTNAME: 0.0.0.0
+      APP_BASE_URL: ${APP_BASE_URL:-https://dtalentbridge.d3e.studio}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-change-me-to-a-long-random-string}
+      STUB_AUTH_SECRET: ${STUB_AUTH_SECRET:-talentbridge-poc-stub}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-noreply@example.com}
+      JNP_API_BASE_URL: ${JNP_API_BASE_URL:-}
+      JNP_API_KEY: ${JNP_API_KEY:-}
+      NEXT_PUBLIC_JNP_PROFILE_BASE_URL: ${NEXT_PUBLIC_JNP_PROFILE_BASE_URL:-https://jobsnprofiles.com}
+      MICROSOFT_GRAPH_TENANT_ID: ${MICROSOFT_GRAPH_TENANT_ID:-}
+      MICROSOFT_GRAPH_CLIENT_ID: ${MICROSOFT_GRAPH_CLIENT_ID:-}
+      MICROSOFT_GRAPH_CLIENT_SECRET: ${MICROSOFT_GRAPH_CLIENT_SECRET:-}
+    ports:
+      - "127.0.0.1:3011:3011"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  admin:
+    build:
+      context: ../Admin-Talent-Bridge
+      dockerfile: Dockerfile
+      target: runner
+    container_name: talentbridge-admin
+    environment:
+      DATABASE_URL: postgresql://talentbridge:talentbridge@db:5432/talentbridge?schema=talentbridge
+      NODE_ENV: production
+      PORT: "3012"
+      HOSTNAME: 0.0.0.0
+      APP_BASE_URL: ${ADMIN_APP_BASE_URL:-https://dadmintalentbridge.d3e.studio}
+      TALENTBRIDGE_APP_BASE_URL: ${APP_BASE_URL:-https://dtalentbridge.d3e.studio}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-change-me-to-a-long-random-string}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:-}
+      SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-noreply@example.com}
+    ports:
+      - "127.0.0.1:3012:3012"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
 volumes:
   talentbridge_pg:

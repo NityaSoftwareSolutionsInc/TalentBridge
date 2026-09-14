@@ -7,13 +7,16 @@
     "build": "next build",
     "start": "next start --port 3011",
     "lint": "eslint",
-    "db:up": "docker compose up -d",
+    "db:up": "docker compose up -d db",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:index": "prisma db execute --file prisma/sql/search_indexes.sql --schema prisma/schema.prisma",
-    "db:setup": "docker compose up -d && npx prisma db push && npm run db:index && npm run db:seed",
+    "db:setup": "docker compose up -d db && npx prisma db push && npm run db:index && npm run db:seed",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f app admin migrate",
     "postinstall": "prisma generate"
   },
   "dependencies": {

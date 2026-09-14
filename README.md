@@ -12,7 +12,18 @@ npm run dev
 
 Opens at http://localhost:3011. Sign in after seeding platform admins (see below).
 
-Postgres is on `127.0.0.1:5435` (see `docker-compose.yml`).
+Postgres is on `127.0.0.1:5435` (see `docker-compose.yml`). `npm run db:up` starts **DB only** for local `npm run dev`.
+
+### Full stack with Docker (app + admin + DB)
+
+Keep repos as siblings (`Talent-Bridge` and `Admin-Talent-Bridge`). Then:
+
+```bash
+cp .env.docker.example .env   # set AUTH_JWT_SECRET + public URLs
+npm run docker:up             # docker compose up -d --build
+```
+
+That builds and runs Postgres, schema/seed, TalentBridge (`127.0.0.1:3011`), and Admin (`127.0.0.1:3012`). Point Nginx at those ports for `dtalentbridge.d3e.studio` / `dadmintalentbridge.d3e.studio`.
 
 `npm run db:seed` creates **platform admins only** — no demo tenants or CRM data. Create organizations from Admin-Talent-Bridge.
 
