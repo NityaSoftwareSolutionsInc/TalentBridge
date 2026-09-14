@@ -21,7 +21,7 @@ const sourceSerif = Source_Serif_4({
   display: "swap",
 });
 
-const siteUrl = (process.env.APP_BASE_URL || "http://localhost:3001").replace(/\/$/, "");
+const siteUrl = (process.env.APP_BASE_URL || "http://localhost:3011").replace(/\/$/, "");
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

@@ -10,7 +10,15 @@ npm run db:setup
 npm run dev
 ```
 
-Opens at http://localhost:3000 (or 3001 if 3000 is already in use). Pick a demo user on `/login`.
+Opens at http://localhost:3011. Pick a demo user on `/login`.
+
+Postgres is on `127.0.0.1:5435` (see `docker-compose.yml`). Platform users (Admin-Talent-Bridge at http://localhost:3012):
+
+- Global Admin `global.admin@talentbridge.example` / `ChangeMe123!`
+- Manager `manager@talentbridge.example` / `ChangeMe123!`
+- Support `support@talentbridge.example` / `ChangeMe123!`
+
+TalentBridge workspace users:
 
 - Recruiter (Sarah) lands on Candidates
 - Sales (James) lands on Clients

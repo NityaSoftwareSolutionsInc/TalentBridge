@@ -17,10 +17,33 @@ async function main() {
   await prisma.tenant.deleteMany();
   await prisma.platformAdmin.deleteMany();
 
-  await prisma.platformAdmin.create({
+  const globalAdmin = await prisma.platformAdmin.create({
     data: {
       email: "global.admin@talentbridge.example",
       name: "Global Admin",
+      role: "global_admin",
+      passwordHash: await hashPassword("ChangeMe123!"),
+      passwordChangedAt: new Date(),
+      mustChangePassword: false,
+    },
+  });
+
+  await prisma.platformAdmin.create({
+    data: {
+      email: "manager@talentbridge.example",
+      name: "Priya Manager",
+      role: "manager",
+      passwordHash: await hashPassword("ChangeMe123!"),
+      passwordChangedAt: new Date(),
+      mustChangePassword: false,
+    },
+  });
+
+  await prisma.platformAdmin.create({
+    data: {
+      email: "support@talentbridge.example",
+      name: "Alex Support",
+      role: "support",
       passwordHash: await hashPassword("ChangeMe123!"),
       passwordChangedAt: new Date(),
       mustChangePassword: false,
@@ -32,6 +55,7 @@ async function main() {
       name: "Northstar Staffing",
       enabled: true,
       jnpAllowed: true,
+      createdById: globalAdmin.id,
       settings: { create: { jnpAccountUserId: "1001" } },
     },
   });
@@ -41,6 +65,7 @@ async function main() {
       name: "Ghost Corp",
       enabled: true,
       jnpAllowed: false,
+      createdById: globalAdmin.id,
       settings: { create: {} },
     },
   });
@@ -761,8 +786,10 @@ async function main() {
   void elena;
 
   console.log("Seeded Northstar + Ghost tenants");
-  console.log("Platform Global Admin (Admin-Talent-Bridge):");
-  console.log("  global.admin@talentbridge.example / ChangeMe123!");
+  console.log("Platform users (Admin-Talent-Bridge):");
+  console.log("  global_admin  global.admin@talentbridge.example / ChangeMe123!");
+  console.log("  manager       manager@talentbridge.example / ChangeMe123!");
+  console.log("  support       support@talentbridge.example / ChangeMe123!");
   console.log("Demo users:");
   console.log("  recruiter   sarah.mitchell@northstar.example");
   console.log("  sales       james.dalton@northstar.example");

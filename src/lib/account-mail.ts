@@ -21,7 +21,7 @@ export function appBaseUrl(originHeader?: string | null) {
   const configured = (process.env.APP_BASE_URL || "").trim().replace(/\/$/, "");
   if (configured) return configured;
   if (originHeader) return originHeader.replace(/\/$/, "");
-  return "http://localhost:3001";
+  return "http://localhost:3011";
 }
 
 async function deliver(input: {

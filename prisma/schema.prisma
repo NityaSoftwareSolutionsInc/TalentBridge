@@ -18,6 +18,49 @@ enum TbRole {
   @@schema("talentbridge")
 }
 
+enum PlatformRole {
+  global_admin
+  manager
+  support
+
+  @@schema("talentbridge")
+}
+
+enum PlatformTicketStatus {
+  open
+  in_progress
+  waiting_on_customer
+  resolved
+  closed
+
+  @@schema("talentbridge")
+}
+
+enum PlatformTicketCategory {
+  access
+  integrations
+  billing
+  bug
+  how_to
+  other
+
+  @@schema("talentbridge")
+}
+
+enum PlatformTicketPriority {
+  normal
+  high
+
+  @@schema("talentbridge")
+}
+
+enum PlatformTicketAuthorKind {
+  tenant_user
+  platform_staff
+
+  @@schema("talentbridge")
+}
+
 enum PersonKind {
   candidate
   client_person
@@ -83,20 +126,25 @@ enum InsightStatus {
 }
 
 model PlatformAdmin {
-  id                     String    @id @default(uuid())
-  email                  String    @unique
+  id                     String       @id @default(uuid())
+  email                  String       @unique
   name                   String
-  passwordHash           String    @map("password_hash")
-  enabled                Boolean   @default(true)
-  createdAt              DateTime  @default(now()) @map("created_at")
-  passwordResetTokenHash String?   @map("password_reset_token_hash")
-  passwordResetExpiresAt DateTime? @map("password_reset_expires_at")
-  mustChangePassword     Boolean   @default(false) @map("must_change_password")
-  passwordChangedAt      DateTime? @map("password_changed_at")
-  lastLoginAt            DateTime? @map("last_login_at")
-  failedLoginCount       Int       @default(0) @map("failed_login_count")
-  lockedUntil            DateTime? @map("locked_until")
-  inviteSentAt           DateTime? @map("invite_sent_at")
+  passwordHash           String       @map("password_hash")
+  enabled                Boolean      @default(true)
+  role                   PlatformRole @default(global_admin)
+  createdAt              DateTime     @default(now()) @map("created_at")
+  passwordResetTokenHash String?      @map("password_reset_token_hash")
+  passwordResetExpiresAt DateTime?    @map("password_reset_expires_at")
+  mustChangePassword     Boolean      @default(false) @map("must_change_password")
+  passwordChangedAt      DateTime?    @map("password_changed_at")
+  lastLoginAt            DateTime?    @map("last_login_at")
+  failedLoginCount       Int          @default(0) @map("failed_login_count")
+  lockedUntil            DateTime?    @map("locked_until")
+  inviteSentAt           DateTime?    @map("invite_sent_at")
+
+  createdTenants Tenant[]                         @relation("TenantCreatedBy")
+  assignedTickets PlatformSupportTicket[]         @relation("TicketAssignee")
+  ticketMessages PlatformSupportTicketMessage[]
 
   @@map("platform_admins")
   @@schema("talentbridge")
@@ -106,7 +154,7 @@ model Tenant {
   id                  String   @id @default(uuid())
   name                String
   enabled             Boolean  @default(true)
-  /// Platform entitlement: JobsNProfiles is available in this tenant. Set by Global Admin.
+  /// Platform entitlement: JobsNProfiles is available in this tenant. Set by Global Admin or the creating Manager.
   jnpAllowed          Boolean  @default(false) @map("jnp_allowed")
   outlookAllowed      Boolean  @default(true) @map("outlook_allowed")
   viotalkAllowed      Boolean  @default(true) @map("viotalk_allowed")
@@ -118,6 +166,8 @@ model Tenant {
   notes               String   @default("")
   accountOwner        String   @default("") @map("account_owner")
   createdAt           DateTime @default(now()) @map("created_at")
+  createdById         String?  @map("created_by_id")
+  createdBy           PlatformAdmin? @relation("TenantCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   users            User[]
   memberships      Membership[]
@@ -145,6 +195,7 @@ model Tenant {
   externalLinks    ExternalEntityLink[]
   calendarEvents   CalendarEvent[]
   emailSignatures  EmailSignature[]
+  supportTickets   PlatformSupportTicket[]
 
   @@map("tenants")
   @@schema("talentbridge")
@@ -212,6 +263,8 @@ model User {
   bdms                Requirement[]         @relation("RequirementBdm")
   organizedEvents     CalendarEvent[]       @relation("CalendarOrganizer")
   emailSignatures     EmailSignature[]
+  supportTicketsCreated PlatformSupportTicket[]
+  supportTicketMessages PlatformSupportTicketMessage[]
 
   @@unique([tenantId, email])
   @@map("users")
@@ -832,6 +885,49 @@ model PlatformLoginEvent {
   @@index([email, createdAt])
   @@index([platformAdminId, createdAt])
   @@map("platform_login_events")
+  @@schema("talentbridge")
+}
+
+model PlatformSupportTicket {
+  id              String                 @id @default(uuid())
+  tenantId        String                 @map("tenant_id")
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdByUserId String                 @map("created_by_user_id")
+  createdByUser   User                   @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  assignedToId    String?                @map("assigned_to_id")
+  assignedTo      PlatformAdmin?         @relation("TicketAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  category        PlatformTicketCategory
+  priority        PlatformTicketPriority @default(normal)
+  subject         String
+  status          PlatformTicketStatus   @default(open)
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  resolvedAt      DateTime?              @map("resolved_at")
+  closedAt        DateTime?              @map("closed_at")
+  messages        PlatformSupportTicketMessage[]
+
+  @@index([tenantId, createdAt])
+  @@index([status, updatedAt])
+  @@index([assignedToId, status])
+  @@index([createdByUserId])
+  @@map("platform_support_tickets")
+  @@schema("talentbridge")
+}
+
+model PlatformSupportTicketMessage {
+  id                    String                   @id @default(uuid())
+  ticketId              String                   @map("ticket_id")
+  ticket                PlatformSupportTicket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorKind            PlatformTicketAuthorKind @map("author_kind")
+  authorUserId          String?                  @map("author_user_id")
+  authorUser            User?                    @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+  authorPlatformAdminId String?                  @map("author_platform_admin_id")
+  authorPlatformAdmin   PlatformAdmin?           @relation(fields: [authorPlatformAdminId], references: [id], onDelete: SetNull)
+  body                  String
+  createdAt             DateTime                 @default(now()) @map("created_at")
+
+  @@index([ticketId, createdAt])
+  @@map("platform_support_ticket_messages")
   @@schema("talentbridge")
 }
 

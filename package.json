@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev --turbopack --port 3011",
     "build": "next build",
-    "start": "next start",
+    "start": "next start --port 3011",
     "lint": "eslint",
     "db:up": "docker compose up -d",
     "db:generate": "prisma generate",

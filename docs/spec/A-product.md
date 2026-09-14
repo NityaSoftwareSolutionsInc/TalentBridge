@@ -84,7 +84,7 @@ Keep the primary recruiting lifecycle simple: Client → Requirement → Candida
 | Rule | Meaning |
 | --- | --- |
 | Tenant scope | Every record, timeline, search hit, file, requirement, submission and audit event belongs to one tenant. |
-| Platform tenancy | Tenants are created by **Global Admin** in the separate **Admin-Talent-Bridge** app (not by tenant Administrator). Global Admin invites the first tenant Admin via SendGrid. A disabled tenant cannot sign in to TalentBridge. |
+| Platform tenancy | Tenants are created by **Global Admin or Manager** in the separate **Admin-Talent-Bridge** app (not by tenant Administrator). The creating platform user is stored on the tenant. Global Admin or the creating Manager invites the first tenant Admin via SendGrid. A disabled tenant cannot sign in to TalentBridge. **Support** handles Help & Support tickets from TalentBridge and may open read-only support access. |
 | Modules | Core modules do not change: Candidates, Clients, Vendors. Also Dashboard, Calendar, Tasks, Communications, MSA & PO, Reports, Settings. Jobs/Requirements are work objects on the Client, not a core module. Sales flow on Client people: Lead → Suspect → Prospect → Customer (not extra menus). |
 | Candidate profiles | JobsNProfiles is a job portal. TalentBridge stores the CRM candidate plus work and engagement. |
 | Calling | VioTalk. Send person ID + phone + signed-in user; upsert one activity event by call ID. |

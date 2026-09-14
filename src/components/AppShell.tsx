@@ -22,6 +22,7 @@ import {
 } from "./workspace-ui";
 import { TalentBridgeMark } from "./TbLoader";
 import { firstHitHref, GlobalSearchPanel, type GlobalHit } from "./GlobalSearchPanel";
+import { HelpSupportPanel } from "./HelpSupportPanel";
 
 export type AppShellSession = {
   name: string;
@@ -183,13 +184,13 @@ export function AppShell({
             <div
               className={cn(
                 "z-30 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-[var(--shadow-md)] p-3",
-                navCollapsed ? "absolute left-full bottom-14 ml-2 w-56" : "absolute bottom-20 left-2 right-2",
+                navCollapsed ? "absolute left-full bottom-14 ml-2 w-80" : "absolute bottom-20 left-2 right-2",
               )}
             >
-              <div className="font-medium text-[13px] mb-1">Help</div>
-              <p className="text-xs text-[var(--color-text-muted)]">
-                Every call, email or meeting needs wrap-up: Next Action, No Action Required, or Closed.
-              </p>
+              <HelpSupportPanel
+                supportMode={Boolean(session?.supportMode)}
+                onClose={() => onMenuChange("none")}
+              />
             </div>
           ) : null}
           <div
@@ -213,7 +214,7 @@ export function AppShell({
         <div className="flex-1 flex flex-col min-w-0">
         {session?.supportMode ? (
           <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-950">
-            Support access (read-only) — you are viewing this tenant as Global Admin support. Session expires in 30
+            Support access (read-only) — you are viewing this tenant as platform Support. Session expires in 30
             minutes.
           </div>
         ) : null}

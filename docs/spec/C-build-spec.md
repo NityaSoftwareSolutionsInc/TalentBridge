@@ -58,7 +58,9 @@
 | Operations | Dashboard | Queues: follow-up, unmatched calls/mail, sync exceptions, MSA/PO, submission feedback |
 | Leadership | Dashboard | Risks/opportunities; read-heavy; no VioTalk seat required |
 | Administrator | Settings | Maps, permissions, exceptions, audit. May have no VioTalk seat. Does **not** create tenants. |
-| Global Admin | Admin-Talent-Bridge (separate app) | Platform-only: create / enable / disable tenants; invite first tenant Admin via SendGrid. Not a TalentBridge workspace role. |
+| Global Admin | Admin-Talent-Bridge (separate app) | Platform-only. Full tenant control; invite platform users (Global Admin / Manager / Support). Not a TalentBridge workspace role. |
+| Manager | Admin-Talent-Bridge | Create tenants; full control only on tenants they created. Other tenants are view-only. Not a TalentBridge workspace role. |
+| Support | Admin-Talent-Bridge | Help & Support tickets from TalentBridge; read-only tenant support access. Cannot create or change tenants. |
 
 ## C.6 Integrations
 
@@ -70,7 +72,7 @@
 | Outlook / Microsoft | Mailbox transport | Send as user from workspace; read sent/inbound; Submission create/update; unmatched queue |
 | SendGrid | Transactional mail | Invitations and password-set links (tenant Admin invites in TalentBridge Settings; first-Admin invites from Admin-Talent-Bridge) |
 | TalentBridge | Hub objects listed in A.3 | System of record for the operating platform |
-| Admin-Talent-Bridge | Platform Global Admin | Creates tenants and first tenant Admin; shares the same PostgreSQL `talentbridge` schema |
+| Admin-Talent-Bridge | Platform Global Admin, Manager, Support | Creates tenants and first tenant Admin; Support handles Help tickets; shares the same PostgreSQL `talentbridge` schema |
 
 ## C.7 Event processing
 

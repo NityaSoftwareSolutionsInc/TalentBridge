@@ -77,9 +77,19 @@ erDiagram
     uuid id PK
     text email UK
     text name
+    PlatformRole role
     text password_hash
     boolean enabled
     timestamptz created_at
+  }
+  platform_support_tickets {
+    uuid id PK
+    uuid tenant_id FK
+    uuid created_by_user_id FK
+    uuid assigned_to_id FK
+    PlatformTicketCategory category
+    PlatformTicketStatus status
+    text subject
   }
   tenant_settings {
     uuid id PK
@@ -112,6 +122,9 @@ erDiagram
   }
 
   tenants ||--o| tenant_settings : configures
+  tenants ||--o{ platform_support_tickets : files
+  platform_admins ||--o{ platform_support_tickets : assigned
+  users ||--o{ platform_support_tickets : opens
   tenants ||--o{ users : has
   tenants ||--o{ memberships : has
   users ||--o{ memberships : has
@@ -401,7 +414,7 @@ All tables live in schema `talentbridge`. IDs are UUIDs unless noted.
 | Table | Prisma model | Purpose |
 |-------|--------------|---------|
 | `tenants` | `Tenant` | Workspace / org root (`enabled` gates TalentBridge login) |
-| `platform_admins` | `PlatformAdmin` | Global Admins for Admin-Talent-Bridge (no tenant_id) |
+| `platform_admins` | `PlatformAdmin` | Platform users for Admin-Talent-Bridge: Global Admin, Manager, Support (no tenant_id) |
 | `tenant_settings` | `TenantSettings` | Stages + SLA defaults per tenant |
 | `users` | `User` | People who log into the hub |
 | `memberships` | `Membership` | Role (`TbRole`) + permissions per user |
