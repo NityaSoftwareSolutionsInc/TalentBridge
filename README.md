@@ -16,7 +16,7 @@ Postgres is on `127.0.0.1:5435` (see `docker-compose.yml`). `npm run db:up` star
 
 ### Full stack with Docker (app + admin + DB)
 
-Keep repos as siblings (`Talent-Bridge` and `Admin-Talent-Bridge`). Then:
+Keep repos as siblings. Default admin path is `../Admin-Talent-Bridge` (override with `ADMIN_BUILD_CONTEXT` in `.env` if the folder name differs). Then:
 
 ```bash
 cp .env.docker.example .env   # set AUTH_JWT_SECRET + public URLs

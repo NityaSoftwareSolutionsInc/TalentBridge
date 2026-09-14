@@ -1,11 +1,12 @@
 # Full stack: Postgres + schema/seed + TalentBridge app + Admin app
 #
-# Folder layout (siblings required):
-#   .../Talent-Bridge/          (this compose file)
-#   .../Admin-Talent-Bridge/    (admin Dockerfile)
+# Folder layout (siblings):
+#   .../TalentBridge/           (this compose file — name may vary)
+#   .../Admin-Talent-Bridge/    (admin Dockerfile; override with ADMIN_BUILD_CONTEXT)
 #
 # Usage:
-#   cp .env.example .env          # set AUTH_JWT_SECRET + public URLs
+#   cp .env.docker.example .env   # set AUTH_JWT_SECRET + public URLs
+#   # If admin folder name differs, set ADMIN_BUILD_CONTEXT in .env
 #   docker compose up -d --build
 #
 # Local npm workflow (DB only):
@@ -77,7 +78,8 @@ services:
 
   admin:
     build:
-      context: ../Admin-Talent-Bridge
+      # Override in .env if the sibling folder name differs, e.g. ../AdminTalentBridge
+      context: ${ADMIN_BUILD_CONTEXT:-../Admin-Talent-Bridge}
       dockerfile: Dockerfile
       target: runner
     container_name: talentbridge-admin
