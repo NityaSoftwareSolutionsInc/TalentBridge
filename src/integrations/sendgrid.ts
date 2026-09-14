@@ -15,6 +15,10 @@ function fromAddress() {
   return (process.env.SENDGRID_FROM_EMAIL || "").trim();
 }
 
+function fromName() {
+  return (process.env.SENDGRID_FROM_NAME || "TalentBridge").trim() || "TalentBridge";
+}
+
 export function sendgridConfigured() {
   return Boolean(process.env.SENDGRID_API_KEY && fromAddress());
 }
@@ -38,7 +42,7 @@ export async function sendTransactionalEmail(input: TransactionalEmail): Promise
     },
     body: JSON.stringify({
       personalizations: [{ to: [{ email: input.to }] }],
-      from: { email: from, name: "TalentBridge" },
+      from: { email: from, name: fromName() },
       subject: input.subject,
       content: [
         { type: "text/plain", value: input.text },

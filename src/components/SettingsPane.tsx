@@ -1286,8 +1286,8 @@ export function CreateUserForm({
     <form className="space-y-3" onSubmit={submit}>
       <h2 className="text-lg font-semibold">Add user</h2>
       <p className="text-sm text-slate-600">
-        Same tenant only. Roles are recruiter, sales, operations, leadership, or admin. An invitation email is sent to
-        set their password.
+        Same tenant only. Use a business email (not Gmail, Yahoo, Outlook.com, etc.). Roles are recruiter, sales,
+        operations, leadership, or admin. An invitation email is sent to set their password.
       </p>
       <div>
         <Label>Name</Label>
@@ -1295,7 +1295,13 @@ export function CreateUserForm({
       </div>
       <div>
         <Label>Email</Label>
-        <FieldInput type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        <FieldInput
+          type="email"
+          required
+          placeholder="name@yourcompany.com"
+          value={form.email}
+          onChange={(e) => setForm({ ...form, email: e.target.value })}
+        />
       </div>
       <div>
         <Label>Title</Label>

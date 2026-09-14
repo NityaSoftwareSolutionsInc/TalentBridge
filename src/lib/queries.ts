@@ -20,6 +20,7 @@ import { tenantSettings } from "./settings";
 import { appBaseUrl, issuePasswordEmail, sendPasswordChangedEmail, sendUserDisabledEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
 import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
+import { assertBusinessEmail } from "./business-email";
 import {
   codeFromJnpError,
   jnpAccessDeniedMessage,
@@ -2655,10 +2656,9 @@ export async function adminCreateUser(
 ) {
   requireAdmin(session);
   const name = String(input.name || "").trim();
-  const email = String(input.email || "").trim().toLowerCase();
+  const email = assertBusinessEmail(input.email);
   const title = String(input.title || "").trim();
   if (!name) throw new Error("Name is required");
-  if (!email || !email.includes("@")) throw new Error("A valid email is required");
   const role = parseLoginRole(input.role);
   const extraPermissions = sanitizeExtraPermissions(input.extraPermissions);
   try {

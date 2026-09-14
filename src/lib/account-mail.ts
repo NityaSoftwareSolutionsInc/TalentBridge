@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { sendTransactionalEmail, sendgridConfigured } from "@/integrations/sendgrid";
 import { hashToken, newSecretToken } from "./password";
+import { buildTransactionalEmail } from "./email-template";
 
 export type PasswordMailKind = "invite" | "reset" | "forgot";
 
@@ -9,13 +10,6 @@ const EXPIRY_HOURS: Record<PasswordMailKind, number> = {
   reset: 24,
   forgot: 24,
 };
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (ch) => {
-    const map: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-    return map[ch] || ch;
-  });
-}
 
 export function appBaseUrl(originHeader?: string | null) {
   const configured = (process.env.APP_BASE_URL || "").trim().replace(/\/$/, "");
@@ -34,30 +28,20 @@ async function deliver(input: {
   footer?: string;
   stubLabel: string;
 }) {
-  const lines = [`Hi ${input.name},`, "", input.intro, ""];
-  if (input.ctaUrl) {
-    lines.push(`${input.ctaLabel || "Open link"}: ${input.ctaUrl}`, "");
-  }
-  if (input.footer) lines.push(input.footer, "");
-  lines.push("If you did not expect this email, ignore it.");
-
-  const htmlParts = [
-    `<p>Hi ${escapeHtml(input.name)},</p>`,
-    `<p>${escapeHtml(input.intro)}</p>`,
-  ];
-  if (input.ctaUrl) {
-    htmlParts.push(
-      `<p><a href="${escapeHtml(input.ctaUrl)}">${escapeHtml(input.ctaLabel || "Open link")}</a></p>`,
-    );
-  }
-  if (input.footer) htmlParts.push(`<p>${escapeHtml(input.footer)}</p>`);
-  htmlParts.push("<p>If you did not expect this email, ignore it.</p>");
+  const { text, html } = buildTransactionalEmail({
+    greetingName: input.name,
+    intro: input.intro,
+    ctaLabel: input.ctaLabel,
+    ctaUrl: input.ctaUrl,
+    footer: input.footer,
+    assetBaseUrl: appBaseUrl(),
+  });
 
   const delivery = await sendTransactionalEmail({
     to: input.to,
     subject: input.subject,
-    text: lines.join("\n"),
-    html: htmlParts.join("\n"),
+    text,
+    html,
   });
   if (delivery.stub) {
     console.info(`[sendgrid-stub] ${input.stubLabel}`, {
@@ -179,7 +163,8 @@ export async function sendPasswordChangedEmail(user: {
       to: user.email,
       name: user.name,
       subject: "Your TalentBridge password was changed",
-      intro: "Your TalentBridge password was set or changed successfully. If you did not do this, contact your administrator immediately.",
+      intro:
+        "Your TalentBridge password was set or changed successfully. If you did not do this, contact your administrator immediately.",
       stubLabel: "password-changed",
     });
   } catch (error) {
