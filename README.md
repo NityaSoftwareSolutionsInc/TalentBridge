@@ -10,31 +10,29 @@ npm run db:setup
 npm run dev
 ```
 
-Opens at http://localhost:3011. Pick a demo user on `/login`.
+Opens at http://localhost:3011. Sign in after seeding platform admins (see below).
 
-Postgres is on `127.0.0.1:5435` (see `docker-compose.yml`). Platform users (Admin-Talent-Bridge at http://localhost:3012):
+Postgres is on `127.0.0.1:5435` (see `docker-compose.yml`).
 
-- Global Admin `global.admin@talentbridge.example` / `ChangeMe123!`
-- Manager `manager@talentbridge.example` / `ChangeMe123!`
-- Support `support@talentbridge.example` / `ChangeMe123!`
+`npm run db:seed` creates **platform admins only** — no demo tenants or CRM data. Create organizations from Admin-Talent-Bridge.
 
-TalentBridge workspace users:
+Platform users (Admin-Talent-Bridge at http://localhost:3012), password `ChangeMe123!`:
 
-- Recruiter (Sarah) lands on Candidates
-- Sales (James) lands on Clients
-- Operations / Leadership land on Dashboard
-- Admin lands on Settings
-- Ghost Corp user proves tenant isolation (Northstar records are invisible)
+- Global Admin `global.admin@talentbridge.example`
+- Manager `manager@talentbridge.example`
+- Support `support@talentbridge.example`
+
+TalentBridge workspace users are created when you invite the first tenant Administrator from Admin.
 
 Integrations (JobsNProfiles, VioTalk, Outlook) are **stub adapters** in `src/integrations/`. Swap implementations later without changing product code.
 
-## Demo spine (C.11)
+## After seed (manual setup)
 
-1. Sign in as Sarah. Search Candidates (title `Java`, skills `Spring`). Open Anil Reddy — filters stay.
-2. Existing relationship banner appears if you are not the owner. Request Collaboration does not auto-merge.
-3. VioTalk Call → wrap-up **Next Action** creates a Task.
-4. Submit Profile: pick Java Developer requirement + client person → stub Outlook send → Submission ID on candidate, job, and client.
-5. Sign in as James. Open Acme Technologies — Client 360, Requirements tab, MSA/PO (amounts visible with `po` permission).
-6. Sign in as Elena (leadership). PO amounts hidden; page still opens. Dashboard Today’s Risks click through to live records.
-7. Sign in as Ghost Admin — Northstar candidates do not appear.
-# TalentBridge
+1. Open Admin → sign in as Global Admin or Manager.
+2. Create a tenant and invite the first Administrator (SendGrid or stub link in server log).
+3. Open the invite link on TalentBridge `/set-password`, then sign in.
+4. Add workspace users and CRM data from TalentBridge Settings / modules.
+
+## Spec demo spine (C.11)
+
+Once you have sample data, the product acceptance path is still: search → ownership → VioTalk wrap-up → Submit Profile → Client 360 → leadership restrictions → tenant isolation.
