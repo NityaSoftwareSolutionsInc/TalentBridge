@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(req.url);
-  const module = (url.searchParams.get("module") || session.landing) as ModuleKey;
+  const moduleKey = (url.searchParams.get("module") || session.landing) as ModuleKey;
   const q = url.searchParams.get("q") || undefined;
 
   if (url.searchParams.get("global") === "1") {
@@ -43,27 +43,27 @@ export async function GET(req: Request) {
 
   const badges = await navBadges(session.tenantId);
 
-  if (module === "dashboard") {
+  if (moduleKey === "dashboard") {
     return NextResponse.json({ dashboard: await dashboard(session), badges });
   }
-  if (module === "tasks") {
+  if (moduleKey === "tasks") {
     return NextResponse.json({ tasks: await listTasks(session), badges });
   }
-  if (module === "calendar") {
+  if (moduleKey === "calendar") {
     const [calendar, requirements] = await Promise.all([listCalendar(session), listRequirements(session)]);
     return NextResponse.json({ calendar, requirements, badges });
   }
-  if (module === "communications") {
+  if (moduleKey === "communications") {
     return NextResponse.json({ activityEvents: await listCommunications(session), badges });
   }
-  if (module === "settings") {
+  if (moduleKey === "settings") {
     return NextResponse.json({ ...(await settingsPayload(session)), badges });
   }
-  if (module === "reports") {
+  if (moduleKey === "reports") {
     const dash = await dashboard(session);
     return NextResponse.json({ reports: dash.kpis, risks: dash.risks, badges });
   }
-  if (module === "msa-po") {
+  if (moduleKey === "msa-po") {
     const dash = await dashboard(session);
     return NextResponse.json({
       items: dash.risks.filter((r) => r.module === "msa-po").map((r) => ({ ...r, name: r.title })),
@@ -71,7 +71,7 @@ export async function GET(req: Request) {
     });
   }
 
-  const list = await searchPeople(session, module, filters);
+  const list = await searchPeople(session, moduleKey, filters);
   const requirements = await listRequirements(session);
   const users = await listUsers(session.tenantId);
   return NextResponse.json({ list, requirements, users, badges });
