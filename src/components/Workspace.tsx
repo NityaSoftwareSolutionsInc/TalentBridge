@@ -1253,6 +1253,29 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                         setBusy(false);
                       }
                     }}
+                    onDeleteFile={async (fileId) => {
+                      setBusy(true);
+                      setError("");
+                      try {
+                        const res = await fetch("/api/actions", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ action: "delete_person_file", fileId }),
+                        });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.error || "Delete failed");
+                        await load();
+                        const recordType = params.get("type") || (record?.type === "organization" ? "organization" : "person");
+                        const rec = await fetch(`/api/record?type=${recordType}&id=${selectedId}`).then((r) => r.json());
+                        setRecord(rec.record);
+                      } catch (e) {
+                        const msg = e instanceof Error ? e.message : "Delete failed";
+                        setError(msg);
+                        throw e instanceof Error ? e : new Error(msg);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
                     onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
                     onViewCommercial={(kind, id) => act({ action: "view_commercial", kind, id })}
                     onWrapUpActivity={(activityId) => {
@@ -1641,6 +1664,7 @@ function RecordTabs({
   onSubmit,
   onOpenPerson,
   onAddFile,
+  onDeleteFile,
   onViewCall,
   onViewCommercial,
   onWrapUpActivity,
@@ -1660,6 +1684,7 @@ function RecordTabs({
   onSubmit: () => void;
   onOpenPerson: (id: string) => void;
   onAddFile: (v: { name: string; kind: string; file: File }) => Promise<void>;
+  onDeleteFile?: (fileId: string) => Promise<void>;
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
   onViewCommercial?: (kind: "msa" | "po", id: string) => Promise<unknown>;
   onWrapUpActivity?: (activityId: string) => void;
@@ -1717,7 +1742,7 @@ function RecordTabs({
     return <Timeline record={record} mode="notes" onAddNote={onAddNote} canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
   }
   if (tab === "Files") {
-    return <FilesPane record={record} onAddFile={onAddFile} />;
+    return <FilesPane record={record} onAddFile={onAddFile} onDeleteFile={onDeleteFile} />;
   }
   if (tab === "Relationships" || tab === "People") {
     return <RelationshipsPane record={record} relatedPeople={relatedPeople} onOpen={onOpenPerson} />;
@@ -2054,9 +2079,11 @@ function TasksPane({ record }: { record: Record<string, unknown> | null }) {
 function FilesPane({
   record,
   onAddFile,
+  onDeleteFile,
 }: {
   record: Record<string, unknown> | null;
   onAddFile: (v: { name: string; kind: string; file: File }) => Promise<void>;
+  onDeleteFile?: (fileId: string) => Promise<void>;
 }) {
   const files = (record?.files as {
     id?: string;
@@ -2073,6 +2100,10 @@ function FilesPane({
   const [picked, setPicked] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const rows = [...files].sort((a, b) => {
     const aT = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -2098,6 +2129,25 @@ function FilesPane({
     }
   }
 
+  async function confirmDelete() {
+    if (!deleteTarget || !onDeleteFile || deleting) return;
+    if (deleteConfirm.trim().toLowerCase() !== "delete") {
+      setDeleteError('Type "delete" to confirm.');
+      return;
+    }
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await onDeleteFile(deleteTarget.id);
+      setDeleteTarget(null);
+      setDeleteConfirm("");
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader
@@ -2107,6 +2157,9 @@ function FilesPane({
             onClick={() => {
               setAdding((v) => !v);
               setFormError("");
+              setDeleteTarget(null);
+              setDeleteConfirm("");
+              setDeleteError("");
             }}
           >
             {adding ? "Cancel" : "Add file"}
@@ -2159,11 +2212,55 @@ function FilesPane({
           </button>
         </div>
       ) : null}
+      {deleteTarget ? (
+        <div className="px-4 py-3 border-b border-red-200 bg-red-50 space-y-2">
+          <p className="text-sm font-medium text-red-800">Delete this file permanently?</p>
+          <p className="text-xs text-red-700">
+            <span className="font-medium">{deleteTarget.name}</span> will be removed from this record. This cannot be
+            undone. Type <span className="font-semibold">delete</span> below to confirm.
+          </p>
+          {deleteError ? <p className="text-xs text-red-600">{deleteError}</p> : null}
+          <label className="block text-sm text-red-900">
+            Confirmation
+            <input
+              className="mt-1 w-full border border-red-300 rounded-[var(--radius-md)] px-2 py-2 text-sm bg-white"
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+              placeholder='Type "delete"'
+              autoComplete="off"
+              disabled={deleting}
+            />
+          </label>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              className="rounded-[var(--radius-md)] bg-red-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              disabled={deleting || deleteConfirm.trim().toLowerCase() !== "delete"}
+              onClick={() => void confirmDelete()}
+            >
+              {deleting ? "Deleting…" : "Delete file"}
+            </button>
+            <button
+              type="button"
+              className={btnGhost}
+              disabled={deleting}
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteConfirm("");
+                setDeleteError("");
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
       {rows.length ? (
         <ul className="divide-y">
           {rows.map((d) => {
             const fromJnp = d.source === "JobsNProfiles";
             const canPreview = Boolean(d.previewable && d.id);
+            const canDelete = Boolean(onDeleteFile && d.id && !fromJnp);
             return (
               <li key={d.id || d.name} className="px-4 py-3 flex items-center gap-3">
                 <FileText className="h-4 w-4 text-[var(--color-accent)] shrink-0" />
@@ -2177,23 +2274,39 @@ function FilesPane({
                     {d.createdAt ? <span>· {shortDate(d.createdAt)}</span> : null}
                   </div>
                 </div>
-                {canPreview ? (
-                  <a
-                    href={`/api/files/preview?fileId=${encodeURIComponent(String(d.id))}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[12px] font-medium text-[var(--color-accent)] hover:underline shrink-0"
-                  >
-                    Preview
-                  </a>
-                ) : (
-                  <span
-                    className="text-[11px] text-[var(--color-text-muted)] shrink-0"
-                    title="Only the file name was saved. Use Add file and upload the PDF again to Preview it."
-                  >
-                    Name only — re-upload
-                  </span>
-                )}
+                <div className="flex items-center gap-3 shrink-0">
+                  {canPreview ? (
+                    <a
+                      href={`/api/files/preview?fileId=${encodeURIComponent(String(d.id))}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[12px] font-medium text-[var(--color-accent)] hover:underline"
+                    >
+                      Preview
+                    </a>
+                  ) : (
+                    <span
+                      className="text-[11px] text-[var(--color-text-muted)]"
+                      title="Only the file name was saved. Use Add file and upload the PDF again to Preview it."
+                    >
+                      Name only — re-upload
+                    </span>
+                  )}
+                  {canDelete ? (
+                    <button
+                      type="button"
+                      className="text-[12px] font-medium text-red-600 hover:underline cursor-pointer"
+                      onClick={() => {
+                        setAdding(false);
+                        setDeleteTarget({ id: String(d.id), name: d.name });
+                        setDeleteConfirm("");
+                        setDeleteError("");
+                      }}
+                    >
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
               </li>
             );
           })}

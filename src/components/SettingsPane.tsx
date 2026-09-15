@@ -274,7 +274,7 @@ export function SettingsPane({
       if (auditFilter === "submit" && e.action !== "submit_profile") return false;
       if (auditFilter === "ownership" && !e.action.startsWith("ownership")) return false;
       if (auditFilter === "jnp" && e.action !== "jnp_sync") return false;
-      if (auditFilter === "person" && !["create_person", "update_person", "add_note", "toggle_dnc"].includes(e.action))
+      if (auditFilter === "person" && !["create_person", "update_person", "add_note", "toggle_dnc", "add_person_file", "delete_person_file"].includes(e.action))
         return false;
       if (auditFilter === "outlook" && !["send_email", "ingest_outlook"].includes(e.action)) return false;
       if (auditFilter === "teams" && e.action !== "schedule_meeting") return false;
@@ -1357,7 +1357,7 @@ export function SettingsPane({
                 <Label>Filter</Label>
                 <FieldSelect value={auditFilter} onChange={(e) => setAuditFilter(e.target.value)}>
                   <option value="all">All events</option>
-                  <option value="person">Person / notes / DNC</option>
+                  <option value="person">Person / notes / files / DNC</option>
                   <option value="jnp">JNP candidate sync</option>
                   <option value="outlook">Outlook send / ingest</option>
                   <option value="teams">Teams meetings</option>

@@ -36,6 +36,7 @@ import {
 } from "./jnp-gate";
 import {
   assertUploadable,
+  deleteStoredFile,
   readStoredFile,
   sniffContentType,
   storageKeyFor,
@@ -1923,6 +1924,81 @@ export async function addPersonFile(
     byteSize: bytes.length,
     contentType,
   });
+}
+
+export async function deletePersonFile(session: Session, fileId: string) {
+  const id = String(fileId || "").trim();
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("Invalid file id");
+
+  const file = await prisma.storedFile.findFirst({
+    where: { id, tenantId: session.tenantId },
+    select: {
+      id: true,
+      name: true,
+      kind: true,
+      source: true,
+      personId: true,
+      organizationId: true,
+      contentType: true,
+      byteSize: true,
+      storageKey: true,
+      person: { select: { id: true, tenantId: true, lastResume: true } },
+      organization: { select: { id: true, tenantId: true } },
+    },
+  });
+  const personOk = file?.person && file.person.tenantId === session.tenantId;
+  const orgOk = file?.organization && file.organization.tenantId === session.tenantId;
+  if (!file || (!personOk && !orgOk)) throw new Error("File not found");
+  if (file.source !== "manual") {
+    throw new Error("JobsNProfiles files cannot be deleted here — remove them from JobsNProfiles or unsync");
+  }
+
+  const before = {
+    fileId: file.id,
+    name: file.name,
+    kind: file.kind,
+    source: file.source,
+    personId: file.personId,
+    organizationId: file.organizationId,
+    contentType: file.contentType,
+    byteSize: file.byteSize,
+    hadContent: Boolean(file.byteSize && file.byteSize > 0),
+    storageKey: file.storageKey,
+  };
+
+  if (file.storageKey) {
+    try {
+      await deleteStoredFile(file.storageKey);
+    } catch {
+      /* disk cleanup best-effort */
+    }
+  }
+
+  await prisma.storedFile.delete({ where: { id: file.id } });
+
+  if (file.personId && file.kind === "resume" && file.person?.lastResume === file.name) {
+    const nextResume = await prisma.storedFile.findFirst({
+      where: { tenantId: session.tenantId, personId: file.personId, kind: "resume" },
+      orderBy: { createdAt: "desc" },
+      select: { name: true },
+    });
+    await prisma.person.update({
+      where: { id: file.personId },
+      data: { lastResume: nextResume?.name || "" },
+    });
+  }
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "delete_person_file",
+    entityType: "file",
+    entityId: file.id,
+    before,
+    after: { deleted: true, name: file.name },
+  });
+
+  return { ok: true as const, fileId: file.id };
 }
 
 export async function previewPersonResume(session: Session, fileId: string) {

@@ -77,6 +77,19 @@ export async function readStoredFile(key: string) {
   }
 }
 
+export async function deleteStoredFile(key: string) {
+  const safeKey = String(key || "").replace(/\\/g, "/");
+  if (!/^[0-9a-f-]{36}\/[0-9a-f-]{36}$/i.test(safeKey)) return;
+  const full = assertInsideRoot(path.join(storageRoot(), safeKey));
+  try {
+    await fs.unlink(full);
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    if (code === "ENOENT") return;
+    throw error;
+  }
+}
+
 export function sniffContentType(buffer: Buffer, fileName?: string, hinted?: string) {
   if (buffer.length >= 5) {
     const head = buffer.subarray(0, 8);

@@ -20,6 +20,7 @@ import {
   createPerson,
   createRequirement,
   decideOwnership,
+  deletePersonFile,
   exportDashboard,
   ingestOutlookMail,
   placeCall,
@@ -144,6 +145,8 @@ export async function POST(req: Request) {
             kind: body.kind as string | undefined,
           }),
         );
+      case "delete_person_file":
+        return NextResponse.json(await deletePersonFile(session, String(body.fileId || "")));
       case "create_person":
         return NextResponse.json(
           await createPerson(session, {
