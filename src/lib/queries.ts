@@ -1870,6 +1870,8 @@ export async function addPersonFile(
   }
   assertUploadable(originalName || name, bytes.length);
   const contentType = sniffContentType(bytes, originalName || name, input.contentType);
+  // Prisma Bytes expects Uint8Array; Node Buffer's ArrayBufferLike typing fails under strict TS.
+  const content = Uint8Array.from(bytes);
 
   const file = await prisma.storedFile.create({
     data: {
@@ -1879,16 +1881,16 @@ export async function addPersonFile(
       kind,
       name,
       source: "manual",
-      content: bytes,
+      content,
       contentType,
-      byteSize: bytes.length,
+      byteSize: content.length,
     },
   });
 
   // Best-effort disk mirror (Preview prefers DB `content`).
   try {
     const storageKey = storageKeyFor(session.tenantId, file.id);
-    await writeStoredFile(storageKey, bytes);
+    await writeStoredFile(storageKey, Buffer.from(content));
     await prisma.storedFile.update({
       where: { id: file.id },
       data: { storageKey },
@@ -1915,13 +1917,13 @@ export async function addPersonFile(
       kind,
       source: "manual",
       stored: true,
-      byteSize: bytes.length,
+      byteSize: content.length,
     },
   });
   return serializeStoredFile({
     ...file,
     storageKey: file.storageKey,
-    byteSize: bytes.length,
+    byteSize: content.length,
     contentType,
   });
 }

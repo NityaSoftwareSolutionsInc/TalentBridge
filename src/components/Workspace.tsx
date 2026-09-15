@@ -3423,6 +3423,8 @@ function EmailForm({
       setSigBody(pick?.body || "");
       setSigDefault(Boolean(pick?.isDefault || !signatures.length));
     }
+    // Sync when parent refreshes signatures only — don't reset mid-edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedSigId / edit flags are intentional guards, not triggers
   }, [signatures]);
 
   const activeSig = signatures.find((s) => s.id === selectedSigId) || defaultSig;
