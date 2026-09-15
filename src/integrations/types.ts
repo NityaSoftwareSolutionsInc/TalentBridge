@@ -80,6 +80,8 @@ export type OutlookSendRequest = {
   cc?: string[];
   subject: string;
   body: string;
+  /** When true, `body` is already HTML and must not be escaped again. */
+  bodyIsHtml?: boolean;
   attachments?: { name: string; contentType?: string; contentBytes?: string }[];
 };
 

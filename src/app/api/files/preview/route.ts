@@ -29,7 +29,11 @@ export async function GET(req: Request) {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Preview failed";
-    const status = /not found/i.test(message) ? 404 : /only available/i.test(message) ? 400 : 500;
+    const status = /not found/i.test(message)
+      ? 404
+      : /only available|no stored document/i.test(message)
+        ? 400
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }

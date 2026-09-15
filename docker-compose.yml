@@ -66,11 +66,14 @@ services:
       JNP_API_BASE_URL: ${JNP_API_BASE_URL:-}
       JNP_API_KEY: ${JNP_API_KEY:-}
       NEXT_PUBLIC_JNP_PROFILE_BASE_URL: ${NEXT_PUBLIC_JNP_PROFILE_BASE_URL:-https://jobsnprofiles.com}
+      FILE_STORAGE_PATH: /data/uploads
       MICROSOFT_GRAPH_TENANT_ID: ${MICROSOFT_GRAPH_TENANT_ID:-}
       MICROSOFT_GRAPH_CLIENT_ID: ${MICROSOFT_GRAPH_CLIENT_ID:-}
       MICROSOFT_GRAPH_CLIENT_SECRET: ${MICROSOFT_GRAPH_CLIENT_SECRET:-}
     ports:
       - "127.0.0.1:3011:3011"
+    volumes:
+      - talentbridge_files:/data/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -102,3 +105,4 @@ services:
 
 volumes:
   talentbridge_pg:
+  talentbridge_files:

@@ -20,6 +20,7 @@ import { tenantSettings } from "./settings";
 import { appBaseUrl, issuePasswordEmail, sendPasswordChangedEmail, sendUserDisabledEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
 import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
+import { composeEmailHtml, looksLikeHtml } from "./email-signature-html";
 import { assertBusinessEmail } from "./business-email";
 import {
   codeFromJnpError,
@@ -33,6 +34,14 @@ import {
   assertJnpSyncRateLimit,
   ensureJnpCaller,
 } from "./jnp-gate";
+import {
+  assertUploadable,
+  guessContentType,
+  readStoredFile,
+  storageKeyFor,
+  toArrayBuffer,
+  writeStoredFile,
+} from "./file-store";
 
 function personAuditFields(p: {
   name?: string | null;
@@ -985,7 +994,13 @@ export async function sendEmail(
       signature = String(session.emailSignatureBody || "").trim();
     }
   }
-  const fullBody = includeSignature && signature ? `${body}\n\n--\n${signature}` : body;
+  const htmlBody = composeEmailHtml(body, includeSignature ? signature : "");
+  const activityBody =
+    includeSignature && signature
+      ? looksLikeHtml(signature)
+        ? `${body}\n\n[HTML signature attached]`
+        : `${body}\n\n--\n${signature}`
+      : body;
 
   const cc = String(input.cc || "")
     .split(/[,;]/)
@@ -997,7 +1012,8 @@ export async function sendEmail(
     to,
     cc: cc.length ? cc : undefined,
     subject,
-    body: fullBody,
+    body: htmlBody,
+    bodyIsHtml: true,
   });
 
   const activity = await prisma.activityEvent.create({
@@ -1005,7 +1021,7 @@ export async function sendEmail(
       tenantId: session.tenantId,
       kind: "email",
       summary: `Email: ${subject}`,
-      body: fullBody,
+      body: activityBody,
       source: "outlook",
       externalId: sent.internetMessageId || sent.messageId,
       actorId: session.userId,
@@ -1751,30 +1767,67 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
 export async function addPersonFile(
   session: Session,
   input: {
-    personId: string;
+    personId?: string;
+    organizationId?: string;
     name: string;
     kind?: string;
+    bytes?: Buffer;
+    contentType?: string;
+    originalName?: string;
   },
 ) {
-  const person = await prisma.person.findFirst({
-    where: { id: input.personId, tenantId: session.tenantId },
-  });
-  if (!person) throw new Error("Contact not found");
-  const name = String(input.name || "").trim();
+  const personId = String(input.personId || "").trim();
+  const organizationId = String(input.organizationId || "").trim();
+  if (personId && organizationId) throw new Error("Attach the file to a person or an organization, not both");
+  const person = personId
+    ? await prisma.person.findFirst({ where: { id: personId, tenantId: session.tenantId } })
+    : null;
+  const organization = organizationId
+    ? await prisma.organization.findFirst({ where: { id: organizationId, tenantId: session.tenantId } })
+    : null;
+  if (personId && !person) throw new Error("Contact not found");
+  if (organizationId && !organization) throw new Error("Organization not found");
+  if (!person && !organization) throw new Error("Contact not found");
+
+  const originalName = String(input.originalName || input.name || "").trim();
+  const name = String(input.name || originalName || "").trim();
   if (!name) throw new Error("Document name is required");
   if (name.length > 240) throw new Error("Document name is too long");
   const kindRaw = String(input.kind || "other").trim().toLowerCase();
   const kind = kindRaw === "resume" ? "resume" : "other";
+  const bytes = input.bytes;
+  if (bytes) {
+    assertUploadable(originalName || name, bytes.length);
+  }
+
   const file = await prisma.storedFile.create({
     data: {
       tenantId: session.tenantId,
-      personId: person.id,
+      personId: person?.id,
+      organizationId: organization?.id,
       kind,
       name,
       source: "manual",
+      contentType: bytes ? guessContentType(originalName || name, input.contentType) : null,
+      byteSize: bytes ? bytes.length : null,
     },
   });
-  if (kind === "resume") {
+
+  if (bytes) {
+    const storageKey = storageKeyFor(session.tenantId, file.id);
+    try {
+      await writeStoredFile(storageKey, bytes);
+      await prisma.storedFile.update({
+        where: { id: file.id },
+        data: { storageKey },
+      });
+    } catch (error) {
+      await prisma.storedFile.delete({ where: { id: file.id } }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  if (kind === "resume" && person) {
     await prisma.person.update({
       where: { id: person.id },
       data: { lastResume: name },
@@ -1784,11 +1837,21 @@ export async function addPersonFile(
     tenantId: session.tenantId,
     actorId: session.userId,
     action: "add_person_file",
-    entityType: "person",
-    entityId: person.id,
-    after: { fileId: file.id, name, kind, source: "manual" },
+    entityType: person ? "person" : "organization",
+    entityId: person?.id || organization?.id || file.id,
+    after: {
+      fileId: file.id,
+      name,
+      kind,
+      source: "manual",
+      stored: Boolean(bytes),
+      byteSize: bytes ? bytes.length : null,
+    },
   });
-  return file;
+  return serializeStoredFile({
+    ...file,
+    storageKey: bytes ? storageKeyFor(session.tenantId, file.id) : null,
+  });
 }
 
 export async function previewPersonResume(session: Session, fileId: string) {
@@ -1796,19 +1859,45 @@ export async function previewPersonResume(session: Session, fileId: string) {
     where: {
       id: fileId,
       tenantId: session.tenantId,
-      personId: { not: null },
     },
     include: {
       person: { select: { id: true, tenantId: true } },
+      organization: { select: { id: true, tenantId: true } },
     },
   });
-  if (!file || !file.person || file.person.tenantId !== session.tenantId) {
+  const personOk = file?.person && file.person.tenantId === session.tenantId;
+  const orgOk = file?.organization && file.organization.tenantId === session.tenantId;
+  if (!file || (!personOk && !orgOk)) {
     throw new Error("File not found");
   }
-  if (file.source !== "JobsNProfiles" || !file.externalId) {
-    throw new Error("Preview is only available for JobsNProfiles resumes");
+
+  if (file.storageKey) {
+    const stored = await readStoredFile(file.storageKey);
+    if (!stored) throw new Error("File not found");
+    await audit({
+      tenantId: session.tenantId,
+      actorId: session.userId,
+      action: "view_file",
+      entityType: "file",
+      entityId: file.id,
+      after: {
+        personId: file.personId,
+        organizationId: file.organizationId,
+        kind: file.kind,
+        source: file.source,
+        preview: true,
+      },
+    });
+    return {
+      fileName: file.name,
+      contentType: file.contentType || guessContentType(file.name),
+      body: toArrayBuffer(stored),
+    };
   }
-  // externalId must be numeric JNP resume id
+
+  if (file.source !== "JobsNProfiles" || !file.externalId) {
+    throw new Error("This file has no stored document to preview");
+  }
   if (!/^\d{1,20}$/.test(String(file.externalId))) {
     throw new Error("Invalid JobsNProfiles resume reference");
   }
@@ -3250,6 +3339,30 @@ function serializePersonList(c: {
   };
 }
 
+function serializeStoredFile(f: {
+  id: string;
+  name: string;
+  kind: string;
+  source: string;
+  externalId?: string | null;
+  storageKey?: string | null;
+  contentType?: string | null;
+  byteSize?: number | null;
+  createdAt: Date;
+}) {
+  return {
+    id: f.id,
+    name: f.name,
+    kind: f.kind,
+    source: f.source,
+    externalId: f.externalId ?? null,
+    contentType: f.contentType ?? null,
+    byteSize: f.byteSize ?? null,
+    createdAt: f.createdAt,
+    previewable: Boolean(f.storageKey) || (f.source === "JobsNProfiles" && Boolean(f.externalId)),
+  };
+}
+
 function serializePersonDetail(
   c: Prisma.PersonGetPayload<{
     include: {
@@ -3328,7 +3441,7 @@ function serializePersonDetail(
     meetings: c.calendarEvents,
     placements: c.placements,
     requirements: c.hiringManagerReqs,
-    files: c.files,
+    files: c.files.map(serializeStoredFile),
     upcoming: c.tasks.filter((t) => t.status === "open"),
     tasks: c.tasks,
     ownershipRequests: c.ownershipReqs,
@@ -3414,7 +3527,7 @@ function serializeOrganizationDetail(
     interviews: a.interviews,
     meetings: a.calendarEvents,
     placements: a.placements,
-    files: a.files,
+    files: a.files.map(serializeStoredFile),
     activityEvents: a.activityEvents,
     tasks: a.tasks,
     msaDocuments: a.msaDocuments,

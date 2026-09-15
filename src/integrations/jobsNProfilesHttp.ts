@@ -60,6 +60,16 @@ export class JnpRequestError extends Error {
   }
 }
 
+function looksLikeUpstreamMarkup(text: string) {
+  const trimmed = text.trim();
+  return (
+    trimmed.startsWith("<?xml") ||
+    trimmed.startsWith("<Error") ||
+    trimmed.startsWith("<!DOCTYPE") ||
+    trimmed.startsWith("<html")
+  );
+}
+
 function parseJnpError(res: Response, text: string, fallback: string) {
   let code = "";
   let message = fallback;
@@ -68,7 +78,9 @@ function parseJnpError(res: Response, text: string, fallback: string) {
     if (data.error) message = data.error;
     if (data.code) code = data.code;
   } catch {
-    if (text) message = `${fallback}: ${text.slice(0, 200)}`;
+    if (text && !looksLikeUpstreamMarkup(text)) {
+      message = `${fallback}: ${text.slice(0, 200)}`;
+    }
   }
   if (res.status === 401) return new JnpRequestError("JobsNProfiles API key rejected", "unauthorized");
   if (res.status === 403) {
@@ -219,10 +231,16 @@ export const jobsNProfilesHttp: JobsNProfilesAdapter = {
         "x-api-key": apiKey(),
       },
       body: JSON.stringify({ resume_id: id, requester_user_id: requesterUserId }),
-      redirect: "follow",
+      redirect: "manual",
     });
 
     if (res.status === 404) return null;
+    if (res.status >= 300 && res.status < 400) {
+      throw new JnpRequestError(
+        "JobsNProfiles resume file is not available for preview",
+        "resume_unavailable",
+      );
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw parseJnpError(res, text, "JobsNProfiles resume preview failed");

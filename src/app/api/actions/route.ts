@@ -138,7 +138,8 @@ export async function POST(req: Request) {
       case "add_person_file":
         return NextResponse.json(
           await addPersonFile(session, {
-            personId: String(body.personId),
+            personId: body.personId as string | undefined,
+            organizationId: body.organizationId as string | undefined,
             name: String(body.name || ""),
             kind: body.kind as string | undefined,
           }),

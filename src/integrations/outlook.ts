@@ -93,9 +93,12 @@ export const outlookGraph: OutlookAdapter = {
     const to = toList(req.to);
     if (!to.length) throw new Error("At least one recipient is required");
     const names = (req.attachments || []).map((a) => a.name).filter(Boolean);
-    const bodyText = names.length
-      ? `${req.body}\n\nAttachments referenced from TalentBridge: ${names.join(", ")}`
-      : req.body;
+    const attachmentNote = names.length ? `Attachments referenced from TalentBridge: ${names.join(", ")}` : "";
+    const htmlContent = req.bodyIsHtml
+      ? attachmentNote
+        ? `${req.body}<div style="margin-top:12px;font-size:12px;color:#64748b;">${attachmentNote}</div>`
+        : req.body
+      : asHtml(attachmentNote ? `${req.body}\n\n${attachmentNote}` : req.body);
     const attachments = (req.attachments || [])
       .filter((a) => a.contentBytes)
       .map((a) => ({
@@ -109,7 +112,7 @@ export const outlookGraph: OutlookAdapter = {
       method: "POST",
       body: {
         subject: req.subject,
-        body: { contentType: "HTML", content: asHtml(bodyText) },
+        body: { contentType: "HTML", content: htmlContent },
         toRecipients: to.map(recipient),
         ccRecipients: toList(req.cc).map(recipient),
         ...(attachments.length ? { attachments } : {}),

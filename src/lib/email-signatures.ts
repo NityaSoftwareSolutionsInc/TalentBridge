@@ -1,8 +1,10 @@
 import { prisma } from "./db";
 import { audit } from "./audit";
 import type { Session } from "./auth";
+import { MAX_EMAIL_SIGNATURE_CHARS, looksLikeHtml, sanitizeSignatureHtml } from "./email-signature-html";
 
 export const MAX_EMAIL_SIGNATURES = 10;
+export { MAX_EMAIL_SIGNATURE_CHARS };
 
 export type EmailSignatureDto = {
   id: string;
@@ -47,7 +49,7 @@ export async function migrateLegacyEmailSignature(user: {
       tenantId: user.tenantId,
       userId: user.id,
       name: String(user.emailSignatureName || "Default").trim().slice(0, 80) || "Default",
-      body: String(user.emailSignatureBody || "").slice(0, 4000),
+      body: String(user.emailSignatureBody || "").slice(0, MAX_EMAIL_SIGNATURE_CHARS),
       isDefault: true,
     },
   });
@@ -85,8 +87,11 @@ export async function upsertEmailSignature(
   await assertTargetUser(session, targetUserId);
 
   const name = String(input.name ?? "Default").trim().slice(0, 80) || "Default";
-  const body = String(input.body ?? "");
-  if (body.length > 4000) throw new Error("Signature must be 4000 characters or fewer");
+  let body = String(input.body ?? "");
+  if (body.length > MAX_EMAIL_SIGNATURE_CHARS) {
+    throw new Error(`Signature must be ${MAX_EMAIL_SIGNATURE_CHARS} characters or fewer`);
+  }
+  if (looksLikeHtml(body)) body = sanitizeSignatureHtml(body);
 
   const existingId = String(input.id || "").trim();
   if (existingId) {

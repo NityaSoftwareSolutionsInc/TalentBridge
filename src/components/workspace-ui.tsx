@@ -23,6 +23,8 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import { useRef, useState } from "react";
+import { looksLikeHtml, sanitizeSignatureHtml } from "@/lib/email-signature-html";
 
 export function cn(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -348,6 +350,38 @@ export function Label({
       {children}
       {required ? <span className="text-[var(--color-danger)]"> *</span> : null}
     </label>
+  );
+}
+
+export function SignaturePreview({ body, className }: { body: string; className?: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(320);
+  const trimmed = String(body || "").trim();
+  if (!trimmed) return null;
+  if (!looksLikeHtml(trimmed)) {
+    return (
+      <pre className={cn("mt-1 whitespace-pre-wrap font-sans text-[13px] text-slate-800", className)}>
+        {trimmed}
+      </pre>
+    );
+  }
+  const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>html,body{margin:0;padding:4px 0;background:#fff;}</style></head><body>${sanitizeSignatureHtml(trimmed)}</body></html>`;
+  return (
+    <iframe
+      key={trimmed}
+      ref={frameRef}
+      title="How this signature looks in Outlook"
+      sandbox="allow-same-origin"
+      referrerPolicy="no-referrer"
+      srcDoc={srcDoc}
+      onLoad={() => {
+        const doc = frameRef.current?.contentDocument;
+        const next = doc?.documentElement?.scrollHeight || doc?.body?.scrollHeight;
+        if (next) setHeight(Math.min(Math.max(next + 8, 80), 720));
+      }}
+      className={cn("mt-1 w-full rounded-md bg-white", className)}
+      style={{ height, border: "1px solid #e2e8f0", pointerEvents: "none" }}
+    />
   );
 }
 

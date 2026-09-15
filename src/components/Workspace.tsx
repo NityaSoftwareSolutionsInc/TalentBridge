@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { availabilityBadge, Avatar, btnGhost, btnPrimary, Button, Card, CardHeader, cn, EmptyState, FieldInput, FieldSelect, IconBtn, IconButton, IconChip, IconOnly, InlineError, Label, LinkedInIcon, LoadingSkeleton, MenuItem, shortDate, Tag, tagTone, Tabs, TextLink, timeZoneHint, WhatsAppIcon } from "./workspace-ui";
+import { availabilityBadge, Avatar, btnGhost, btnPrimary, Button, Card, CardHeader, cn, EmptyState, FieldInput, FieldSelect, IconBtn, IconButton, IconChip, IconOnly, InlineError, Label, LinkedInIcon, LoadingSkeleton, MenuItem, shortDate, SignaturePreview, Tag, tagTone, Tabs, TextLink, timeZoneHint, WhatsAppIcon } from "./workspace-ui";
+import { MAX_EMAIL_SIGNATURE_CHARS } from "@/lib/email-signature-html";
 import { AppShell } from "./AppShell";
 import type { GlobalHit } from "./GlobalSearchPanel";
 import { SettingsPane, CreateUserForm, inviteStatusMeta } from "./SettingsPane";
@@ -400,7 +401,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const company = ((record?.companies as { id: string; name: string; role?: string; industry?: string; location?: string }[]) || [])[0];
   const peopleOnOrganization = (record?.people as { person: { id: string; name: string; title: string; status?: string }; roleOnOrganization?: string }[]) || [];
   const internalNotes = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => a.kind === "internal_note");
-  const files = (record?.files as { name: string; source?: string; kind?: string }[]) || [];
+  const files = (record?.files as { name: string; source?: string; kind?: string; previewable?: boolean }[]) || [];
   const upcoming = (record?.upcoming as { id: string; title: string; dueAt?: string }[]) || [];
   const contactTags = ((record?.tags as string[]) || []).filter((t) => t && t !== record?.status);
   const avail = availabilityBadge(record?.availability, record?.status);
@@ -1187,8 +1188,29 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     onAddNote={() => setDrawer("note")}
                     onSubmit={() => setDrawer("submit")}
                     onOpenPerson={(id) => router.push(`/clients?id=${id}&type=person`)}
-                    onAddFile={async ({ name, kind }) => {
-                      await act({ action: "add_person_file", personId: selectedId, name, kind });
+                    onAddFile={async ({ name, kind, file }) => {
+                      const fd = new FormData();
+                      const recordType = params.get("type") || (record?.type === "organization" ? "organization" : "person");
+                      if (recordType === "organization") fd.append("organizationId", selectedId);
+                      else fd.append("personId", selectedId);
+                      fd.append("name", name);
+                      fd.append("kind", kind);
+                      fd.append("file", file);
+                      setBusy(true);
+                      setError("");
+                      try {
+                        const res = await fetch("/api/files", { method: "POST", body: fd });
+                        const data = await res.json().catch(() => ({}));
+                        if (!res.ok) throw new Error(data.error || "Upload failed");
+                        await load();
+                        const rec = await fetch(`/api/record?type=${recordType}&id=${selectedId}`).then((r) => r.json());
+                        setRecord(rec.record);
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : "Upload failed");
+                        throw e;
+                      } finally {
+                        setBusy(false);
+                      }
                     }}
                     onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
                     onViewCommercial={(kind, id) => act({ action: "view_commercial", kind, id })}
@@ -1561,7 +1583,7 @@ function RecordTabs({
   onAddNote: () => void;
   onSubmit: () => void;
   onOpenPerson: (id: string) => void;
-  onAddFile: (v: { name: string; kind: string }) => Promise<void>;
+  onAddFile: (v: { name: string; kind: string; file: File }) => Promise<void>;
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
   onViewCommercial?: (kind: "msa" | "po", id: string) => Promise<unknown>;
 }) {
@@ -1949,7 +1971,7 @@ function FilesPane({
   onAddFile,
 }: {
   record: Record<string, unknown> | null;
-  onAddFile: (v: { name: string; kind: string }) => Promise<void>;
+  onAddFile: (v: { name: string; kind: string; file: File }) => Promise<void>;
 }) {
   const files = (record?.files as {
     id?: string;
@@ -1957,12 +1979,15 @@ function FilesPane({
     kind?: string;
     source?: string;
     externalId?: string | null;
+    previewable?: boolean;
     createdAt?: string;
   }[]) || [];
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [kind, setKind] = useState("resume");
+  const [picked, setPicked] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const rows = [...files].sort((a, b) => {
     const aT = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -1971,14 +1996,18 @@ function FilesPane({
   });
 
   async function saveFile() {
-    const trimmed = name.trim();
-    if (!trimmed || saving) return;
+    const trimmed = name.trim() || picked?.name || "";
+    if (!picked || !trimmed || saving) return;
     setSaving(true);
+    setFormError("");
     try {
-      await onAddFile({ name: trimmed, kind });
+      await onAddFile({ name: trimmed, kind, file: picked });
       setName("");
       setKind("resume");
+      setPicked(null);
       setAdding(false);
+    } catch (e) {
+      setFormError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setSaving(false);
     }
@@ -1992,6 +2021,7 @@ function FilesPane({
           <TextLink
             onClick={() => {
               setAdding((v) => !v);
+              setFormError("");
             }}
           >
             {adding ? "Cancel" : "Add file"}
@@ -2001,8 +2031,22 @@ function FilesPane({
       {adding ? (
         <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2 bg-[var(--color-surface-muted)]">
           <p className="text-xs text-[var(--color-text-muted)]">
-            Name is required — this label is what appears on the record and in email attachments. Binary upload comes later.
+            Upload a PDF, Word, text, or RTF file (max 10 MB) to preview it from this record.
           </p>
+          {formError ? <p className="text-xs text-red-600">{formError}</p> : null}
+          <label className="block text-sm">
+            File
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx,.txt,.rtf,application/pdf"
+              className="mt-1 block w-full text-xs"
+              onChange={(e) => {
+                const file = e.target.files?.[0] || null;
+                setPicked(file);
+                if (file?.name && !name.trim()) setName(file.name);
+              }}
+            />
+          </label>
           <label className="block text-sm">
             Document name
             <input
@@ -2020,24 +2064,13 @@ function FilesPane({
               <option value="other">Other document</option>
             </FieldSelect>
           </label>
-          <label className="block text-sm">
-            Optional file (fills name)
-            <input
-              type="file"
-              className="mt-1 block w-full text-xs"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file?.name) setName(file.name);
-              }}
-            />
-          </label>
           <button
             type="button"
             className={btnPrimary}
-            disabled={!name.trim() || saving}
+            disabled={!picked || !(name.trim() || picked.name) || saving}
             onClick={() => void saveFile()}
           >
-            {saving ? "Saving…" : "Save document"}
+            {saving ? "Uploading…" : "Save document"}
           </button>
         </div>
       ) : null}
@@ -2045,7 +2078,7 @@ function FilesPane({
         <ul className="divide-y">
           {rows.map((d) => {
             const fromJnp = d.source === "JobsNProfiles";
-            const canPreview = Boolean(fromJnp && d.externalId && d.id);
+            const canPreview = Boolean(d.previewable && d.id);
             return (
               <li key={d.id || d.name} className="px-4 py-3 flex items-center gap-3">
                 <FileText className="h-4 w-4 text-[var(--color-accent)] shrink-0" />
@@ -2069,7 +2102,10 @@ function FilesPane({
                     Preview
                   </a>
                 ) : (
-                  <span className="text-[11px] text-[var(--color-text-muted)] shrink-0" title="Manual files are name-only in POC">
+                  <span
+                    className="text-[11px] text-[var(--color-text-muted)] shrink-0"
+                    title="This row is a name only. Add the file again with an upload to preview it."
+                  >
                     Name only
                   </span>
                 )}
@@ -2080,7 +2116,7 @@ function FilesPane({
       ) : (
         <EmptyState
           title="No files"
-          hint="Add a resume or other document with a clear name for email."
+          hint="Upload a resume or other document to keep it on this record."
         />
       )}
     </Card>
@@ -3026,11 +3062,22 @@ function EmailForm({
             <div>
               <Label>Signature body</Label>
               <textarea
-                className="mt-1 h-28 w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                className="mt-1 h-40 w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                 value={sigBody}
                 onChange={(e) => setSigBody(e.target.value)}
-                placeholder={"Regards,\nYour Name\nTitle | Company\nPhone"}
+                placeholder={"Paste Outlook HTML, or plain text:\nRegards,\nYour Name\nTitle | Company"}
               />
+              <p className="mt-1 text-[11px] text-slate-500">
+                {sigBody.length}/{MAX_EMAIL_SIGNATURE_CHARS} · HTML is sent to Outlook as HTML, not escaped as text.
+              </p>
+              {sigBody.trim() ? (
+                <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    How it looks in Outlook
+                  </p>
+                  <SignaturePreview body={sigBody} />
+                </div>
+              ) : null}
             </div>
             <label className="flex items-center gap-2 text-[13px] text-slate-700">
               <input
@@ -3085,10 +3132,12 @@ function EmailForm({
           </div>
         ) : previewSignature ? (
           <div className="px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Signature preview</p>
-            <pre className="mt-1 whitespace-pre-wrap border-t border-slate-100 pt-2 font-sans text-[12px] text-slate-700">
-              {previewSignature}
-            </pre>
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              How it looks in Outlook
+            </p>
+            <div className="mt-1 border-t border-slate-100 pt-2">
+              <SignaturePreview body={previewSignature} />
+            </div>
           </div>
         ) : (
           <p className="px-3 py-2 text-xs text-slate-500">

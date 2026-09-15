@@ -34,6 +34,8 @@ ENV PORT=3011
 ENV HOSTNAME=0.0.0.0
 
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
+RUN mkdir -p /data/uploads && chown nextjs:nodejs /data/uploads
+ENV FILE_STORAGE_PATH=/data/uploads
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

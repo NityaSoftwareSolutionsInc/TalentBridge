@@ -79,6 +79,9 @@ $RECYCLE.BIN/
 node_modules/.prisma/client/*.tmp*
 *.node.tmp*
 
+# Uploaded resume/docs (local disk store)
+/data/uploads/
+
 # Misc local
 *.pem
 *.key

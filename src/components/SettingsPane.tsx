@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Avatar, Button, FieldInput, FieldSelect, Label, Tag, Tabs, cn } from "./workspace-ui";
+import { Avatar, Button, FieldInput, FieldSelect, Label, SignaturePreview, Tag, Tabs, cn } from "./workspace-ui";
+import { MAX_EMAIL_SIGNATURE_CHARS } from "@/lib/email-signature-html";
 import { TbLoader } from "./TbLoader";
 
 type AdminUser = {
@@ -757,8 +758,8 @@ export function SettingsPane({
                     {personalMode ? "Your email signatures" : `Email signatures · ${selected.name}`}
                   </h2>
                   <p className="mt-1 text-xs text-slate-600">
-                    Keep multiple identity footers and mark one as default for Outlook send. This is not a message
-                    template catalog.
+                    Keep multiple identity footers and mark one as default for Outlook send. Paste the same HTML you
+                    use in Outlook — tables, logos, and images are sent as HTML, not as source text.
                   </p>
                 </div>
                 <Button
@@ -813,17 +814,21 @@ export function SettingsPane({
                         <div>
                           <Label>Signature body</Label>
                           <textarea
-                            className="mt-1 h-36 w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                            className="mt-1 h-52 w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                             value={sigDraft.body}
                             onChange={(e) => setSigDraft({ ...sigDraft, body: e.target.value })}
-                            placeholder={"Regards,\nSarah Mitchell\nNorthstar Staffing\n+1-800-555-0101"}
+                            placeholder={"Paste Outlook HTML, or plain text:\nRegards,\nSarah Mitchell\nNorthstar Staffing"}
                           />
-                          <p className="mt-1 text-[11px] text-slate-500">{sigDraft.body.length}/4000</p>
+                          <p className="mt-1 text-[11px] text-slate-500">
+                            {sigDraft.body.length}/{MAX_EMAIL_SIGNATURE_CHARS} · Outlook HTML tables and images send as they look in Outlook.
+                          </p>
                         </div>
                         {sigDraft.body.trim() ? (
                           <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Preview</p>
-                            <pre className="mt-1 whitespace-pre-wrap font-sans text-[13px] text-slate-800">{sigDraft.body}</pre>
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                              How it looks in Outlook
+                            </p>
+                            <SignaturePreview body={sigDraft.body} />
                           </div>
                         ) : null}
                         <div className="flex flex-wrap gap-2">
@@ -854,9 +859,13 @@ export function SettingsPane({
                             <p className="text-sm font-semibold text-slate-900">{sig.name}</p>
                             {sig.isDefault ? <Tag tone="green">Default</Tag> : null}
                           </div>
-                          <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap font-sans text-[12px] text-slate-600">
-                            {sig.body.trim() || "(empty)"}
-                          </pre>
+                          <div className="mt-2 max-h-80 overflow-auto">
+                            {sig.body.trim() ? (
+                              <SignaturePreview body={sig.body} className="max-h-80" />
+                            ) : (
+                              <p className="text-[12px] text-slate-500">(empty)</p>
+                            )}
+                          </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           {!sig.isDefault && sig.id ? (
@@ -928,13 +937,23 @@ export function SettingsPane({
                     <div>
                       <Label>Signature body</Label>
                       <textarea
-                        className="mt-1 h-36 w-full rounded-md border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                        className="mt-1 h-52 w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                         value={sigDraft.body}
                         onChange={(e) => setSigDraft({ ...sigDraft, body: e.target.value })}
-                        placeholder={"Regards,\nSarah Mitchell\nNorthstar Staffing\n+1-800-555-0101"}
+                        placeholder={"Paste Outlook HTML, or plain text:\nRegards,\nSarah Mitchell\nNorthstar Staffing"}
                       />
-                      <p className="mt-1 text-[11px] text-slate-500">{sigDraft.body.length}/4000</p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {sigDraft.body.length}/{MAX_EMAIL_SIGNATURE_CHARS} · Outlook HTML tables and images send as they look in Outlook.
+                      </p>
                     </div>
+                    {sigDraft.body.trim() ? (
+                      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          How it looks in Outlook
+                        </p>
+                        <SignaturePreview body={sigDraft.body} />
+                      </div>
+                    ) : null}
                     <div className="flex flex-wrap gap-2">
                       <Button
                         disabled={busy}

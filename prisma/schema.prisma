@@ -741,6 +741,10 @@ model StoredFile {
   source         String   @default("manual")
   /// External system id (e.g. JNP resume_id) when source is JobsNProfiles.
   externalId     String?  @map("external_id")
+  /// Relative path under FILE_STORAGE_PATH when a binary was uploaded in TalentBridge.
+  storageKey     String?  @map("storage_key")
+  contentType    String?  @map("content_type")
+  byteSize       Int?     @map("byte_size")
   version        Int      @default(1)
   organizationId String?  @map("organization_id")
   organization   Organization? @relation(fields: [organizationId], references: [id])
