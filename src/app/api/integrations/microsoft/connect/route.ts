@@ -6,6 +6,7 @@ import {
   oauthStateCookieName,
 } from "@/integrations/microsoftOAuth";
 import { prisma } from "@/lib/db";
+import { resolvePublicOrigin } from "@/lib/public-origin";
 
 export async function GET(req: Request) {
   const session = await getSession();
@@ -34,19 +35,19 @@ export async function GET(req: Request) {
     );
   }
 
-  const origin = new URL(req.url).origin;
+  const publicOrigin = resolvePublicOrigin(req);
   try {
     const { url, state } = await buildConnectUrl({
       userId: session.userId,
       tenantId: session.tenantId,
-      origin,
+      req,
       loginHint: assigned,
     });
     const res = NextResponse.redirect(url);
     res.cookies.set(oauthStateCookieName(), state, {
       httpOnly: true,
       sameSite: "lax",
-      secure: origin.startsWith("https"),
+      secure: publicOrigin.startsWith("https"),
       path: "/",
       maxAge: 60 * 15,
     });

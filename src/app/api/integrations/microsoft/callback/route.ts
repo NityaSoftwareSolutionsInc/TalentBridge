@@ -8,6 +8,7 @@ import {
   verifyOAuthState,
 } from "@/integrations/microsoftOAuth";
 import { audit } from "@/lib/audit";
+import { resolvePublicOrigin } from "@/lib/public-origin";
 
 function settingsRedirect(origin: string, query: Record<string, string>) {
   const url = new URL("/settings", origin);
@@ -16,7 +17,8 @@ function settingsRedirect(origin: string, query: Record<string, string>) {
 }
 
 export async function GET(req: Request) {
-  const origin = new URL(req.url).origin;
+  // Never use req.url origin here — in Docker it is often https://0.0.0.0:3011
+  const origin = resolvePublicOrigin(req);
   const url = new URL(req.url);
   const code = url.searchParams.get("code") || "";
   const state = url.searchParams.get("state") || "";
@@ -57,7 +59,7 @@ export async function GET(req: Request) {
       );
     }
 
-    const tokens = await exchangeAuthorizationCode({ code, origin });
+    const tokens = await exchangeAuthorizationCode({ code, req });
     await persistOutlookConnection({
       userId: session.userId,
       tenantId: session.tenantId,

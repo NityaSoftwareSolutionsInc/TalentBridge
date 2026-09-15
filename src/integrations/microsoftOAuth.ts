@@ -1,5 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "@/lib/db";
+import { resolvePublicOrigin } from "@/lib/public-origin";
 import { decryptSecret, encryptSecret } from "@/lib/token-crypto";
 import { GraphError } from "./graph";
 
@@ -36,11 +37,10 @@ function authorityTenant(): string {
   return (process.env.MICROSOFT_GRAPH_AUTHORITY || "organizations").trim() || "organizations";
 }
 
-function redirectUri(origin?: string | null): string {
+function redirectUri(req?: Request | null): string {
   const explicit = (process.env.MICROSOFT_GRAPH_REDIRECT_URI || "").trim();
   if (explicit) return explicit;
-  const base = (origin || process.env.APP_BASE_URL || "http://localhost:3011").replace(/\/$/, "");
-  return `${base}/api/integrations/microsoft/callback`;
+  return `${resolvePublicOrigin(req)}/api/integrations/microsoft/callback`;
 }
 
 function jwtSecret(): Uint8Array {
@@ -60,10 +60,10 @@ export function oauthStateCookieName(): string {
 export async function buildConnectUrl(input: {
   userId: string;
   tenantId: string;
-  origin?: string | null;
+  req?: Request | null;
   /** Prefill Microsoft login with the admin-assigned mailbox. */
   loginHint?: string | null;
-}): Promise<{ url: string; state: string }> {
+}): Promise<{ url: string; state: string; redirectUri: string }> {
   if (!microsoftOAuthConfigured()) {
     throw new Error(
       "Microsoft OAuth is not configured. Set MICROSOFT_GRAPH_CLIENT_ID and MICROSOFT_GRAPH_CLIENT_SECRET.",
@@ -79,10 +79,11 @@ export async function buildConnectUrl(input: {
     .setExpirationTime("15m")
     .sign(jwtSecret());
 
+  const redir = redirectUri(input.req);
   const params = new URLSearchParams({
     client_id: clientId(),
     response_type: "code",
-    redirect_uri: redirectUri(input.origin),
+    redirect_uri: redir,
     response_mode: "query",
     scope: OAUTH_SCOPES,
     state,
@@ -91,7 +92,7 @@ export async function buildConnectUrl(input: {
   const hint = String(input.loginHint || "").trim();
   if (hint) params.set("login_hint", hint);
   const url = `https://login.microsoftonline.com/${encodeURIComponent(authorityTenant())}/oauth2/v2.0/authorize?${params}`;
-  return { url, state };
+  return { url, state, redirectUri: redir };
 }
 
 export async function verifyOAuthState(state: string): Promise<{ userId: string; tenantId: string }> {
@@ -145,7 +146,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
 
 export async function exchangeAuthorizationCode(input: {
   code: string;
-  origin?: string | null;
+  req?: Request | null;
 }): Promise<{
   accessToken: string;
   refreshToken: string;
@@ -161,7 +162,7 @@ export async function exchangeAuthorizationCode(input: {
       client_secret: clientSecret(),
       grant_type: "authorization_code",
       code: input.code,
-      redirect_uri: redirectUri(input.origin),
+      redirect_uri: redirectUri(input.req),
       scope: OAUTH_SCOPES,
     }),
   );
