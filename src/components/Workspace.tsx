@@ -392,7 +392,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       : "Call with VioTalk";
   const submitBlocked = blockEmail || !session?.mailbox;
   const submitWhy = !session?.mailbox
-    ? "No mailbox mapped for Outlook send"
+    ? "Outlook not connected — Settings → Connect Outlook"
     : blockEmail
       ? "Do not reach / Do Not Email is on — outbound email disabled."
       : "Submit Profile";
@@ -436,7 +436,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       <Button
         onClick={() => setDrawer("meeting")}
         disabled={!session?.mailbox}
-        title={session?.mailbox ? "Schedule a Teams meeting" : "No mailbox mapped for Outlook / Teams"}
+        title={session?.mailbox ? "Schedule a Teams meeting" : "Outlook not connected — Settings → Connect Outlook"}
       >
         <CalendarDays className="h-4 w-4" />
         Schedule meeting
@@ -911,10 +911,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Quick Actions" />
                         <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "No mailbox mapped for Outlook send" : blockEmail ? "Do not reach / Do Not Email" : ""} />
+                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
                           <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
                           <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "No mailbox mapped for Outlook / Teams" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
+                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
                           <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
                           <IconBtn onClick={() => setDrawer("wrap")} label="Add Follow-up" />
                           {session?.permissions.includes("submit") ? (
@@ -1069,10 +1069,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Quick Actions" />
                         <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "No mailbox mapped for Outlook send" : blockEmail ? "Do not reach / Do Not Email" : ""} />
+                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
                           <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
                           <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "No mailbox mapped for Outlook / Teams" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
+                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
                           <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
                           <IconBtn onClick={() => setDrawer("wrap")} label="Add Follow-up" />
                           <div className="relative">
@@ -2031,7 +2031,7 @@ function FilesPane({
       {adding ? (
         <div className="px-4 py-3 border-b border-[var(--color-border)] space-y-2 bg-[var(--color-surface-muted)]">
           <p className="text-xs text-[var(--color-text-muted)]">
-            Upload a PDF, Word, text, or RTF file (max 10 MB) to preview it from this record.
+            Upload a PDF to open in the browser (Word/text download on Preview). Max 10 MB.
           </p>
           {formError ? <p className="text-xs text-red-600">{formError}</p> : null}
           <label className="block text-sm">
@@ -2926,7 +2926,7 @@ function EmailForm({
       <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
         <div className="flex flex-wrap items-center gap-2 text-[13px]">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">From</span>
-          <span className="font-medium text-slate-900">{mailbox || "No mailbox mapped"}</span>
+          <span className="font-medium text-slate-900">{mailbox || "Outlook not connected"}</span>
           {contactName ? (
             <>
               <span className="text-slate-300">·</span>

@@ -33,8 +33,11 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3011
 ENV HOSTNAME=0.0.0.0
 
-RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
-RUN mkdir -p /data/uploads && chown nextjs:nodejs /data/uploads
+RUN apk add --no-cache su-exec \
+  && addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nextjs \
+  && mkdir -p /data/uploads \
+  && chown nextjs:nodejs /data/uploads
 ENV FILE_STORAGE_PATH=/data/uploads
 
 COPY --from=builder /app/public ./public
@@ -43,7 +46,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Prisma engine for runtime queries
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY docker/app-entrypoint.sh /app-entrypoint.sh
+RUN chmod +x /app-entrypoint.sh
 
-USER nextjs
 EXPOSE 3011
+ENTRYPOINT ["/app-entrypoint.sh"]
 CMD ["node", "server.js"]

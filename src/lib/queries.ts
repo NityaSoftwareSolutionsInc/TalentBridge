@@ -891,9 +891,10 @@ export async function submitProfile(
   });
   if (!candidate || !clientPerson) throw new Error("Candidate and Client person required");
   if (outreachChannelBlocks(candidate).email) throw new Error("Do not reach is on — outbound email disabled.");
-  if (!session.mailbox) throw new Error("No mailbox mapped for Outlook send");
+  if (!session.mailbox) throw new Error("Outlook is not connected — open Settings and Connect Outlook");
 
   const sent = await integrations.outlook.sendAsUser({
+    userId: session.userId,
     fromMailbox: session.mailbox,
     to: clientPerson.email,
     subject: `${candidate.name} — ${req.title}`,
@@ -913,6 +914,7 @@ export async function submitProfile(
       bdmId: req.bdmId,
       stage: settings.submissionStages[0] ?? "Submitted",
       emailMessageId: sent.messageId,
+      conversationId: sent.conversationId || null,
       resumeVersion: input.resumeName || candidate.lastResume,
       source: "hub",
     },
@@ -926,6 +928,7 @@ export async function submitProfile(
       body: input.message,
       source: "outlook",
       externalId: sent.messageId,
+      conversationId: sent.conversationId || null,
       actorId: session.userId,
       personId: candidate.id,
       organizationId: req.organizationId,
@@ -940,7 +943,7 @@ export async function submitProfile(
     action: "submit_profile",
     entityType: "submission",
     entityId: submission.id,
-    after: { emailMessageId: sent.messageId },
+    after: { emailMessageId: sent.messageId, conversationId: sent.conversationId },
   });
 
   return { submissionId: submission.id, activityId: activity.id, messageId: sent.messageId };
@@ -964,7 +967,7 @@ export async function sendEmail(
   });
   if (!person) throw new Error("Contact not found");
   if (outreachChannelBlocks(person).email) throw new Error("Do not reach is on — outbound email disabled.");
-  if (!session.mailbox) throw new Error("No mailbox mapped for Outlook send");
+  if (!session.mailbox) throw new Error("Outlook is not connected — open Settings and Connect Outlook");
   const to = String(input.to || person.email || "").trim();
   if (!to || !to.includes("@")) throw new Error("A recipient email is required");
   const subject = String(input.subject || "").trim();
@@ -1007,6 +1010,7 @@ export async function sendEmail(
     .filter((s) => s.includes("@"));
 
   const sent = await integrations.outlook.sendAsUser({
+    userId: session.userId,
     fromMailbox: session.mailbox,
     to,
     cc: cc.length ? cc : undefined,
@@ -1023,6 +1027,7 @@ export async function sendEmail(
       body: activityBody,
       source: "outlook",
       externalId: sent.internetMessageId || sent.messageId,
+      conversationId: sent.conversationId || null,
       actorId: session.userId,
       personId: person.id,
       organizationId: person.affiliations[0]?.organizationId,
@@ -1042,6 +1047,7 @@ export async function sendEmail(
     entityId: activity.id,
     after: {
       messageId: sent.messageId,
+      conversationId: sent.conversationId,
       to,
       cc,
       includeSignature: includeSignature && Boolean(signature),
@@ -1049,7 +1055,7 @@ export async function sendEmail(
     },
   });
 
-  return { activityId: activity.id, messageId: sent.messageId };
+  return { activityId: activity.id, messageId: sent.messageId, conversationId: sent.conversationId };
 }
 
 export {
@@ -1077,7 +1083,7 @@ export async function scheduleMeeting(
     include: { affiliations: { include: { organization: true }, take: 1 } },
   });
   if (!person) throw new Error("Contact not found");
-  if (!session.mailbox) throw new Error("No mailbox mapped for Outlook / Teams");
+  if (!session.mailbox) throw new Error("Outlook is not connected — open Settings and Connect Outlook");
   const startsAt = new Date(input.startsAt);
   const endsAt = new Date(input.endsAt);
   if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
@@ -1114,6 +1120,7 @@ export async function scheduleMeeting(
   let graphEventId: string | undefined;
   if (useTeams) {
     const meeting = await integrations.teams.scheduleMeeting({
+      userId: session.userId,
       fromMailbox: session.mailbox,
       subject: title,
       body,
@@ -1207,180 +1214,215 @@ export async function scheduleMeeting(
 }
 
 export async function ingestOutlookMail(session: Session) {
+  const { mailboxIsConnected } = await import("@/integrations/microsoftOAuth");
   const maps =
     session.role === "admin"
       ? await prisma.mailboxMap.findMany({ where: { tenantId: session.tenantId } })
       : session.mailbox
-        ? [{ mailbox: session.mailbox, userId: session.userId }]
+        ? await prisma.mailboxMap.findMany({ where: { tenantId: session.tenantId, userId: session.userId } })
         : [];
-  if (!maps.length) throw new Error("No mailbox mapped for Outlook ingest");
+  const usable = maps.filter((m) => {
+    if (!String(m.mailbox || "").trim()) return false;
+    if (!integrations.outlook.configured) return true;
+    return mailboxIsConnected(m);
+  });
+  if (!usable.length) {
+    throw new Error(
+      integrations.outlook.configured
+        ? "No connected Outlook mailbox for ingest. Each user must Connect Outlook in Settings."
+        : "No mailbox mapped for Outlook ingest",
+    );
+  }
 
-  const internal = new Set(maps.map((m) => normalizeEmail(m.mailbox)));
+  // Hub-first only: sync replies on conversations TalentBridge started (Submit Profile / Send Email).
+  const [hubActivities, hubSubs] = await Promise.all([
+    prisma.activityEvent.findMany({
+      where: {
+        tenantId: session.tenantId,
+        kind: "email",
+        conversationId: { not: null },
+      },
+      select: {
+        conversationId: true,
+        personId: true,
+        organizationId: true,
+        requirementId: true,
+        submissionId: true,
+        actorId: true,
+      },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.submission.findMany({
+      where: {
+        tenantId: session.tenantId,
+        conversationId: { not: null },
+      },
+      select: {
+        id: true,
+        conversationId: true,
+        candidateId: true,
+        clientPersonId: true,
+        organizationId: true,
+        requirementId: true,
+        recruiterId: true,
+      },
+    }),
+  ]);
+
+  const threadMeta = new Map<
+    string,
+    {
+      personId?: string | null;
+      organizationId?: string | null;
+      requirementId?: string | null;
+      submissionId?: string | null;
+      actorId?: string | null;
+    }
+  >();
+  for (const a of hubActivities) {
+    const cid = String(a.conversationId || "").trim();
+    if (!cid || threadMeta.has(cid)) continue;
+    threadMeta.set(cid, {
+      personId: a.personId,
+      organizationId: a.organizationId,
+      requirementId: a.requirementId,
+      submissionId: a.submissionId,
+      actorId: a.actorId,
+    });
+  }
+  for (const s of hubSubs) {
+    const cid = String(s.conversationId || "").trim();
+    if (!cid) continue;
+    const prev = threadMeta.get(cid) || {};
+    threadMeta.set(cid, {
+      personId: prev.personId || s.clientPersonId || s.candidateId,
+      organizationId: prev.organizationId || s.organizationId,
+      requirementId: prev.requirementId || s.requirementId,
+      submissionId: prev.submissionId || s.id,
+      actorId: prev.actorId || s.recruiterId,
+    });
+  }
+
+  const conversationIds = [...threadMeta.keys()];
   let created = 0;
   let linked = 0;
-  let unmatched = 0;
+  let readUpdated = 0;
   let skipped = 0;
+  let ignoredOther = 0;
 
-  for (const map of maps) {
-    const messages = await integrations.outlook.listRecent(map.mailbox, { top: 40 });
+  if (!conversationIds.length) {
+    await prisma.provenance.create({
+      data: {
+        tenantId: session.tenantId,
+        entityType: "mailbox",
+        entityId: session.userId,
+        field: "ingest",
+        sourceSystem: "Outlook",
+        lastSyncedAt: new Date(),
+        syncStatus: "ok",
+        updatedBy: session.userId,
+      },
+    });
+    return {
+      created: 0,
+      linked: 0,
+      readUpdated: 0,
+      skipped: 0,
+      ignoredOther: 0,
+      unmatched: 0,
+      adapter: integrations.outlook.configured ? "graph" : "stub",
+      note: "No hub-started Outlook threads yet. Send or Submit Profile from TalentBridge first; only replies to those threads are synced.",
+    };
+  }
+
+  const internal = new Set(usable.map((m) => normalizeEmail(m.mailbox)));
+
+  for (const map of usable) {
+    const messages = await integrations.outlook.listThreadReplies(map.userId, conversationIds, { top: 100 });
     for (const msg of messages) {
+      const cid = String(msg.conversationId || "").trim();
+      if (!cid || !threadMeta.has(cid)) {
+        ignoredOther += 1;
+        continue;
+      }
+      // Only inbound replies — outbound hub sends are already recorded at send time.
+      if (msg.folder === "sent" || internal.has(normalizeEmail(msg.from))) {
+        skipped += 1;
+        continue;
+      }
+
       const ids = [msg.messageId, msg.internetMessageId].filter(Boolean) as string[];
       if (!ids.length) continue;
+
       const seen = await prisma.activityEvent.findFirst({
         where: { tenantId: session.tenantId, externalId: { in: ids } },
       });
       if (seen) {
-        skipped += 1;
-        continue;
-      }
-      const knownSub = await prisma.submission.findFirst({
-        where: { tenantId: session.tenantId, emailMessageId: { in: ids } },
-      });
-      if (knownSub) {
-        skipped += 1;
-        continue;
-      }
-
-      const addresses = [msg.from, ...(msg.to || []), ...(msg.cc || [])]
-        .map(normalizeEmail)
-        .filter((e) => e && !internal.has(e));
-      const addressSet = new Set(addresses);
-      const people = addresses.length
-        ? (
-            await prisma.person.findMany({
-              where: {
-                tenantId: session.tenantId,
-                OR: [{ emailNormalized: { in: addresses } }, { email: { in: addresses } }],
-              },
-              include: { affiliations: { take: 1 } },
-            })
-          ).filter(
-            (p) =>
-              addressSet.has(p.emailNormalized) || addressSet.has(normalizeEmail(p.email)),
-          )
-        : [];
-      const uniquePeople = people.filter((p, i, all) => all.findIndex((x) => x.id === p.id) === i);
-
-      if (!uniquePeople.length) {
-        const openMail = await prisma.exceptionItem.findMany({
-          where: { tenantId: session.tenantId, kind: ExceptionKind.unmatched_mail, status: "open" },
-        });
-        const existingEx = openMail.find((row) => {
-          try {
-            const payload = JSON.parse(row.payload) as { messageId?: string };
-            return payload.messageId === msg.messageId;
-          } catch {
-            return row.detail.includes(msg.messageId);
-          }
-        });
-        if (!existingEx) {
-          await prisma.exceptionItem.create({
-            data: {
-              tenantId: session.tenantId,
-              kind: ExceptionKind.unmatched_mail,
-              title: msg.subject || "Unmatched Outlook mail",
-              detail: `${msg.from} → ${(msg.to || []).join(", ")}`,
-              payload: JSON.stringify({
-                messageId: msg.messageId,
-                internetMessageId: msg.internetMessageId,
-                from: msg.from,
-                to: msg.to,
-                subject: msg.subject,
-                sentAt: msg.sentAt,
-                folder: msg.folder,
-              }),
-            },
+        if (typeof msg.isRead === "boolean" && seen.emailIsRead !== msg.isRead) {
+          await prisma.activityEvent.update({
+            where: { id: seen.id },
+            data: { emailIsRead: msg.isRead },
           });
-          unmatched += 1;
+          readUpdated += 1;
         } else {
           skipped += 1;
         }
         continue;
       }
 
-      const person = uniquePeople[0];
-      let submissionId: string | undefined;
-      let requirementId: string | undefined;
-      let organizationId = person.affiliations[0]?.organizationId;
+      const meta = threadMeta.get(cid)!;
+      let personId = meta.personId || undefined;
+      let organizationId = meta.organizationId || undefined;
+      let requirementId = meta.requirementId || undefined;
+      let submissionId = meta.submissionId || undefined;
 
-      const dash = msg.subject.includes("—") ? msg.subject.split("—") : msg.subject.includes(" - ") ? msg.subject.split(" - ") : [];
-      const subjectName = dash[0]?.trim().replace(/^(re|fw|fwd):\s*/i, "");
-      const subjectJob = dash.slice(1).join("—").trim();
-      if (subjectName && subjectJob) {
-        const candidate =
-          person.kind === PersonKind.candidate
-            ? person
-            : await prisma.person.findFirst({
-                where: {
-                  tenantId: session.tenantId,
-                  kind: PersonKind.candidate,
-                  name: { equals: subjectName, mode: "insensitive" },
-                },
-              });
-        const clientPerson =
-          person.kind === PersonKind.client_person
-            ? person
-            : uniquePeople.find((p) => p.kind === PersonKind.client_person);
-        if (candidate && clientPerson) {
-          const req = await prisma.requirement.findFirst({
-            where: {
-              tenantId: session.tenantId,
-              title: { contains: subjectJob, mode: "insensitive" },
-              organization: { affiliations: { some: { personId: clientPerson.id } } },
-            },
-          });
-          if (req) {
-            requirementId = req.id;
-            organizationId = req.organizationId;
-            const existing = await prisma.submission.findFirst({
-              where: { tenantId: session.tenantId, candidateId: candidate.id, requirementId: req.id },
-            });
-            if (existing) {
-              if (!existing.emailMessageId) {
-                await prisma.submission.update({
-                  where: { id: existing.id },
-                  data: { emailMessageId: msg.messageId, source: existing.source === "hub" ? existing.source : "outlook" },
-                });
-              }
-              submissionId = existing.id;
-              linked += 1;
-            } else {
-              const settings = await tenantSettings(session.tenantId);
-              const createdSub = await prisma.submission.create({
-                data: {
-                  tenantId: session.tenantId,
-                  candidateId: candidate.id,
-                  requirementId: req.id,
-                  organizationId: req.organizationId,
-                  clientPersonId: clientPerson.id,
-                  recruiterId: session.userId,
-                  bdmId: req.bdmId,
-                  stage: settings.submissionStages[0] ?? "Submitted",
-                  emailMessageId: msg.messageId,
-                  source: "outlook",
-                  sentAt: new Date(msg.sentAt),
-                },
-              });
-              submissionId = createdSub.id;
-              linked += 1;
-            }
-          }
+      // Prefer matching the reply sender to a known person when possible.
+      const fromNorm = normalizeEmail(msg.from);
+      if (fromNorm) {
+        const sender = await prisma.person.findFirst({
+          where: {
+            tenantId: session.tenantId,
+            OR: [{ emailNormalized: fromNorm }, { email: { equals: msg.from, mode: "insensitive" } }],
+          },
+          include: { affiliations: { take: 1 } },
+        });
+        if (sender) {
+          personId = sender.id;
+          organizationId = organizationId || sender.affiliations[0]?.organizationId;
         }
       }
 
+      const sub =
+        submissionId
+          ? await prisma.submission.findFirst({ where: { id: submissionId, tenantId: session.tenantId } })
+          : await prisma.submission.findFirst({
+              where: { tenantId: session.tenantId, conversationId: cid },
+            });
+      if (sub) {
+        submissionId = sub.id;
+        requirementId = requirementId || sub.requirementId;
+        organizationId = organizationId || sub.organizationId;
+        personId = personId || sub.clientPersonId;
+        linked += 1;
+      }
+
+      const readLabel =
+        typeof msg.isRead === "boolean" ? (msg.isRead ? " · read" : " · unread") : "";
       await prisma.activityEvent.create({
         data: {
           tenantId: session.tenantId,
           kind: "email",
-          summary: `${msg.folder === "sent" ? "Sent" : "Received"}: ${msg.subject || "(no subject)"}`,
+          summary: `Reply: ${msg.subject || "(no subject)"}${readLabel}`,
           body: msg.bodyPreview || "",
           source: "outlook",
           externalId: msg.internetMessageId || msg.messageId,
-          actorId: session.userId,
-          personId: person.id,
-          organizationId,
-          requirementId,
-          submissionId,
+          conversationId: cid,
+          emailIsRead: typeof msg.isRead === "boolean" ? msg.isRead : null,
+          actorId: map.userId,
+          personId: personId || null,
+          organizationId: organizationId || null,
+          requirementId: requirementId || null,
+          submissionId: submissionId || null,
         },
       });
       created += 1;
@@ -1406,14 +1448,26 @@ export async function ingestOutlookMail(session: Session) {
     action: "ingest_outlook",
     entityType: "mailbox_map",
     entityId: session.userId,
-    after: { created, linked, unmatched, skipped, adapter: integrations.outlook.configured ? "graph" : "stub" },
+    after: {
+      created,
+      linked,
+      readUpdated,
+      skipped,
+      ignoredOther,
+      threads: conversationIds.length,
+      adapter: integrations.outlook.configured ? "graph" : "stub",
+      mode: "hub_thread_replies_only",
+    },
   });
 
   return {
     created,
     linked,
-    unmatched,
+    readUpdated,
     skipped,
+    ignoredOther,
+    unmatched: 0,
+    threads: conversationIds.length,
     adapter: integrations.outlook.configured ? "graph" : "stub",
   };
 }
@@ -1872,7 +1926,10 @@ export async function previewPersonResume(session: Session, fileId: string) {
 
   if (file.storageKey) {
     const stored = await readStoredFile(file.storageKey);
-    if (!stored) throw new Error("File not found");
+    if (!stored || !stored.length) throw new Error("File not found");
+    if (file.byteSize != null && file.byteSize > 0 && stored.length !== file.byteSize) {
+      throw new Error("Stored file is incomplete. Upload the document again.");
+    }
     await audit({
       tenantId: session.tenantId,
       actorId: session.userId,
@@ -2485,7 +2542,13 @@ export async function settingsPayload(session: Session) {
     passwordResetExpiresAt?: Date | null;
     memberships: { role: TbRole; permissions: string[] }[];
     agentMap: { vioTalkUserId: string; assignedNumber: string } | null;
-    mailboxMap: { mailbox: string } | null;
+    mailboxMap: {
+      mailbox: string;
+      refreshToken?: string | null;
+      connectedAt?: Date | null;
+      microsoftTenantId?: string | null;
+      displayName?: string | null;
+    } | null;
     jnpMap: { jnpUserId: string } | null;
     emailSignatures?: { id: string; name: string; body: string; isDefault: boolean }[];
   }) {
@@ -2506,6 +2569,7 @@ export async function settingsPayload(session: Session) {
       ];
     }
     const defaultSig = signatures.find((s) => s.isDefault) || signatures[0] || null;
+    const outlookConnected = Boolean(u.mailboxMap?.refreshToken && u.mailboxMap?.mailbox);
     return {
       id: u.id,
       name: u.name,
@@ -2517,8 +2581,12 @@ export async function settingsPayload(session: Session) {
       vioTalkMapped: Boolean(u.agentMap),
       vioTalkUserId: u.agentMap?.vioTalkUserId ?? "",
       assignedNumber: u.agentMap?.assignedNumber ?? "",
-      mailboxMapped: Boolean(u.mailboxMap),
+      mailboxMapped: Boolean(u.mailboxMap?.mailbox),
       mailbox: u.mailboxMap?.mailbox ?? "",
+      outlookConnected,
+      outlookConnectedAt: u.mailboxMap?.connectedAt ? u.mailboxMap.connectedAt.toISOString() : null,
+      outlookDisplayName: u.mailboxMap?.displayName || "",
+      microsoftTenantId: u.mailboxMap?.microsoftTenantId || "",
       emailSignatures: signatures,
       emailSignatureName: defaultSig?.name || "Default",
       emailSignatureBody: defaultSig?.body || "",
@@ -2563,7 +2631,14 @@ export async function settingsPayload(session: Session) {
         auditEvents: [],
         settings: {},
         jnp: { allowed: Boolean(session.jnpAllowed) },
-        graph: {},
+        graph: {
+          copy: "Connect the Outlook mailbox your administrator assigned. Signing in with a different Microsoft account is rejected.",
+          live: graphConfigured(),
+          adapterStatus: graphConfigured()
+            ? "Multi-tenant Microsoft OAuth is configured. Admin assigns mailbox first; then Connect Outlook with that exact address."
+            : "Outlook is stubbed until MICROSOFT_GRAPH_CLIENT_ID and MICROSOFT_GRAPH_CLIENT_SECRET are set.",
+          connectPath: "/api/integrations/microsoft/connect",
+        },
       };
     }
     return {
@@ -2575,7 +2650,14 @@ export async function settingsPayload(session: Session) {
       auditEvents: [],
       settings: {},
       jnp: { allowed: Boolean(session.jnpAllowed) },
-      graph: {},
+      graph: {
+        copy: "Connect the Outlook mailbox your administrator assigned. Signing in with a different Microsoft account is rejected.",
+        live: graphConfigured(),
+        adapterStatus: graphConfigured()
+          ? "Multi-tenant Microsoft OAuth is configured. Admin assigns mailbox first; then Connect Outlook with that exact address."
+          : "Outlook is stubbed until MICROSOFT_GRAPH_CLIENT_ID and MICROSOFT_GRAPH_CLIENT_SECRET are set.",
+        connectPath: "/api/integrations/microsoft/connect",
+      },
     };
   }
 
@@ -2714,16 +2796,17 @@ export async function settingsPayload(session: Session) {
         { name: "SENDGRID_FROM_EMAIL", present: Boolean(process.env.SENDGRID_FROM_EMAIL) },
         { name: "JNP_API_BASE_URL", present: Boolean(process.env.JNP_API_BASE_URL) },
         { name: "JNP_API_KEY", present: Boolean(process.env.JNP_API_KEY) },
-        { name: "MICROSOFT_GRAPH_TENANT_ID", present: Boolean(process.env.MICROSOFT_GRAPH_TENANT_ID) },
         { name: "MICROSOFT_GRAPH_CLIENT_ID", present: Boolean(process.env.MICROSOFT_GRAPH_CLIENT_ID) },
         { name: "MICROSOFT_GRAPH_CLIENT_SECRET", present: Boolean(process.env.MICROSOFT_GRAPH_CLIENT_SECRET) },
+        { name: "MICROSOFT_GRAPH_REDIRECT_URI", present: Boolean(process.env.MICROSOFT_GRAPH_REDIRECT_URI) },
+        { name: "MICROSOFT_GRAPH_AUTHORITY", present: Boolean(process.env.MICROSOFT_GRAPH_AUTHORITY) },
       ],
       adapterStatus: jnpLive
         ? "Live HTTP adapter. API key authenticates TalentBridge; the mapped recruiter id is checked against a live JobsNProfiles employer subscription."
         : "Fixture stub until JNP_API_BASE_URL and JNP_API_KEY are set. TalentBridge still requires a mapped recruiter before candidate pull. Live JNP also rejects expired subscriptions.",
     },
     graph: {
-      copy: "Outlook is mailbox transport. Compose and send from TalentBridge as the mapped user. Graph also reads sent and inbound mail so outside-Outlook messages become timeline activity or unmatched review. Teams meetings are created on the same mailbox calendar.",
+      copy: "Admin assigns the allowed Outlook mailbox first. The user Connects Outlook with that account. TalentBridge sends first; sync only pulls replies on those hub-started threads (read and unread), not the rest of the inbox.",
       live: graphLive,
       lastIngest: lastOutlookIngest
         ? {
@@ -2732,8 +2815,9 @@ export async function settingsPayload(session: Session) {
           }
         : null,
       adapterStatus: graphLive
-        ? "Microsoft Graph is live (application permissions). Mail.Send, Mail.Read and Calendars.ReadWrite must be consented in Azure AD."
-        : "Outlook and Teams are stubbed until MICROSOFT_GRAPH_TENANT_ID, MICROSOFT_GRAPH_CLIENT_ID and MICROSOFT_GRAPH_CLIENT_SECRET are set. Hub send, ingest and Teams scheduling still run against the stub so the workspace can be demonstrated.",
+        ? "Microsoft Graph OAuth is live. Hub-first: send/submit from TalentBridge, then Sync thread replies for inbound answers (tracks read/unread). Unrelated Outlook mail is ignored."
+        : "Outlook and Teams are stubbed until MICROSOFT_GRAPH_CLIENT_ID and MICROSOFT_GRAPH_CLIENT_SECRET are set. Hub send, ingest and Teams scheduling still run against the stub so the workspace can be demonstrated.",
+      connectPath: "/api/integrations/microsoft/connect",
     },
   };
 }
@@ -3079,7 +3163,24 @@ export async function adminUpsertMailboxMap(
   }
 
   const row = existing
-    ? await prisma.mailboxMap.update({ where: { id: existing.id }, data: { mailbox } })
+    ? await prisma.mailboxMap.update({
+        where: { id: existing.id },
+        data: {
+          mailbox,
+          // Changing the allowed address invalidates any prior Microsoft connection.
+          ...(normalizeEmail(existing.mailbox) !== normalizeEmail(mailbox)
+            ? {
+                microsoftTenantId: null,
+                accessToken: null,
+                refreshToken: null,
+                tokenExpiresAt: null,
+                scopes: "",
+                connectedAt: null,
+                displayName: "",
+              }
+            : {}),
+        },
+      })
     : await prisma.mailboxMap.create({ data: { tenantId: session.tenantId, userId, mailbox } });
 
   await audit({
@@ -3089,7 +3190,11 @@ export async function adminUpsertMailboxMap(
     entityType: "mailbox_map",
     entityId: userId,
     before: existing ? { mailbox: existing.mailbox } : undefined,
-    after: { mailbox },
+    after: {
+      mailbox,
+      connectionCleared:
+        Boolean(existing) && normalizeEmail(existing!.mailbox) !== normalizeEmail(mailbox),
+    },
   });
   return row;
 }

@@ -83,6 +83,8 @@ export interface VioTalkAdapter {
 }
 
 export type OutlookSendRequest = {
+  /** TalentBridge user who connected Outlook (delegated Graph). */
+  userId: string;
   fromMailbox: string;
   to: string | string[];
   cc?: string[];
@@ -96,6 +98,7 @@ export type OutlookSendRequest = {
 export type OutlookSendResult = {
   messageId: string;
   internetMessageId?: string;
+  conversationId?: string;
 };
 
 export type OutlookMessage = {
@@ -110,6 +113,8 @@ export type OutlookMessage = {
   bodyPreview?: string;
   folder: "inbox" | "sent";
   hasAttachments?: boolean;
+  /** Graph isRead — track for inbound replies (read + unread both sync). */
+  isRead?: boolean;
   matched?: boolean;
 };
 
@@ -117,12 +122,20 @@ export interface OutlookAdapter {
   configured: boolean;
   sendAsUser(req: OutlookSendRequest): Promise<OutlookSendResult>;
   listRecent(
+    userId: string,
     mailbox: string,
     opts?: { folder?: "inbox" | "sent"; top?: number },
+  ): Promise<OutlookMessage[]>;
+  /** Inbox messages belonging to hub-started Graph conversations only. */
+  listThreadReplies(
+    userId: string,
+    conversationIds: string[],
+    opts?: { top?: number },
   ): Promise<OutlookMessage[]>;
 }
 
 export type TeamsMeetingRequest = {
+  userId: string;
   fromMailbox: string;
   subject: string;
   body?: string;

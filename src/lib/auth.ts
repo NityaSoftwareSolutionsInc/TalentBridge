@@ -78,6 +78,19 @@ export async function getSession(): Promise<Session | null> {
   const defaultSig = signatures.find((s) => s.isDefault) || signatures[0] || null;
   const outlookAllowed = Boolean(user.tenant.outlookAllowed);
   const viotalkAllowed = Boolean(user.tenant.viotalkAllowed);
+  const { graphConfigured } = await import("@/integrations/graph");
+  const { mailboxIsConnected } = await import("@/integrations/microsoftOAuth");
+  const map = user.mailboxMap;
+  // Live Graph: mailbox only counts when the user completed Connect Outlook (delegated tokens).
+  // Stub mode: admin-typed mailbox map is enough for demos.
+  const mailbox =
+    outlookAllowed && map?.mailbox
+      ? graphConfigured()
+        ? mailboxIsConnected(map)
+          ? map.mailbox
+          : null
+        : map.mailbox
+      : null;
 
   return {
     tenantId: user.tenantId,
@@ -90,7 +103,7 @@ export async function getSession(): Promise<Session | null> {
     permissions,
     landing: ROLE_LANDING[role],
     vioTalkMapped: viotalkAllowed ? Boolean(user.agentMap) : false,
-    mailbox: outlookAllowed ? user.mailboxMap?.mailbox ?? null : null,
+    mailbox,
     jnpUserId: user.jnpMap?.jnpUserId || user.tenant.settings?.jnpAccountUserId || null,
     jnpEnabled: Boolean(user.jnpEnabled) && Boolean(user.tenant.jnpAllowed),
     jnpAllowed: Boolean(user.tenant.jnpAllowed),

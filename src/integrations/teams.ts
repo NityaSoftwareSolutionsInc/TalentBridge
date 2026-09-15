@@ -1,4 +1,5 @@
-import { asHtml, graphConfigured, graphFetch, recipient, userPath } from "./graph";
+import { asHtml, graphConfigured, graphFetchWithToken, recipient } from "./graph";
+import { getDelegatedAccessToken } from "./microsoftOAuth";
 import type { TeamsAdapter, TeamsMeetingRequest, TeamsMeetingResult } from "./types";
 
 function attendeeList(req: TeamsMeetingRequest): string[] {
@@ -11,6 +12,7 @@ export const teamsStub: TeamsAdapter = {
     const graphEventId = `teams-stub-${Date.now()}`;
     const joinUrl = `https://teams.microsoft.com/l/meetup-join/talentbridge-stub/${graphEventId}`;
     console.info("[teams-stub] schedule", {
+      userId: req.userId,
       from: req.fromMailbox,
       subject: req.subject,
       startsAt: req.startsAt,
@@ -24,8 +26,8 @@ export const teamsStub: TeamsAdapter = {
 export const teamsGraph: TeamsAdapter = {
   configured: true,
   async scheduleMeeting(req): Promise<TeamsMeetingResult> {
-    const mailbox = req.fromMailbox.trim();
-    if (!mailbox) throw new Error("No mailbox mapped for Teams scheduling");
+    if (!req.userId) throw new Error("Teams scheduling requires a connected Outlook user");
+    const { accessToken } = await getDelegatedAccessToken(req.userId);
     const startsAt = new Date(req.startsAt);
     const endsAt = new Date(req.endsAt);
     if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) {
@@ -33,11 +35,11 @@ export const teamsGraph: TeamsAdapter = {
     }
     if (endsAt <= startsAt) throw new Error("Meeting end must be after start");
     const tz = req.timezone || "UTC";
-    const { data } = await graphFetch<{
+    const { data } = await graphFetchWithToken<{
       id?: string;
       webLink?: string;
       onlineMeeting?: { joinUrl?: string };
-    }>(`${userPath(mailbox)}/events`, {
+    }>(accessToken, "/me/events", {
       method: "POST",
       body: {
         subject: req.subject,

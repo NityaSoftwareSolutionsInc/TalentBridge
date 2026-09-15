@@ -531,6 +531,8 @@ model Submission {
   bdmId           String       @map("bdm_id")
   stage           String       @default("Submitted")
   emailMessageId  String?      @map("email_message_id")
+  /// Microsoft Graph conversation id for the hub-sent thread (replies sync by this).
+  conversationId  String?      @map("conversation_id")
   resumeVersion   String       @default("") @map("resume_version")
   sentAt          DateTime     @default(now()) @map("sent_at")
   source          String       @default("hub")
@@ -549,6 +551,7 @@ model Submission {
   @@index([tenantId, candidateId])
   @@index([tenantId, organizationId, stage])
   @@index([tenantId, sentAt])
+  @@index([tenantId, conversationId])
   @@map("submissions")
   @@schema("talentbridge")
 }
@@ -616,6 +619,10 @@ model ActivityEvent {
   body           String   @default("")
   source         String   @default("talentbridge")
   externalId     String?  @map("external_id")
+  /// Microsoft Graph conversation id — hub-started threads only sync replies under this id.
+  conversationId String?  @map("conversation_id")
+  /// For inbound Outlook replies: Graph isRead (true/false). Null for non-mail or outbound hub send.
+  emailIsRead    Boolean? @map("email_is_read")
   actorId        String?  @map("actor_id")
   actor          User?    @relation("ActivityEventActor", fields: [actorId], references: [id])
   personId       String?  @map("person_id")
@@ -642,6 +649,7 @@ model ActivityEvent {
   @@index([tenantId, personId, createdAt])
   @@index([tenantId, organizationId, createdAt])
   @@index([tenantId, externalId])
+  @@index([tenantId, conversationId])
   @@map("activity_events")
   @@schema("talentbridge")
 }
@@ -1014,6 +1022,16 @@ model MailboxMap {
   userId    String @unique @map("user_id")
   user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   mailbox   String
+  /// Customer's Entra / Microsoft 365 tenant id (from OAuth id_token / tenant claim).
+  microsoftTenantId String?   @map("microsoft_tenant_id")
+  /// Encrypted delegated access token (AES-GCM).
+  accessToken       String?   @map("access_token") @db.Text
+  /// Encrypted refresh token for multi-tenant delegated Graph.
+  refreshToken      String?   @map("refresh_token") @db.Text
+  tokenExpiresAt    DateTime? @map("token_expires_at")
+  scopes            String    @default("")
+  connectedAt       DateTime? @map("connected_at")
+  displayName       String    @default("") @map("display_name")
 
   @@map("mailbox_maps")
   @@schema("talentbridge")

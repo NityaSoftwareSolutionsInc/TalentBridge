@@ -18,6 +18,10 @@ type AdminUser = {
   assignedNumber: string;
   mailboxMapped: boolean;
   mailbox: string;
+  outlookConnected?: boolean;
+  outlookConnectedAt?: string | null;
+  outlookDisplayName?: string;
+  microsoftTenantId?: string;
   emailSignatures?: { id: string; name: string; body: string; isDefault: boolean }[];
   emailSignatureName?: string;
   emailSignatureBody?: string;
@@ -76,6 +80,7 @@ type GraphStatus = {
   live?: boolean;
   lastIngest?: { lastSyncedAt: string; syncStatus: string } | null;
   adapterStatus?: string;
+  connectPath?: string;
 };
 
 type JnpStatus = {
@@ -84,8 +89,8 @@ type JnpStatus = {
 };
 
 const ADMIN_TABS = ["User details", "VioTalk map", "Mailbox map", "Email signature", "JNP map", "Queues", "Audit"] as const;
-const PERSONAL_TABS = ["Email signature"] as const;
-type SettingsTab = (typeof ADMIN_TABS)[number];
+const PERSONAL_TABS = ["Outlook", "Email signature"] as const;
+type SettingsTab = (typeof ADMIN_TABS)[number] | (typeof PERSONAL_TABS)[number];
 const ROLES = ["recruiter", "sales", "operations", "leadership", "admin"] as const;
 const QUEUE_KINDS = ["unmatched_mail", "unmatched_call", "duplicate", "failed_sync"] as const;
 const EXTRA_PERMS = ["recording", "export"] as const;
@@ -160,7 +165,7 @@ export function SettingsPane({
 }) {
   const admin = Boolean(session?.permissions.includes("admin") || session?.role === "admin");
   const personalMode = !admin;
-  const [tab, setTab] = useState<SettingsTab>(personalMode ? "Email signature" : "User details");
+  const [tab, setTab] = useState<SettingsTab>(personalMode ? "Outlook" : "User details");
   const [queueKind, setQueueKind] = useState<string>("all");
   const [openExceptionId, setOpenExceptionId] = useState<string | null>(null);
   const [auditQ, setAuditQ] = useState("");
@@ -181,6 +186,7 @@ export function SettingsPane({
   const [jnpAuthNotice, setJnpAuthNotice] = useState("");
   const [inviteNotice, setInviteNotice] = useState("");
   const [ingestNotice, setIngestNotice] = useState("");
+  const [outlookNotice, setOutlookNotice] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [adminPasswordConfirm, setAdminPasswordConfirm] = useState("");
 
@@ -204,8 +210,27 @@ export function SettingsPane({
       : ADMIN_TABS.filter((item) => item !== "JNP map");
 
   useEffect(() => {
-    if (personalMode && tab !== "Email signature") setTab("Email signature");
+    if (personalMode && tab !== "Outlook" && tab !== "Email signature") setTab("Outlook");
   }, [personalMode, tab]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    const outlook = sp.get("outlook");
+    if (!outlook) return;
+    if (outlook === "connected") {
+      setOutlookNotice(`Outlook connected${sp.get("mailbox") ? ` as ${sp.get("mailbox")}` : ""}.`);
+      setTab("Outlook");
+    } else if (outlook === "error") {
+      setOutlookNotice(`Outlook connect failed: ${sp.get("reason") || "unknown error"}`);
+      setTab(personalMode ? "Outlook" : "Mailbox map");
+    }
+    sp.delete("outlook");
+    sp.delete("mailbox");
+    sp.delete("reason");
+    const next = `${window.location.pathname}${sp.toString() ? `?${sp}` : ""}`;
+    window.history.replaceState({}, "", next);
+  }, [personalMode]);
 
   useEffect(() => {
     if (!personalMode && !jnpAllowed && tab === "JNP map") setTab("User details");
@@ -376,7 +401,7 @@ export function SettingsPane({
         </h1>
         <p className="mt-1 text-[13px] text-[var(--color-text-secondary)]">
           {personalMode
-            ? "Personal preferences for how you work in TalentBridge. Email signature is first — more options can land here later."
+            ? "Connect Outlook for your Microsoft 365 mailbox, and manage personal email signatures."
             : "Administrator workspace for this tenant. VioTalk number inventory stays in VioTalk; TalentBridge only maps user → agent / mailbox."}
         </p>
         {!personalMode ? (
@@ -441,6 +466,9 @@ export function SettingsPane({
                       </Tag>
                       <Tag tone={selected.mailboxMapped ? "green" : "slate"}>
                         Mailbox {selected.mailboxMapped ? "mapped" : "unmapped"}
+                      </Tag>
+                      <Tag tone={selected.outlookConnected ? "green" : "slate"}>
+                        Outlook {selected.outlookConnected ? "connected" : "not connected"}
                       </Tag>
                       <Tag tone={selected.jnpEnabled ? "green" : "slate"}>
                         JNP {selected.jnpEnabled ? "Enabled" : "Disabled"}
@@ -676,16 +704,149 @@ export function SettingsPane({
           )
         ) : null}
 
+        {tab === "Outlook" ? (
+          !selected ? (
+            <p className="text-sm text-slate-500">Your user record is unavailable.</p>
+          ) : (
+            <section className="max-w-xl space-y-4">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Connect Outlook</h2>
+                <p className="mt-1 text-xs text-slate-600">
+                  {graph.copy ||
+                    "Sign in with the Outlook mailbox your administrator assigned. A different Microsoft account will be rejected."}
+                </p>
+              </div>
+              {!selected.mailboxMapped ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                  No mailbox assigned yet. Ask an administrator to set your Outlook address on Mailbox map before
+                  connecting.
+                </div>
+              ) : (
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                  You must sign in as <span className="font-medium text-slate-900">{selected.mailbox}</span>
+                  {selected.outlookConnected ? " (already connected)." : "."}
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <Tag tone={selected.outlookConnected ? "green" : "slate"}>
+                  {selected.outlookConnected ? "Connected" : "Not connected"}
+                </Tag>
+                <Tag tone={graph.live ? "green" : "slate"}>{graph.live ? "OAuth live" : "OAuth stub"}</Tag>
+              </div>
+              {selected.outlookConnected ? (
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1">
+                  <p>
+                    <span className="font-medium text-slate-900">Mailbox</span> {selected.mailbox}
+                  </p>
+                  {selected.outlookDisplayName ? (
+                    <p>
+                      <span className="font-medium text-slate-900">Name</span> {selected.outlookDisplayName}
+                    </p>
+                  ) : null}
+                  {selected.microsoftTenantId ? (
+                    <p>
+                      <span className="font-medium text-slate-900">Microsoft tenant</span> {selected.microsoftTenantId}
+                    </p>
+                  ) : null}
+                  {selected.outlookConnectedAt ? (
+                    <p>
+                      <span className="font-medium text-slate-900">Connected</span> {fmtTime(selected.outlookConnectedAt)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              <p className="text-xs text-slate-600">{graph.adapterStatus}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={busy || !graph.live || !selected.mailboxMapped}
+                  onClick={() => {
+                    window.location.href = graph.connectPath || "/api/integrations/microsoft/connect";
+                  }}
+                >
+                  {selected.outlookConnected ? "Reconnect Outlook" : "Connect Outlook"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy || !selected.outlookConnected}
+                  onClick={async () => {
+                    setOutlookNotice("");
+                    const res = await fetch("/api/integrations/microsoft/disconnect", { method: "POST" });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                      setOutlookNotice(data.error || "Could not disconnect Outlook");
+                      return;
+                    }
+                    setOutlookNotice("Outlook disconnected.");
+                    window.location.reload();
+                  }}
+                >
+                  Disconnect
+                </Button>
+              </div>
+              {outlookNotice ? (
+                <div
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-xs",
+                    outlookNotice.toLowerCase().includes("fail")
+                      ? "border-red-200 bg-red-50 text-red-900"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900",
+                  )}
+                >
+                  {outlookNotice}
+                </div>
+              ) : null}
+            </section>
+          )
+        ) : null}
+
         {tab === "Mailbox map" ? (
           !selected ? (
             <p className="text-sm text-slate-500">Select a user from the list to map their Outlook mailbox.</p>
           ) : (
           <section>
             <h2 className="text-sm font-semibold text-slate-900">Mailbox map · {selected.name}</h2>
-            <p className="text-xs text-slate-600 mb-3">Unmapped users cannot Submit Profile, send Outlook mail, or schedule Teams meetings.</p>
+            <p className="text-xs text-slate-600 mb-3">
+              Assign the only Outlook address this user may connect. Connect Outlook must use that exact Microsoft
+              account (e.g. gangireddy@d3e.studio). Signing in with a different address is rejected. Changing the
+              assigned address clears any existing Microsoft connection.
+            </p>
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <Tag tone={selected.outlookConnected ? "green" : "slate"}>
+                OAuth {selected.outlookConnected ? "connected" : "not connected"}
+              </Tag>
+              {selected.microsoftTenantId ? (
+                <span className="text-xs text-slate-500">MS tenant {selected.microsoftTenantId}</span>
+              ) : null}
+            </div>
+            {isSelf ? (
+              <div className="mb-4 flex flex-wrap gap-2">
+                <Button
+                  disabled={busy || !graph.live || !selected.mailboxMapped}
+                  onClick={() => {
+                    window.location.href = graph.connectPath || "/api/integrations/microsoft/connect";
+                  }}
+                >
+                  {selected.outlookConnected ? "Reconnect Outlook" : "Connect Outlook"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy || !selected.outlookConnected}
+                  onClick={async () => {
+                    await fetch("/api/integrations/microsoft/disconnect", { method: "POST" });
+                    window.location.reload();
+                  }}
+                >
+                  Disconnect
+                </Button>
+              </div>
+            ) : (
+              <p className="mb-4 text-xs text-slate-500">
+                Ask {selected.name} to open Settings → Outlook and Connect Outlook with their work account.
+              </p>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl items-end">
               <div className="sm:col-span-2">
-                <Label>Mailbox</Label>
+                <Label>Mailbox (stub / display)</Label>
                 <FieldInput
                   value={mailDrafts[selected.id] || ""}
                   onChange={(e) => setMailDrafts({ ...mailDrafts, [selected.id]: e.target.value })}
@@ -726,17 +887,31 @@ export function SettingsPane({
                 onClick={async () => {
                   setIngestNotice("");
                   const result = (await onAction({ action: "ingest_outlook" })) as
-                    | { created?: number; linked?: number; unmatched?: number; skipped?: number; adapter?: string }
+                    | {
+                        created?: number;
+                        linked?: number;
+                        readUpdated?: number;
+                        skipped?: number;
+                        unmatched?: number;
+                        threads?: number;
+                        adapter?: string;
+                        note?: string;
+                      }
                     | null;
-                  if (result) {
+                  if (result?.note) {
+                    setIngestNotice(result.note);
+                  } else if (result) {
                     setIngestNotice(
-                      `Ingest (${result.adapter || "stub"}): ${result.created || 0} timeline, ${result.linked || 0} linked to submissions, ${result.unmatched || 0} unmatched, ${result.skipped || 0} skipped.`,
+                      `Thread replies (${result.adapter || "stub"}): ${result.created || 0} new, ${result.readUpdated || 0} read-state updates, ${result.linked || 0} linked to submissions, ${result.skipped || 0} skipped · ${result.threads || 0} hub threads. Unrelated Outlook mail is not imported.`,
                     );
                   }
                 }}
               >
-                Ingest Outlook mail
+                Sync thread replies
               </Button>
+              <p className="text-xs text-slate-500">
+                Replies also sync automatically in the background when the user signs in (if Outlook is connected).
+              </p>
               {ingestNotice ? (
                 <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">{ingestNotice}</div>
               ) : null}

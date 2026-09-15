@@ -2,11 +2,17 @@ import { NextResponse } from "next/server";
 import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/db";
 import { refreshJnpAccessForUser } from "@/lib/jnp-access";
+import { syncOutlookOnLogin } from "@/lib/outlook-sync";
 import { SESSION_COOKIE, sessionCookieOptions, signSessionToken } from "@/lib/jwt";
 import { verifyPassword } from "@/lib/password";
 
 async function finishLogin(
-  user: { id: string; tenantId: string; jnpEnabled: boolean; tenant: { jnpAllowed: boolean } },
+  user: {
+    id: string;
+    tenantId: string;
+    jnpEnabled: boolean;
+    tenant: { jnpAllowed: boolean; outlookAllowed: boolean };
+  },
   role: string,
   method: string,
 ) {
@@ -17,6 +23,10 @@ async function finishLogin(
   // sync/preview re-check with TTL via ensureJnpCaller.
   if (user.jnpEnabled && user.tenant.jnpAllowed) {
     void refreshJnpAccessForUser(user.id).catch(() => null);
+  }
+  // Hub-first Outlook: sync thread replies in the background when mailbox is connected.
+  if (user.tenant.outlookAllowed) {
+    void syncOutlookOnLogin(user.id).catch(() => null);
   }
   await audit({
     tenantId: user.tenantId,

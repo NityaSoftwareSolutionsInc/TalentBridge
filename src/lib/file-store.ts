@@ -54,7 +54,14 @@ export function assertUploadable(fileName: string, size: number) {
 export async function writeStoredFile(key: string, body: Buffer) {
   const full = assertInsideRoot(path.join(storageRoot(), key));
   await fs.mkdir(path.dirname(full), { recursive: true });
-  await fs.writeFile(full, body);
+  // Write a copy so callers cannot mutate the on-disk bytes through a shared buffer.
+  const payload = Buffer.from(body);
+  await fs.writeFile(full, payload);
+  const written = await fs.stat(full);
+  if (written.size !== payload.length) {
+    await fs.unlink(full).catch(() => undefined);
+    throw new Error("Failed to store the uploaded file completely");
+  }
 }
 
 export async function readStoredFile(key: string) {
@@ -95,7 +102,7 @@ export function previewDisposition(contentType: string) {
 }
 
 export function toBinaryBody(body: Buffer | Uint8Array | ArrayBuffer) {
-  if (Buffer.isBuffer(body)) return new Uint8Array(body);
-  if (body instanceof Uint8Array) return body;
-  return new Uint8Array(body);
+  if (Buffer.isBuffer(body)) return Uint8Array.from(body);
+  if (body instanceof Uint8Array) return Uint8Array.from(body);
+  return Uint8Array.from(new Uint8Array(body));
 }
