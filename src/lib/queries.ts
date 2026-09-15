@@ -733,10 +733,13 @@ export async function listCalendar(session: Session) {
 
 export async function listCommunications(session: Session) {
   return prisma.activityEvent.findMany({
-    where: { tenantId: session.tenantId, wrapUp: null },
+    where: {
+      tenantId: session.tenantId,
+      kind: { in: ["email", "call", "meeting", "whatsapp", "note"] },
+    },
     include: { actor: true, person: true, organization: true },
     orderBy: { createdAt: "desc" },
-    take: 50,
+    take: 80,
   });
 }
 
@@ -2081,17 +2084,8 @@ export async function createPerson(
     });
   }
 
-  if (resumeName) {
-    await prisma.storedFile.create({
-      data: {
-        tenantId: session.tenantId,
-        personId: person.id,
-        kind: "resume",
-        name: resumeName,
-        source: "manual",
-      },
-    });
-  }
+  // Resume binary is uploaded separately via /api/files after create (CreateForm).
+  // Do not create a name-only StoredFile — that blocks Preview.
 
   await audit({
     tenantId: session.tenantId,
@@ -2101,7 +2095,6 @@ export async function createPerson(
     entityId: person.id,
     after: {
       ...personAuditFields(person),
-      resumeAttached: Boolean(resumeName),
       resumeName: resumeName || null,
     },
   });

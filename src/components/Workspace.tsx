@@ -509,12 +509,37 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 </button>
               ))
             ) : moduleKey === "communications" ? (
-              pageSlice.items.map((a) => (
-                <button key={String(a.id)} onClick={() => a.personId && router.push(`/candidates?id=${a.personId}&type=person`)} className="w-full text-left px-4 py-3 border-b hover:bg-slate-50 cursor-pointer">
-                  <div className="text-sm font-medium">{String(a.summary)}</div>
-                  <div className="text-xs text-slate-500">Unworked · wrap-up required</div>
-                </button>
-              ))
+              pageSlice.items.map((a) => {
+                const selected = selectedId === String(a.id);
+                const personName = (a.person as { name?: string } | undefined)?.name || "Unknown contact";
+                const read =
+                  a.kind === "email" && typeof a.emailIsRead === "boolean"
+                    ? a.emailIsRead
+                      ? "Read"
+                      : "Unread"
+                    : null;
+                return (
+                  <button
+                    key={String(a.id)}
+                    type="button"
+                    onClick={() => select(String(a.id))}
+                    className={`w-full text-left px-3 py-3 border-b cursor-pointer ${
+                      selected ? "bg-blue-50 border-l-4 border-l-[var(--color-accent)]" : "hover:bg-[var(--color-surface-muted)] border-l-4 border-l-transparent"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="font-semibold text-sm truncate text-slate-900">{personName}</div>
+                      <Tag tone="slate">{channelLabel(a.kind)}</Tag>
+                    </div>
+                    <div className="text-sm text-slate-800 mt-0.5 line-clamp-2">{String(a.summary)}</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {shortDate(a.createdAt)}
+                      {read ? ` · ${read}` : ""}
+                      {a.wrapUp ? ` · wrap-up ${String(a.wrapUp)}` : " · wrap-up pending"}
+                    </div>
+                  </button>
+                );
+              })
             ) : moduleKey === "settings" ? (
               ((settings?.users as { id: string; name: string; email: string; role?: string; enabled?: boolean; passwordSet?: boolean; inviteStatus?: "not_invited" | "pending" | "expired" | "accepted"; resetPending?: boolean }[]) || []).map((u) => {
                 const selected = selectedId === u.id;
@@ -674,6 +699,22 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               graphLive={calendarMeta.graphLive}
               mailbox={session?.mailbox || calendarMeta.mailbox}
             />
+          ) : moduleKey === "communications" ? (
+            <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6">
+              <CommunicationDetailPane
+                items={activityEvents}
+                selectedId={selectedId}
+                canPlayRecording={canPlayRecording}
+                onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
+                onOpenPerson={(personId) => router.push(`/candidates?id=${personId}&type=person`)}
+                onWrapUp={(activityId, personId) => {
+                  setCallActivityId(activityId);
+                  setWrapPersonId(personId);
+                  setProposed("Follow up on this conversation");
+                  setDrawer("wrap");
+                }}
+              />
+            </div>
           ) : !record && moduleKey !== "dashboard" && moduleKey !== "reports" ? (
             busy ? (
               <div className="flex-1 min-h-0 overflow-auto p-6">
@@ -1214,6 +1255,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     }}
                     onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
                     onViewCommercial={(kind, id) => act({ action: "view_commercial", kind, id })}
+                    onWrapUpActivity={(activityId) => {
+                      setCallActivityId(activityId);
+                      setWrapPersonId(selectedId);
+                      setProposed("Follow up on this conversation");
+                      setDrawer("wrap");
+                    }}
                   />
                 )}
               </div>
@@ -1359,11 +1406,27 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 moduleKey={moduleKey}
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
-                  const data = await act(vals);
+                  const resumeFile = vals.resumeFile instanceof File ? vals.resumeFile : null;
+                  const { resumeFile: _drop, ...payload } = vals;
+                  const data = await act(payload);
+                  if (data?.id && resumeFile) {
+                    const fd = new FormData();
+                    fd.append("personId", String(data.id));
+                    fd.append("name", resumeFile.name);
+                    fd.append("kind", "resume");
+                    fd.append("file", resumeFile);
+                    const res = await fetch("/api/files", { method: "POST", body: fd });
+                    const uploaded = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(uploaded.error || "Resume upload failed");
+                    await load();
+                    const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
+                    setRecord(rec.record);
+                  }
                   if (data?.id) {
                     select(String(data.id), "person");
                   }
                   setDrawer("none");
+                  return data;
                 }}
               />
             ) : null}
@@ -1568,6 +1631,7 @@ function RecordTabs({
   onAddFile,
   onViewCall,
   onViewCommercial,
+  onWrapUpActivity,
 }: {
   tab: string;
   record: Record<string, unknown> | null;
@@ -1586,6 +1650,7 @@ function RecordTabs({
   onAddFile: (v: { name: string; kind: string; file: File }) => Promise<void>;
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
   onViewCommercial?: (kind: "msa" | "po", id: string) => Promise<unknown>;
+  onWrapUpActivity?: (activityId: string) => void;
 }) {
   if (tab === "Overview" && isOrganization) {
     return (
@@ -1620,7 +1685,15 @@ function RecordTabs({
     return <PlacementsPane record={record} />;
   }
   if (tab === "Communication") {
-    return <Timeline record={record} mode="communication" canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
+    return (
+      <Timeline
+        record={record}
+        mode="communication"
+        canPlayRecording={canPlayRecording}
+        onViewCall={onViewCall}
+        onWrapUp={onWrapUpActivity}
+      />
+    );
   }
   if (tab === "Activity") {
     return <Timeline record={record} mode="activity" canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
@@ -2104,9 +2177,9 @@ function FilesPane({
                 ) : (
                   <span
                     className="text-[11px] text-[var(--color-text-muted)] shrink-0"
-                    title="This row is a name only. Add the file again with an upload to preview it."
+                    title="Only the file name was saved. Use Add file and upload the PDF again to Preview it."
                   >
-                    Name only
+                    Name only — re-upload
                   </span>
                 )}
               </li>
@@ -2189,6 +2262,265 @@ function Field({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+function channelLabel(kind: unknown): string {
+  switch (String(kind || "")) {
+    case "email":
+      return "Email";
+    case "call":
+      return "Call";
+    case "meeting":
+      return "Meeting";
+    case "whatsapp":
+      return "WhatsApp";
+    case "note":
+    case "internal_note":
+      return "Note";
+    default:
+      return String(kind || "Activity");
+  }
+}
+
+function teamsJoinUrlFromBody(body: unknown): string | null {
+  const text = String(body || "");
+  const fromMarker = text.split("Teams: ").pop()?.trim();
+  if (fromMarker && fromMarker.startsWith("http")) return fromMarker.split(/\s+/)[0] || null;
+  const match = text.match(/https:\/\/teams\.microsoft\.com[^\s]+/i);
+  return match?.[0] || null;
+}
+
+function CommunicationDetailContent({
+  item,
+  canPlayRecording,
+  onViewCall,
+  onWrapUp,
+  onOpenPerson,
+}: {
+  item: Record<string, unknown>;
+  canPlayRecording?: boolean;
+  onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
+  onWrapUp?: (activityId: string, personId?: string) => void;
+  onOpenPerson?: (personId: string) => void;
+}) {
+  const [artifactNotice, setArtifactNotice] = useState("");
+  const kind = String(item.kind || "");
+  const person = item.person as { id?: string; name?: string; email?: string; phone?: string } | undefined;
+  const org = item.organization as { name?: string } | undefined;
+  const actor = item.actor as { name?: string } | undefined;
+  const teamsUrl = kind === "meeting" ? teamsJoinUrlFromBody(item.body) : null;
+  const bodyText = String(item.body || "").trim();
+  const bodyWithoutTeams =
+    kind === "meeting" && teamsUrl ? bodyText.replace(`Teams: ${teamsUrl}`, "").trim() : bodyText;
+  const contentLabel =
+    kind === "call"
+      ? "Call notes / summary"
+      : kind === "meeting"
+        ? "Meeting notes"
+        : kind === "whatsapp"
+          ? "WhatsApp message"
+          : kind === "note" || kind === "internal_note"
+            ? "Note"
+            : "Email body";
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-base font-semibold text-slate-900">{String(item.summary || channelLabel(kind))}</h3>
+          <p className="text-xs text-slate-500 mt-1">
+            {actor?.name || String(item.source || "system")} · {fmtDate(item.createdAt)} · wrap-up{" "}
+            {String(item.wrapUp || "pending")}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-1">
+          <Tag tone={kind === "email" ? "blue" : kind === "call" ? "green" : kind === "whatsapp" ? "amber" : "slate"}>
+            {channelLabel(kind)}
+          </Tag>
+          {kind === "email" && typeof item.emailIsRead === "boolean" ? (
+            <Tag tone={item.emailIsRead ? "green" : "amber"}>{item.emailIsRead ? "Read" : "Unread"}</Tag>
+          ) : null}
+          {kind === "note" && item.kind === "internal_note" ? <Tag tone="amber">Internal</Tag> : null}
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+        <div>
+          <dt className="text-xs text-slate-500">Contact</dt>
+          <dd className="font-medium text-slate-900">{person?.name || "—"}</dd>
+          {person?.email ? <dd className="text-xs text-slate-600">{person.email}</dd> : null}
+          {person?.phone && (kind === "call" || kind === "whatsapp") ? (
+            <dd className="text-xs text-slate-600">{person.phone}</dd>
+          ) : null}
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Organization</dt>
+          <dd className="font-medium text-slate-900">{org?.name || "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">Channel / source</dt>
+          <dd className="font-medium text-slate-900">
+            {channelLabel(kind)}
+            {item.source ? ` · ${String(item.source)}` : ""}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-slate-500">External id</dt>
+          <dd className="font-medium text-slate-900 break-all text-xs">{String(item.externalId || "—")}</dd>
+        </div>
+      </dl>
+
+      <div>
+        <div className="text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">{contentLabel}</div>
+        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3 text-sm text-slate-800 whitespace-pre-wrap min-h-[120px]">
+          {bodyWithoutTeams ||
+            (kind === "call"
+              ? "No call notes stored."
+              : kind === "whatsapp"
+                ? "No WhatsApp message body stored."
+                : "No message body stored for this item.")}
+        </div>
+      </div>
+
+      {item.aiSummary && String(item.aiSummary) !== bodyText ? (
+        <div className="text-sm text-slate-600">
+          <span className="font-medium text-slate-800">AI summary: </span>
+          {String(item.aiSummary)}
+        </div>
+      ) : null}
+
+      {kind === "meeting" && teamsUrl ? (
+        <a href={teamsUrl} target="_blank" rel="noopener noreferrer" className="inline-flex text-sm text-blue-700 hover:underline">
+          Join Teams meeting
+        </a>
+      ) : null}
+
+      {kind === "call" ? (
+        <div className="space-y-2">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Call artifacts</div>
+          <div className="flex flex-wrap gap-3 text-sm">
+            {item.recordingRef ? (
+              canPlayRecording && onViewCall && String(item.recordingRef) !== "[hidden]" ? (
+                <button
+                  type="button"
+                  className="text-blue-700 hover:underline cursor-pointer"
+                  onClick={async () => {
+                    const result = await onViewCall(String(item.id), "recording");
+                    setArtifactNotice(
+                      result
+                        ? "Recording reference viewed — playback is controlled by tenant policy."
+                        : "Could not open recording reference.",
+                    );
+                  }}
+                >
+                  View recording ref
+                </button>
+              ) : (
+                <span className="text-slate-500 text-xs">
+                  Recording {String(item.recordingRef) === "[hidden]" ? "hidden by policy" : "on file"}
+                </span>
+              )
+            ) : (
+              <span className="text-slate-400 text-xs">No recording ref</span>
+            )}
+            {item.transcriptRef ? (
+              canPlayRecording && onViewCall && String(item.transcriptRef) !== "[hidden]" ? (
+                <button
+                  type="button"
+                  className="text-blue-700 hover:underline cursor-pointer"
+                  onClick={async () => {
+                    const result = await onViewCall(String(item.id), "transcript");
+                    setArtifactNotice(
+                      result
+                        ? "Transcript reference viewed — content stays in VioTalk for POC."
+                        : "Could not open transcript reference.",
+                    );
+                  }}
+                >
+                  View transcript ref
+                </button>
+              ) : (
+                <span className="text-slate-500 text-xs">
+                  Transcript {String(item.transcriptRef) === "[hidden]" ? "hidden by policy" : "on file"}
+                </span>
+              )
+            ) : (
+              <span className="text-slate-400 text-xs">No transcript ref</span>
+            )}
+          </div>
+          {artifactNotice ? <p className="text-xs text-slate-600">{artifactNotice}</p> : null}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap gap-2 pt-1">
+        {onWrapUp && !item.wrapUp ? (
+          <button
+            type="button"
+            className={btnPrimary}
+            onClick={() => onWrapUp(String(item.id), person?.id ? String(person.id) : undefined)}
+          >
+            Wrap up
+          </button>
+        ) : null}
+        {person?.id && onOpenPerson ? (
+          <button type="button" className={btnGhost} onClick={() => onOpenPerson(String(person.id))}>
+            Open profile
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function CommunicationDetailPane({
+  items,
+  selectedId,
+  onOpenPerson,
+  onWrapUp,
+  canPlayRecording,
+  onViewCall,
+}: {
+  items: Record<string, unknown>[];
+  selectedId: string;
+  onOpenPerson?: (personId: string) => void;
+  onWrapUp?: (activityId: string, personId: string) => void;
+  canPlayRecording?: boolean;
+  onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
+}) {
+  const selected = items.find((a) => String(a.id) === selectedId) || null;
+  if (!selected) {
+    return (
+      <EmptyState
+        title="Select a conversation"
+        hint="Pick an email, call, WhatsApp message, meeting, or note from the left list."
+      />
+    );
+  }
+  const person = selected.person as { id?: string; name?: string } | undefined;
+
+  return (
+    <Card>
+      <CardHeader
+        title={String(selected.summary || channelLabel(selected.kind))}
+        action={
+          person?.id ? (
+            <TextLink onClick={() => onOpenPerson?.(String(person.id))}>Open {person.name || "contact"}</TextLink>
+          ) : undefined
+        }
+      />
+      <div className="px-4 py-3">
+        <CommunicationDetailContent
+          item={selected}
+          canPlayRecording={canPlayRecording}
+          onViewCall={onViewCall}
+          onOpenPerson={onOpenPerson}
+          onWrapUp={(activityId, personId) => {
+            if (personId) onWrapUp?.(activityId, personId);
+          }}
+        />
+      </div>
+    </Card>
+  );
+}
+
 function Timeline({
   record,
   mode = "communication",
@@ -2196,6 +2528,7 @@ function Timeline({
   embedded,
   canPlayRecording,
   onViewCall,
+  onWrapUp,
 }: {
   record: Record<string, unknown> | null;
   mode?: "communication" | "activity" | "notes";
@@ -2203,29 +2536,44 @@ function Timeline({
   embedded?: boolean;
   canPlayRecording?: boolean;
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
+  onWrapUp?: (activityId: string) => void;
 }) {
   const [channel, setChannel] = useState("All");
+  const [selectedId, setSelectedId] = useState<string>("");
   const [viewed, setViewed] = useState<Record<string, string>>({});
   const items = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => {
     const kind = String(a.kind);
     if (mode === "notes") return kind === "note" || kind === "internal_note";
     if (mode === "communication") {
-      const comm = ["email", "call", "meeting", "whatsapp", "note"].includes(kind);
+      const comm = ["email", "call", "meeting", "whatsapp", "note", "internal_note"].includes(kind);
       if (!comm) return false;
       if (channel === "Emails") return kind === "email";
       if (channel === "Calls") return kind === "call";
       if (channel === "Meetings") return kind === "meeting";
+      if (channel === "Messages") return kind === "whatsapp";
       if (channel === "Notes") return kind === "note" || kind === "internal_note";
       return true;
     }
     return true;
   });
+  useEffect(() => {
+    if (!items.length) {
+      setSelectedId("");
+      return;
+    }
+    if (!selectedId || !items.some((a) => String(a.id) === selectedId)) {
+      setSelectedId(String(items[0].id));
+    }
+  }, [items, selectedId]);
+
   const title = mode === "notes" ? "Notes" : mode === "activity" ? "Activity" : "Communication";
-  const body = (
-      <div className={embedded ? "" : "px-4 py-3"}>
-      {mode === "communication" ? (
-        <div className="flex flex-wrap gap-2 mb-3 text-xs">
-          {["All", "Emails", "Calls", "Meetings", "Notes"].map((c) => (
+  const selected = items.find((a) => String(a.id) === selectedId) || null;
+
+  if (mode === "communication") {
+    const body = (
+      <div className={embedded ? "" : "px-0"}>
+        <div className="flex flex-wrap gap-2 mb-3 text-xs px-4 pt-3">
+          {["All", "Emails", "Calls", "Meetings", "Messages", "Notes"].map((c) => (
             <button
               key={c}
               onClick={() => setChannel(c)}
@@ -2235,22 +2583,83 @@ function Timeline({
             </button>
           ))}
         </div>
-      ) : null}
+        {!items.length ? (
+          <div className="px-4 pb-4">
+            <EmptyState
+              title="No communication yet"
+              hint="Emails, VioTalk calls, Teams meetings, WhatsApp messages, and notes all appear here with full details."
+            />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(220px,280px)_1fr] min-h-[360px] border-t border-[var(--color-border)]">
+            <ul className="divide-y border-r border-[var(--color-border)] max-h-[520px] overflow-auto">
+              {items.map((a) => {
+                const active = String(a.id) === selectedId;
+                const unread = a.kind === "email" && a.emailIsRead === false;
+                return (
+                  <li key={String(a.id)}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(String(a.id))}
+                      className={`w-full text-left px-3 py-3 cursor-pointer ${active ? "bg-blue-50" : "hover:bg-slate-50"}`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className={`text-sm line-clamp-2 ${unread ? "font-semibold text-slate-900" : "font-medium text-slate-800"}`}>
+                          {String(a.summary)}
+                        </div>
+                        <Tag tone="slate">{channelLabel(a.kind)}</Tag>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        {fmtDate(a.createdAt)}
+                        {typeof a.emailIsRead === "boolean" ? (a.emailIsRead ? " · read" : " · unread") : ""}
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="p-4 min-w-0">
+              {selected ? (
+                <CommunicationDetailContent
+                  item={selected}
+                  canPlayRecording={canPlayRecording}
+                  onViewCall={onViewCall}
+                  onWrapUp={onWrapUp ? (id) => onWrapUp(id) : undefined}
+                />
+              ) : (
+                <EmptyState title="Select an item" hint="Choose a conversation on the left to read the full details." />
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+    if (embedded) return body;
+    return (
+      <Card>
+        <CardHeader title={title} />
+        {body}
+      </Card>
+    );
+  }
+
+  const body = (
+      <div className={embedded ? "" : "px-4 py-3"}>
       <ul className="space-y-3">
         {items.map((a) => (
           <li key={String(a.id)} className="border-l-2 border-blue-600 pl-3">
             <div className="flex items-start justify-between gap-2">
               <div className="font-medium text-sm">{String(a.summary)}</div>
-              <Tag tone="slate">{String(a.kind)}</Tag>
+              <Tag tone="slate">{channelLabel(a.kind)}</Tag>
             </div>
             <div className="text-xs text-slate-500">
               {(a.actor as { name?: string } | undefined)?.name || String(a.source || "system")} · {fmtDate(a.createdAt)} · wrap-up {String(a.wrapUp || "pending")}
             </div>
             {a.body && mode === "notes" ? <div className="text-sm mt-1 text-slate-700">{String(a.body)}</div> : null}
             {a.aiSummary ? <div className="text-xs mt-1 text-slate-600">{String(a.aiSummary)}</div> : null}
-            {a.kind === "meeting" && String(a.body || "").includes("https://teams.microsoft.com") ? (
+            {a.kind === "meeting" && teamsJoinUrlFromBody(a.body) ? (
               <a
-                href={String(a.body).split("Teams: ").pop()?.trim()}
+                href={teamsJoinUrlFromBody(a.body) || undefined}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-1 inline-block text-xs text-blue-700 hover:underline"
@@ -2266,19 +2675,14 @@ function Timeline({
                       type="button"
                       className="text-blue-700 hover:underline cursor-pointer"
                       onClick={async () => {
-                        const data = await onViewCall(String(a.id), "recording");
-                        if (data) {
-                          setViewed((prev) => ({
-                            ...prev,
-                            [`${String(a.id)}-recording`]: "View recorded — playback is not available in POC",
-                          }));
-                        }
+                        const result = await onViewCall(String(a.id), "recording");
+                        setViewed((prev) => ({ ...prev, [`${a.id}-recording`]: JSON.stringify(result) }));
                       }}
                     >
-                      View recording
+                      View recording ref
                     </button>
                   ) : (
-                    <span className="text-slate-500">Recording {String(a.recordingRef)}</span>
+                    <span className="text-slate-500">Recording ref stored</span>
                   )
                 ) : null}
                 {a.transcriptRef ? (
@@ -2287,43 +2691,39 @@ function Timeline({
                       type="button"
                       className="text-blue-700 hover:underline cursor-pointer"
                       onClick={async () => {
-                        const data = await onViewCall(String(a.id), "transcript");
-                        if (data) {
-                          setViewed((prev) => ({
-                            ...prev,
-                            [`${String(a.id)}-transcript`]: "View recorded — transcript is not downloaded in POC",
-                          }));
-                        }
+                        const result = await onViewCall(String(a.id), "transcript");
+                        setViewed((prev) => ({ ...prev, [`${a.id}-transcript`]: JSON.stringify(result) }));
                       }}
                     >
-                      View transcript
+                      View transcript ref
                     </button>
                   ) : (
-                    <span className="text-slate-500">Transcript {String(a.transcriptRef)}</span>
+                    <span className="text-slate-500">Transcript ref stored</span>
                   )
                 ) : null}
-                {viewed[`${String(a.id)}-recording`] ? (
-                  <span className="w-full text-slate-500">{viewed[`${String(a.id)}-recording`]}</span>
+                {viewed[`${a.id}-recording`] ? (
+                  <div className="w-full text-[11px] text-slate-600 break-all">{viewed[`${a.id}-recording`]}</div>
                 ) : null}
-                {viewed[`${String(a.id)}-transcript`] ? (
-                  <span className="w-full text-slate-500">{viewed[`${String(a.id)}-transcript`]}</span>
+                {viewed[`${a.id}-transcript`] ? (
+                  <div className="w-full text-[11px] text-slate-600 break-all">{viewed[`${a.id}-transcript`]}</div>
                 ) : null}
               </div>
             ) : null}
           </li>
         ))}
-        {!items.length ? (
-          <li className="text-sm text-slate-400">
-            {mode === "notes" ? "No notes yet" : mode === "activity" ? "No activity yet" : "No communication yet"}
-          </li>
-        ) : null}
+        {!items.length ? <li className="text-sm text-slate-400">Nothing logged yet</li> : null}
       </ul>
-      </div>
+      {mode === "notes" && onAddNote ? (
+        <button type="button" className={`${btnGhost} mt-3`} onClick={onAddNote}>
+          Add note
+        </button>
+      ) : null}
+    </div>
   );
   if (embedded) return body;
   return (
     <Card>
-      <CardHeader title={title} action={mode === "notes" && onAddNote ? <TextLink onClick={onAddNote}>+ Add Note</TextLink> : undefined} />
+      <CardHeader title={title} action={mode === "notes" && onAddNote ? <TextLink onClick={onAddNote}>Add</TextLink> : undefined} />
       {body}
     </Card>
   );
@@ -2576,7 +2976,7 @@ function CreateForm({
 }: {
   moduleKey: string;
   onClose: () => void;
-  onSave: (vals: Record<string, unknown>) => Promise<void>;
+  onSave: (vals: Record<string, unknown>) => Promise<{ id?: string } | null | void>;
 }) {
   const kind =
     moduleKey === "vendors" ? "vendor_person" : moduleKey === "clients" ? "client_person" : "candidate";
@@ -2584,6 +2984,7 @@ function CreateForm({
   const label =
     kind === "vendor_person" ? "Vendor person" : kind === "client_person" ? "Client person" : "Candidate";
   const [busy, setBusy] = useState(false);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [vals, setVals] = useState({
     name: "",
     title: "",
@@ -2622,6 +3023,8 @@ function CreateForm({
             kind,
             ...vals,
             preferredLocation: vals.preferredLocation || vals.location,
+            resumeName: resumeFile?.name || vals.resumeName || "",
+            resumeFile,
           });
         } finally {
           setBusy(false);
@@ -2693,17 +3096,21 @@ function CreateForm({
           <Label>Resume</Label>
           <input
             type="file"
-            accept=".pdf,.doc,.docx"
+            accept=".pdf,.doc,.docx,application/pdf"
             className="w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5"
             onChange={(e) => {
-              const file = e.target.files?.[0];
+              const file = e.target.files?.[0] || null;
+              setResumeFile(file);
               setVals((prev) => ({ ...prev, resumeName: file?.name || "" }));
             }}
           />
-          {vals.resumeName ? (
-            <p className="text-xs text-slate-500">Will attach as {vals.resumeName} (name on record; file binary upload comes later).</p>
+          {resumeFile ? (
+            <p className="text-xs text-slate-500">
+              Will upload <span className="font-medium text-slate-700">{resumeFile.name}</span> so you can Preview it on
+              Files.
+            </p>
           ) : (
-            <p className="text-xs text-slate-500">Optional. Stores the resume file name on this candidate for POC.</p>
+            <p className="text-xs text-slate-500">Optional. Upload a PDF resume to store and preview on this candidate.</p>
           )}
         </>
       ) : null}
