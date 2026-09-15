@@ -78,6 +78,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [error, setError] = useState("");
   const [drawer, setDrawer] = useState<Drawer>("none");
   const [tab, setTab] = useState("Overview");
+  const [commFocusId, setCommFocusId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [callActivityId, setCallActivityId] = useState<string | null>(null);
   const [wrapPersonId, setWrapPersonId] = useState<string | null>(null);
@@ -997,8 +998,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           <Timeline
                             record={record}
                             embedded
-                            canPlayRecording={canPlayRecording}
-                            onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
+                            compact
+                            onOpenCommunication={(id) => {
+                              setCommFocusId(id);
+                              setTab("Communication");
+                            }}
                           />
                         </div>
                       </Card>
@@ -1144,8 +1148,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           <Timeline
                             record={record}
                             embedded
-                            canPlayRecording={canPlayRecording}
-                            onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
+                            compact
+                            onOpenCommunication={(id) => {
+                              setCommFocusId(id);
+                              setTab("Communication");
+                            }}
                           />
                         </div>
                       </Card>
@@ -1225,6 +1232,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     canPlayRecording={canPlayRecording}
                     canViewMsa={canViewMsa}
                     canViewPo={canViewPo}
+                    commFocusId={commFocusId}
                     onAddRequirement={() => setDrawer("req")}
                     onAddNote={() => setDrawer("note")}
                     onSubmit={() => setDrawer("submit")}
@@ -1284,6 +1292,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       setProposed("Follow up on this conversation");
                       setDrawer("wrap");
                     }}
+                    onCommFocusConsumed={() => setCommFocusId(null)}
                   />
                 )}
               </div>
@@ -1659,6 +1668,7 @@ function RecordTabs({
   canPlayRecording,
   canViewMsa,
   canViewPo,
+  commFocusId,
   onAddRequirement,
   onAddNote,
   onSubmit,
@@ -1668,6 +1678,7 @@ function RecordTabs({
   onViewCall,
   onViewCommercial,
   onWrapUpActivity,
+  onCommFocusConsumed,
 }: {
   tab: string;
   record: Record<string, unknown> | null;
@@ -1679,6 +1690,7 @@ function RecordTabs({
   canPlayRecording?: boolean;
   canViewMsa?: boolean;
   canViewPo?: boolean;
+  commFocusId?: string | null;
   onAddRequirement: () => void;
   onAddNote: () => void;
   onSubmit: () => void;
@@ -1688,6 +1700,7 @@ function RecordTabs({
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
   onViewCommercial?: (kind: "msa" | "po", id: string) => Promise<unknown>;
   onWrapUpActivity?: (activityId: string) => void;
+  onCommFocusConsumed?: () => void;
 }) {
   if (tab === "Overview" && isOrganization) {
     return (
@@ -1729,6 +1742,8 @@ function RecordTabs({
         canPlayRecording={canPlayRecording}
         onViewCall={onViewCall}
         onWrapUp={onWrapUpActivity}
+        focusId={commFocusId}
+        onFocusConsumed={onCommFocusConsumed}
       />
     );
   }
@@ -2413,6 +2428,220 @@ function teamsJoinUrlFromBody(body: unknown): string | null {
   return match?.[0] || null;
 }
 
+function isInboundMessage(item: Record<string, unknown>) {
+  const kind = String(item.kind || "");
+  if (kind === "email") {
+    if (typeof item.emailIsRead === "boolean") return true;
+    return /^Reply:/i.test(String(item.summary || ""));
+  }
+  if (kind === "whatsapp") return /inbound|received|from/i.test(String(item.summary || ""));
+  return false;
+}
+
+function cleanEmailSummary(summary: unknown) {
+  return String(summary || "")
+    .replace(/^Reply:\s*/i, "")
+    .replace(/^Email:\s*/i, "")
+    .replace(/\s·\s*(un)?read$/i, "")
+    .trim();
+}
+
+type CommThread = {
+  id: string;
+  kind: string;
+  title: string;
+  preview: string;
+  lastAt: string;
+  unread: boolean;
+  wrapUp: string | null;
+  messages: Record<string, unknown>[];
+};
+
+function buildCommunicationThreads(items: Record<string, unknown>[]): CommThread[] {
+  const groups = new Map<string, Record<string, unknown>[]>();
+  for (const item of items) {
+    const kind = String(item.kind || "");
+    const cid = String(item.conversationId || "").trim();
+    const key = kind === "email" && cid ? `thread:${cid}` : `item:${String(item.id)}`;
+    const list = groups.get(key) || [];
+    list.push(item);
+    groups.set(key, list);
+  }
+
+  const threads: CommThread[] = [];
+  for (const [key, msgs] of groups) {
+    const chronological = [...msgs].sort(
+      (a, b) => new Date(String(a.createdAt || 0)).getTime() - new Date(String(b.createdAt || 0)).getTime(),
+    );
+    const latest = chronological[chronological.length - 1];
+    const kind = String(latest.kind || "");
+    const title =
+      kind === "email"
+        ? cleanEmailSummary(latest.summary) || "Email thread"
+        : String(latest.summary || channelLabel(kind));
+    const bodyPreview = String(latest.body || "").trim();
+    threads.push({
+      id: key,
+      kind,
+      title,
+      preview: bodyPreview || String(latest.aiSummary || latest.summary || ""),
+      lastAt: String(latest.createdAt || ""),
+      unread: chronological.some((m) => m.kind === "email" && m.emailIsRead === false),
+      wrapUp: latest.wrapUp != null ? String(latest.wrapUp) : null,
+      messages: chronological,
+    });
+  }
+
+  return threads.sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
+}
+
+function CommunicationChatView({
+  thread,
+  canPlayRecording,
+  onViewCall,
+  onWrapUp,
+}: {
+  thread: CommThread;
+  canPlayRecording?: boolean;
+  onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
+  onWrapUp?: (activityId: string) => void;
+}) {
+  const [artifactNotice, setArtifactNotice] = useState("");
+  const pending = thread.messages.find((m) => !m.wrapUp);
+
+  return (
+    <div className="flex flex-col h-full min-h-[320px]">
+      <div className="shrink-0 border-b border-[var(--color-border)] pb-3 mb-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-slate-900 truncate">{thread.title}</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {thread.messages.length} message{thread.messages.length === 1 ? "" : "s"} · {channelLabel(thread.kind)}
+              {thread.wrapUp ? ` · wrap-up ${thread.wrapUp}` : " · wrap-up pending"}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <Tag tone={thread.kind === "email" ? "blue" : thread.kind === "call" ? "green" : thread.kind === "whatsapp" ? "amber" : "slate"}>
+              {channelLabel(thread.kind)}
+            </Tag>
+            {thread.unread ? <Tag tone="amber">Unread</Tag> : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto space-y-3 pr-1">
+        {thread.messages.map((item) => {
+          const kind = String(item.kind || "");
+          const inbound = isInboundMessage(item);
+          const actor = item.actor as { name?: string } | undefined;
+          const teamsUrl = kind === "meeting" ? teamsJoinUrlFromBody(item.body) : null;
+          const bodyText = String(item.body || "").trim();
+          const bodyWithoutTeams =
+            kind === "meeting" && teamsUrl ? bodyText.replace(`Teams: ${teamsUrl}`, "").trim() : bodyText;
+          const who = inbound
+            ? "Contact"
+            : actor?.name || (kind === "email" ? "You" : String(item.source || "TalentBridge"));
+
+          return (
+            <div key={String(item.id)} className={`flex ${inbound ? "justify-start" : "justify-end"}`}>
+              <div
+                className={`max-w-[min(100%,28rem)] rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
+                  inbound
+                    ? "rounded-bl-md bg-white border border-slate-200 text-slate-800"
+                    : "rounded-br-md bg-blue-600 text-white"
+                }`}
+              >
+                <div className={`text-[11px] mb-1 ${inbound ? "text-slate-500" : "text-blue-100"}`}>
+                  {who} · {fmtDate(item.createdAt)}
+                  {kind === "email" && typeof item.emailIsRead === "boolean"
+                    ? item.emailIsRead
+                      ? " · read"
+                      : " · unread"
+                    : ""}
+                </div>
+                {kind === "email" ? (
+                  <div className={`text-xs font-medium mb-1 ${inbound ? "text-slate-700" : "text-blue-50"}`}>
+                    {cleanEmailSummary(item.summary) || String(item.summary || "Email")}
+                  </div>
+                ) : null}
+                <div className="whitespace-pre-wrap break-words">
+                  {bodyWithoutTeams ||
+                    (kind === "call"
+                      ? String(item.aiSummary || "Call logged — no notes yet.")
+                      : kind === "meeting"
+                        ? "Meeting scheduled."
+                        : String(item.summary || "—"))}
+                </div>
+                {item.aiSummary && String(item.aiSummary) !== bodyText ? (
+                  <div className={`mt-2 text-xs ${inbound ? "text-slate-600" : "text-blue-100"}`}>
+                    AI: {String(item.aiSummary)}
+                  </div>
+                ) : null}
+                {kind === "meeting" && teamsUrl ? (
+                  <a
+                    href={teamsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`mt-2 inline-block text-xs underline ${inbound ? "text-blue-700" : "text-white"}`}
+                  >
+                    Join Teams meeting
+                  </a>
+                ) : null}
+                {kind === "call" ? (
+                  <div className={`mt-2 flex flex-wrap gap-3 text-xs ${inbound ? "text-blue-700" : "text-blue-100"}`}>
+                    {item.recordingRef && canPlayRecording && onViewCall && String(item.recordingRef) !== "[hidden]" ? (
+                      <button
+                        type="button"
+                        className="underline cursor-pointer"
+                        onClick={async () => {
+                          const result = await onViewCall(String(item.id), "recording");
+                          setArtifactNotice(
+                            result
+                              ? "Recording reference viewed — playback is controlled by tenant policy."
+                              : "Could not open recording reference.",
+                          );
+                        }}
+                      >
+                        Recording
+                      </button>
+                    ) : null}
+                    {item.transcriptRef && canPlayRecording && onViewCall && String(item.transcriptRef) !== "[hidden]" ? (
+                      <button
+                        type="button"
+                        className="underline cursor-pointer"
+                        onClick={async () => {
+                          const result = await onViewCall(String(item.id), "transcript");
+                          setArtifactNotice(
+                            result
+                              ? "Transcript reference viewed — content stays in VioTalk for POC."
+                              : "Could not open transcript reference.",
+                          );
+                        }}
+                      >
+                        Transcript
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {artifactNotice ? <p className="text-xs text-slate-600 mt-2">{artifactNotice}</p> : null}
+
+      {onWrapUp && pending ? (
+        <div className="shrink-0 pt-3 mt-2 border-t border-[var(--color-border)]">
+          <button type="button" className={btnPrimary} onClick={() => onWrapUp(String(pending.id))}>
+            Wrap up
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CommunicationDetailContent({
   item,
   canPlayRecording,
@@ -2426,171 +2655,40 @@ function CommunicationDetailContent({
   onWrapUp?: (activityId: string, personId?: string) => void;
   onOpenPerson?: (personId: string) => void;
 }) {
-  const [artifactNotice, setArtifactNotice] = useState("");
-  const kind = String(item.kind || "");
-  const person = item.person as { id?: string; name?: string; email?: string; phone?: string } | undefined;
-  const org = item.organization as { name?: string } | undefined;
-  const actor = item.actor as { name?: string } | undefined;
-  const teamsUrl = kind === "meeting" ? teamsJoinUrlFromBody(item.body) : null;
-  const bodyText = String(item.body || "").trim();
-  const bodyWithoutTeams =
-    kind === "meeting" && teamsUrl ? bodyText.replace(`Teams: ${teamsUrl}`, "").trim() : bodyText;
-  const contentLabel =
-    kind === "call"
-      ? "Call notes / summary"
-      : kind === "meeting"
-        ? "Meeting notes"
-        : kind === "whatsapp"
-          ? "WhatsApp message"
-          : kind === "note" || kind === "internal_note"
-            ? "Note"
-            : "Email body";
-
+  const thread: CommThread = {
+    id: String(item.id),
+    kind: String(item.kind || ""),
+    title: cleanEmailSummary(item.summary) || String(item.summary || channelLabel(item.kind)),
+    preview: String(item.body || ""),
+    lastAt: String(item.createdAt || ""),
+    unread: item.kind === "email" && item.emailIsRead === false,
+    wrapUp: item.wrapUp != null ? String(item.wrapUp) : null,
+    messages: [item],
+  };
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="text-base font-semibold text-slate-900">{String(item.summary || channelLabel(kind))}</h3>
-          <p className="text-xs text-slate-500 mt-1">
-            {actor?.name || String(item.source || "system")} · {fmtDate(item.createdAt)} · wrap-up{" "}
-            {String(item.wrapUp || "pending")}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          <Tag tone={kind === "email" ? "blue" : kind === "call" ? "green" : kind === "whatsapp" ? "amber" : "slate"}>
-            {channelLabel(kind)}
-          </Tag>
-          {kind === "email" && typeof item.emailIsRead === "boolean" ? (
-            <Tag tone={item.emailIsRead ? "green" : "amber"}>{item.emailIsRead ? "Read" : "Unread"}</Tag>
-          ) : null}
-          {kind === "note" && item.kind === "internal_note" ? <Tag tone="amber">Internal</Tag> : null}
-        </div>
-      </div>
-
-      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-        <div>
-          <dt className="text-xs text-slate-500">Contact</dt>
-          <dd className="font-medium text-slate-900">{person?.name || "—"}</dd>
-          {person?.email ? <dd className="text-xs text-slate-600">{person.email}</dd> : null}
-          {person?.phone && (kind === "call" || kind === "whatsapp") ? (
-            <dd className="text-xs text-slate-600">{person.phone}</dd>
-          ) : null}
-        </div>
-        <div>
-          <dt className="text-xs text-slate-500">Organization</dt>
-          <dd className="font-medium text-slate-900">{org?.name || "—"}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-slate-500">Channel / source</dt>
-          <dd className="font-medium text-slate-900">
-            {channelLabel(kind)}
-            {item.source ? ` · ${String(item.source)}` : ""}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-xs text-slate-500">External id</dt>
-          <dd className="font-medium text-slate-900 break-all text-xs">{String(item.externalId || "—")}</dd>
-        </div>
-      </dl>
-
-      <div>
-        <div className="text-xs font-medium uppercase tracking-wide text-slate-500 mb-1">{contentLabel}</div>
-        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-3 py-3 text-sm text-slate-800 whitespace-pre-wrap min-h-[120px]">
-          {bodyWithoutTeams ||
-            (kind === "call"
-              ? "No call notes stored."
-              : kind === "whatsapp"
-                ? "No WhatsApp message body stored."
-                : "No message body stored for this item.")}
-        </div>
-      </div>
-
-      {item.aiSummary && String(item.aiSummary) !== bodyText ? (
-        <div className="text-sm text-slate-600">
-          <span className="font-medium text-slate-800">AI summary: </span>
-          {String(item.aiSummary)}
-        </div>
+    <div className="space-y-3">
+      <CommunicationChatView
+        thread={thread}
+        canPlayRecording={canPlayRecording}
+        onViewCall={onViewCall}
+        onWrapUp={
+          onWrapUp
+            ? (activityId) => {
+                const person = item.person as { id?: string } | undefined;
+                onWrapUp(activityId, person?.id ? String(person.id) : undefined);
+              }
+            : undefined
+        }
+      />
+      {onOpenPerson && (item.person as { id?: string } | undefined)?.id ? (
+        <button
+          type="button"
+          className={btnGhost}
+          onClick={() => onOpenPerson(String((item.person as { id: string }).id))}
+        >
+          Open profile
+        </button>
       ) : null}
-
-      {kind === "meeting" && teamsUrl ? (
-        <a href={teamsUrl} target="_blank" rel="noopener noreferrer" className="inline-flex text-sm text-blue-700 hover:underline">
-          Join Teams meeting
-        </a>
-      ) : null}
-
-      {kind === "call" ? (
-        <div className="space-y-2">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Call artifacts</div>
-          <div className="flex flex-wrap gap-3 text-sm">
-            {item.recordingRef ? (
-              canPlayRecording && onViewCall && String(item.recordingRef) !== "[hidden]" ? (
-                <button
-                  type="button"
-                  className="text-blue-700 hover:underline cursor-pointer"
-                  onClick={async () => {
-                    const result = await onViewCall(String(item.id), "recording");
-                    setArtifactNotice(
-                      result
-                        ? "Recording reference viewed — playback is controlled by tenant policy."
-                        : "Could not open recording reference.",
-                    );
-                  }}
-                >
-                  View recording ref
-                </button>
-              ) : (
-                <span className="text-slate-500 text-xs">
-                  Recording {String(item.recordingRef) === "[hidden]" ? "hidden by policy" : "on file"}
-                </span>
-              )
-            ) : (
-              <span className="text-slate-400 text-xs">No recording ref</span>
-            )}
-            {item.transcriptRef ? (
-              canPlayRecording && onViewCall && String(item.transcriptRef) !== "[hidden]" ? (
-                <button
-                  type="button"
-                  className="text-blue-700 hover:underline cursor-pointer"
-                  onClick={async () => {
-                    const result = await onViewCall(String(item.id), "transcript");
-                    setArtifactNotice(
-                      result
-                        ? "Transcript reference viewed — content stays in VioTalk for POC."
-                        : "Could not open transcript reference.",
-                    );
-                  }}
-                >
-                  View transcript ref
-                </button>
-              ) : (
-                <span className="text-slate-500 text-xs">
-                  Transcript {String(item.transcriptRef) === "[hidden]" ? "hidden by policy" : "on file"}
-                </span>
-              )
-            ) : (
-              <span className="text-slate-400 text-xs">No transcript ref</span>
-            )}
-          </div>
-          {artifactNotice ? <p className="text-xs text-slate-600">{artifactNotice}</p> : null}
-        </div>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2 pt-1">
-        {onWrapUp && !item.wrapUp ? (
-          <button
-            type="button"
-            className={btnPrimary}
-            onClick={() => onWrapUp(String(item.id), person?.id ? String(person.id) : undefined)}
-          >
-            Wrap up
-          </button>
-        ) : null}
-        {person?.id && onOpenPerson ? (
-          <button type="button" className={btnGhost} onClick={() => onOpenPerson(String(person.id))}>
-            Open profile
-          </button>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -2651,20 +2749,28 @@ function Timeline({
   mode = "communication",
   onAddNote,
   embedded,
+  compact,
   canPlayRecording,
   onViewCall,
   onWrapUp,
+  onOpenCommunication,
+  focusId,
+  onFocusConsumed,
 }: {
   record: Record<string, unknown> | null;
   mode?: "communication" | "activity" | "notes";
   onAddNote?: () => void;
   embedded?: boolean;
+  compact?: boolean;
   canPlayRecording?: boolean;
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
   onWrapUp?: (activityId: string) => void;
+  onOpenCommunication?: (activityId: string) => void;
+  focusId?: string | null;
+  onFocusConsumed?: () => void;
 }) {
   const [channel, setChannel] = useState("All");
-  const [selectedId, setSelectedId] = useState<string>("");
+  const [selectedThreadId, setSelectedThreadId] = useState<string>("");
   const [viewed, setViewed] = useState<Record<string, string>>({});
   const items = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => {
     const kind = String(a.kind);
@@ -2681,18 +2787,79 @@ function Timeline({
     }
     return true;
   });
+
+  const threads = useMemo(
+    () => (mode === "communication" ? buildCommunicationThreads(items) : []),
+    [items, mode],
+  );
+
   useEffect(() => {
-    if (!items.length) {
-      setSelectedId("");
+    if (mode !== "communication") return;
+    if (!threads.length) {
+      setSelectedThreadId("");
       return;
     }
-    if (!selectedId || !items.some((a) => String(a.id) === selectedId)) {
-      setSelectedId(String(items[0].id));
+    if (focusId) {
+      const match = threads.find(
+        (t) => t.id === focusId || t.messages.some((m) => String(m.id) === focusId),
+      );
+      if (match) {
+        setSelectedThreadId(match.id);
+        onFocusConsumed?.();
+        return;
+      }
     }
-  }, [items, selectedId]);
+    if (!selectedThreadId || !threads.some((t) => t.id === selectedThreadId)) {
+      setSelectedThreadId(threads[0].id);
+    }
+  }, [threads, selectedThreadId, focusId, mode, onFocusConsumed]);
 
   const title = mode === "notes" ? "Notes" : mode === "activity" ? "Activity" : "Communication";
-  const selected = items.find((a) => String(a.id) === selectedId) || null;
+  const selectedThread = threads.find((t) => t.id === selectedThreadId) || null;
+
+  if (mode === "communication" && compact) {
+    const recent = items.slice(0, 8);
+    return (
+      <div>
+        <div className="flex flex-wrap gap-2 mb-3 text-xs">
+          {["All", "Emails", "Calls", "Meetings", "Notes"].map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setChannel(c)}
+              className={`rounded-full px-2.5 py-1 cursor-pointer transition-colors ${channel === c ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+        <ul className="space-y-3">
+          {recent.map((a) => (
+            <li key={String(a.id)}>
+              <button
+                type="button"
+                className="w-full text-left border-l-2 border-blue-600 pl-3 cursor-pointer hover:bg-slate-50/80 rounded-r-md py-0.5"
+                onClick={() => onOpenCommunication?.(String(a.id))}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-medium text-sm text-slate-900">
+                    {String(a.summary)}
+                    {a.kind === "email" && a.emailIsRead === false ? " · unread" : ""}
+                  </div>
+                  <Tag tone="slate">{channelLabel(a.kind)}</Tag>
+                </div>
+                <div className="text-xs text-slate-500">
+                  {(a.actor as { name?: string } | undefined)?.name || String(a.source || "system")} ·{" "}
+                  {fmtDate(a.createdAt)} · wrap-up {String(a.wrapUp || "pending")}
+                </div>
+              </button>
+            </li>
+          ))}
+          {!recent.length ? <li className="text-sm text-slate-400">No communication yet</li> : null}
+        </ul>
+      </div>
+    );
+  }
 
   if (mode === "communication") {
     const body = (
@@ -2708,51 +2875,55 @@ function Timeline({
             </button>
           ))}
         </div>
-        {!items.length ? (
+        {!threads.length ? (
           <div className="px-4 pb-4">
             <EmptyState
               title="No communication yet"
-              hint="Emails, VioTalk calls, Teams meetings, WhatsApp messages, and notes all appear here with full details."
+              hint="Emails, VioTalk calls, Teams meetings, WhatsApp messages, and notes appear here. Click a conversation to open the chat view."
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-[minmax(220px,280px)_1fr] min-h-[360px] border-t border-[var(--color-border)]">
-            <ul className="divide-y border-r border-[var(--color-border)] max-h-[520px] overflow-auto">
-              {items.map((a) => {
-                const active = String(a.id) === selectedId;
-                const unread = a.kind === "email" && a.emailIsRead === false;
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,300px)_1fr] min-h-[420px] border-t border-[var(--color-border)]">
+            <ul className="divide-y border-r border-[var(--color-border)] max-h-[560px] overflow-auto">
+              {threads.map((t) => {
+                const active = t.id === selectedThreadId;
                 return (
-                  <li key={String(a.id)}>
+                  <li key={t.id}>
                     <button
                       type="button"
-                      onClick={() => setSelectedId(String(a.id))}
+                      onClick={() => setSelectedThreadId(t.id)}
                       className={`w-full text-left px-3 py-3 cursor-pointer ${active ? "bg-blue-50" : "hover:bg-slate-50"}`}
                     >
                       <div className="flex items-start justify-between gap-2">
-                        <div className={`text-sm line-clamp-2 ${unread ? "font-semibold text-slate-900" : "font-medium text-slate-800"}`}>
-                          {String(a.summary)}
+                        <div className={`text-sm line-clamp-2 ${t.unread ? "font-semibold text-slate-900" : "font-medium text-slate-800"}`}>
+                          {t.title}
                         </div>
-                        <Tag tone="slate">{channelLabel(a.kind)}</Tag>
+                        <Tag tone="slate">{channelLabel(t.kind)}</Tag>
                       </div>
-                      <div className="text-[11px] text-slate-500 mt-1">
-                        {fmtDate(a.createdAt)}
-                        {typeof a.emailIsRead === "boolean" ? (a.emailIsRead ? " · read" : " · unread") : ""}
+                      <div className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                        {t.preview || fmtDate(t.lastAt)}
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">
+                        {fmtDate(t.lastAt)}
+                        {t.messages.length > 1 ? ` · ${t.messages.length} msgs` : ""}
+                        {t.unread ? " · unread" : ""}
+                        {t.wrapUp ? ` · ${t.wrapUp}` : " · pending"}
                       </div>
                     </button>
                   </li>
                 );
               })}
             </ul>
-            <div className="p-4 min-w-0">
-              {selected ? (
-                <CommunicationDetailContent
-                  item={selected}
+            <div className="p-4 min-w-0 bg-[var(--color-surface-muted)]/40">
+              {selectedThread ? (
+                <CommunicationChatView
+                  thread={selectedThread}
                   canPlayRecording={canPlayRecording}
                   onViewCall={onViewCall}
-                  onWrapUp={onWrapUp ? (id) => onWrapUp(id) : undefined}
+                  onWrapUp={onWrapUp}
                 />
               ) : (
-                <EmptyState title="Select an item" hint="Choose a conversation on the left to read the full details." />
+                <EmptyState title="Select a conversation" hint="Choose a thread on the left to open the chat view." />
               )}
             </div>
           </div>
