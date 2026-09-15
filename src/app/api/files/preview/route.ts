@@ -20,14 +20,11 @@ export async function GET(req: Request) {
 
   try {
     const preview = await previewPersonResume(session, fileId);
-    const bytes = toBinaryBody(preview.body);
-    const contentType = sniffContentType(
-      Buffer.from(bytes),
-      preview.fileName,
-      preview.contentType,
-    );
+    const bytes = Buffer.from(toBinaryBody(preview.body));
+    const contentType = sniffContentType(bytes, preview.fileName, preview.contentType);
     const fileName = safeContentDispositionFileName(preview.fileName);
-    return new NextResponse(bytes, {
+    const body = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": contentType,
