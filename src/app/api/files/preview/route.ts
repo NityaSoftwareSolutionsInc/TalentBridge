@@ -31,7 +31,7 @@ export async function GET(req: Request) {
     const message = e instanceof Error ? e.message : "Preview failed";
     const status = /not found/i.test(message)
       ? 404
-      : /only available|no stored document/i.test(message)
+      : /only available|no stored document|not available|could not read/i.test(message)
         ? 400
         : 500;
     return NextResponse.json({ error: message }, { status });

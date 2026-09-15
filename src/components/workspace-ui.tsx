@@ -355,17 +355,23 @@ export function Label({
 
 export function SignaturePreview({ body, className }: { body: string; className?: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(320);
+  const [height, setHeight] = useState(180);
   const trimmed = String(body || "").trim();
   if (!trimmed) return null;
   if (!looksLikeHtml(trimmed)) {
     return (
-      <pre className={cn("mt-1 whitespace-pre-wrap font-sans text-[13px] text-slate-800", className)}>
+      <pre className={cn("whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-slate-800", className)}>
         {trimmed}
       </pre>
     );
   }
-  const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"/><style>html,body{margin:0;padding:4px 0;background:#fff;}</style></head><body>${sanitizeSignatureHtml(trimmed)}</body></html>`;
+  const srcDoc = `<!DOCTYPE html><html><head><meta charset="utf-8"/><base target="_blank"/><style>
+html,body{margin:0;padding:0;background:#fff;overflow:hidden;}
+body{padding:12px 14px;}
+img{max-width:100%;height:auto;}
+a{color:inherit;}
+table{max-width:100%;}
+</style></head><body>${sanitizeSignatureHtml(trimmed)}</body></html>`;
   return (
     <iframe
       key={trimmed}
@@ -376,11 +382,14 @@ export function SignaturePreview({ body, className }: { body: string; className?
       srcDoc={srcDoc}
       onLoad={() => {
         const doc = frameRef.current?.contentDocument;
-        const next = doc?.documentElement?.scrollHeight || doc?.body?.scrollHeight;
-        if (next) setHeight(Math.min(Math.max(next + 8, 80), 720));
+        const next = Math.max(
+          doc?.body?.scrollHeight || 0,
+          doc?.documentElement?.scrollHeight || 0,
+        );
+        if (next) setHeight(Math.min(Math.max(next + 4, 120), 900));
       }}
-      className={cn("mt-1 w-full rounded-md bg-white", className)}
-      style={{ height, border: "1px solid #e2e8f0", pointerEvents: "none" }}
+      className={cn("block w-full bg-white", className)}
+      style={{ height, border: 0, overflow: "hidden", pointerEvents: "none" }}
     />
   );
 }

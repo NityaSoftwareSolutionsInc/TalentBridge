@@ -751,7 +751,7 @@ export function SettingsPane({
               {personalMode ? "Your user record is unavailable." : "Select a user to manage Outlook email signatures."}
             </p>
           ) : (
-            <section className="max-w-2xl space-y-4">
+            <section className="max-w-3xl space-y-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-sm font-semibold text-slate-900">
@@ -778,7 +778,7 @@ export function SettingsPane({
                 </Button>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {(selected.emailSignatures || []).length === 0 && sigEditId !== "new" ? (
                   <p className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] px-4 py-6 text-sm text-slate-500">
                     No signatures yet. Add one to attach on Outlook send.
@@ -787,10 +787,10 @@ export function SettingsPane({
                 {(selected.emailSignatures || []).map((sig) => (
                   <div
                     key={sig.id || sig.name}
-                    className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-white p-4"
+                    className="overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-white"
                   >
                     {sigEditId === sig.id ? (
-                      <div className="space-y-3">
+                      <div className="space-y-3 p-4">
                         <div className="flex flex-wrap items-end justify-between gap-3">
                           <div className="min-w-[12rem] flex-1">
                             <Label>Signature name</Label>
@@ -814,7 +814,7 @@ export function SettingsPane({
                         <div>
                           <Label>Signature body</Label>
                           <textarea
-                            className="mt-1 h-52 w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                            className="mt-1 h-44 w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                             value={sigDraft.body}
                             onChange={(e) => setSigDraft({ ...sigDraft, body: e.target.value })}
                             placeholder={"Paste Outlook HTML, or plain text:\nRegards,\nSarah Mitchell\nNorthstar Staffing"}
@@ -824,10 +824,12 @@ export function SettingsPane({
                           </p>
                         </div>
                         {sigDraft.body.trim() ? (
-                          <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                              How it looks in Outlook
-                            </p>
+                          <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+                            <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5">
+                              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                                How it looks in Outlook
+                              </p>
+                            </div>
                             <SignaturePreview body={sigDraft.body} />
                           </div>
                         ) : null}
@@ -853,59 +855,59 @@ export function SettingsPane({
                         </div>
                       </div>
                     ) : (
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
+                      <div>
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
                             <p className="text-sm font-semibold text-slate-900">{sig.name}</p>
                             {sig.isDefault ? <Tag tone="green">Default</Tag> : null}
                           </div>
-                          <div className="mt-2 max-h-80 overflow-auto">
-                            {sig.body.trim() ? (
-                              <SignaturePreview body={sig.body} className="max-h-80" />
-                            ) : (
-                              <p className="text-[12px] text-slate-500">(empty)</p>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {!sig.isDefault && sig.id ? (
+                          <div className="flex flex-wrap gap-2">
+                            {!sig.isDefault && sig.id ? (
+                              <Button
+                                variant="secondary"
+                                disabled={busy}
+                                onClick={() =>
+                                  onAction({
+                                    action: "set_default_email_signature",
+                                    id: sig.id,
+                                    userId: selected.id,
+                                  })
+                                }
+                              >
+                                Make default
+                              </Button>
+                            ) : null}
                             <Button
                               variant="secondary"
-                              disabled={busy}
+                              disabled={busy || !sig.id}
+                              onClick={() => {
+                                setSigEditId(sig.id);
+                                setSigDraft({ name: sig.name, body: sig.body, isDefault: sig.isDefault });
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              disabled={busy || !sig.id}
                               onClick={() =>
                                 onAction({
-                                  action: "set_default_email_signature",
+                                  action: "delete_email_signature",
                                   id: sig.id,
                                   userId: selected.id,
                                 })
                               }
                             >
-                              Make default
+                              Delete
                             </Button>
-                          ) : null}
-                          <Button
-                            variant="secondary"
-                            disabled={busy || !sig.id}
-                            onClick={() => {
-                              setSigEditId(sig.id);
-                              setSigDraft({ name: sig.name, body: sig.body, isDefault: sig.isDefault });
-                            }}
-                          >
-                            Edit
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            disabled={busy || !sig.id}
-                            onClick={() =>
-                              onAction({
-                                action: "delete_email_signature",
-                                id: sig.id,
-                                userId: selected.id,
-                              })
-                            }
-                          >
-                            Delete
-                          </Button>
+                          </div>
+                        </div>
+                        <div className="bg-white px-1 py-1">
+                          {sig.body.trim() ? (
+                            <SignaturePreview body={sig.body} />
+                          ) : (
+                            <p className="px-3 py-3 text-[12px] text-slate-500">(empty)</p>
+                          )}
                         </div>
                       </div>
                     )}
@@ -913,7 +915,7 @@ export function SettingsPane({
                 ))}
 
                 {sigEditId === "new" ? (
-                  <div className="space-y-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-white p-4">
+                  <div className="space-y-3 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-white p-4">
                     <p className="text-sm font-semibold text-slate-900">New signature</p>
                     <div className="flex flex-wrap items-end justify-between gap-3">
                       <div className="min-w-[12rem] flex-1">
@@ -937,7 +939,7 @@ export function SettingsPane({
                     <div>
                       <Label>Signature body</Label>
                       <textarea
-                        className="mt-1 h-52 w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
+                        className="mt-1 h-44 w-full rounded-md border border-slate-200 px-3 py-2 font-mono text-[12px] outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15"
                         value={sigDraft.body}
                         onChange={(e) => setSigDraft({ ...sigDraft, body: e.target.value })}
                         placeholder={"Paste Outlook HTML, or plain text:\nRegards,\nSarah Mitchell\nNorthstar Staffing"}
@@ -947,10 +949,12 @@ export function SettingsPane({
                       </p>
                     </div>
                     {sigDraft.body.trim() ? (
-                      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                          How it looks in Outlook
-                        </p>
+                      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+                        <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                            How it looks in Outlook
+                          </p>
+                        </div>
                         <SignaturePreview body={sigDraft.body} />
                       </div>
                     ) : null}

@@ -234,7 +234,20 @@ export const jobsNProfilesHttp: JobsNProfilesAdapter = {
       redirect: "manual",
     });
 
-    if (res.status === 404) return null;
+    if (res.status === 404) {
+      const text = await res.text().catch(() => "");
+      let message = "";
+      try {
+        const data = JSON.parse(text) as { error?: string };
+        message = String(data.error || "").trim();
+      } catch {
+        /* ignore non-JSON 404 bodies */
+      }
+      if (message && !/^resume not found$/i.test(message)) {
+        throw new JnpRequestError(message, "resume_unavailable");
+      }
+      return null;
+    }
     if (res.status >= 300 && res.status < 400) {
       throw new JnpRequestError(
         "JobsNProfiles resume file is not available for preview",

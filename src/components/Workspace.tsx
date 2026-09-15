@@ -3071,10 +3071,12 @@ function EmailForm({
                 {sigBody.length}/{MAX_EMAIL_SIGNATURE_CHARS} · HTML is sent to Outlook as HTML, not escaped as text.
               </p>
               {sigBody.trim() ? (
-                <div className="mt-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                    How it looks in Outlook
-                  </p>
+                <div className="mt-2 overflow-hidden rounded-md border border-slate-200 bg-white">
+                  <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                      How it looks in Outlook
+                    </p>
+                  </div>
                   <SignaturePreview body={sigBody} />
                 </div>
               ) : null}
@@ -3131,13 +3133,13 @@ function EmailForm({
             {sigNotice ? <p className="text-xs text-emerald-700">{sigNotice}</p> : null}
           </div>
         ) : previewSignature ? (
-          <div className="px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-              How it looks in Outlook
-            </p>
-            <div className="mt-1 border-t border-slate-100 pt-2">
-              <SignaturePreview body={previewSignature} />
+          <div className="overflow-hidden">
+            <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                How it looks in Outlook
+              </p>
             </div>
+            <SignaturePreview body={previewSignature} />
           </div>
         ) : (
           <p className="px-3 py-2 text-xs text-slate-500">
