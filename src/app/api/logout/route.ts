@@ -3,10 +3,12 @@ import { cookies } from "next/headers";
 import { audit } from "@/lib/audit";
 import { getSession } from "@/lib/auth";
 import { SESSION_COOKIE, clearSessionCookie } from "@/lib/jwt";
+import { resolvePublicOrigin } from "@/lib/public-origin";
 
 function signedOutResponse(req: Request, asRedirect: boolean) {
+  const origin = resolvePublicOrigin(req);
   const res = asRedirect
-    ? NextResponse.redirect(new URL("/login?signedOut=1", req.url))
+    ? NextResponse.redirect(new URL("/login?signedOut=1", origin))
     : NextResponse.json({ ok: true });
   clearSessionCookie(res);
   return res;

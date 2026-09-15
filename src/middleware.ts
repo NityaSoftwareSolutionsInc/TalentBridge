@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySessionToken, clearSessionCookie } from "@/lib/jwt";
+import { resolvePublicOrigin } from "@/lib/public-origin";
 
 const PUBLIC_PATHS = [
   "/login",
@@ -40,8 +41,8 @@ export async function middleware(req: NextRequest) {
     if (pathname.startsWith("/api")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const login = new URL("/login", req.url);
-    const res = NextResponse.redirect(login);
+    const origin = resolvePublicOrigin(req);
+    const res = NextResponse.redirect(new URL("/login", origin));
     if (token) clearSessionCookie(res);
     return res;
   }
