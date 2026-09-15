@@ -187,7 +187,7 @@ export const jobsNProfilesHttp: JobsNProfilesAdapter = {
     if (!requesterUserId) throw new Error("JobsNProfiles requester is required");
 
     const res = await jnpPost("/talentbridge/get_candidate_profile", {
-      user_id: userId,
+      candidate_user_id: userId,
       requester_user_id: requesterUserId,
     });
 
