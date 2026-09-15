@@ -25,13 +25,16 @@ import {
   Lock,
   Mail,
   MapPin,
+  MessageCircle,
   MoreHorizontal,
   Phone,
   Plus,
   RefreshCw,
   Share2,
   Star,
+  StickyNote,
   UserRound,
+  Video,
 } from "lucide-react";
 
 type Session = {
@@ -157,6 +160,25 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
 
   const page = Math.max(1, Number(params.get("page") || "1") || 1);
   const pageSize = parsePageSize(params.get("pageSize") || readStoredPageSize());
+  const communicationThreads = useMemo(() => {
+    if (moduleKey !== "communications") return [];
+    const threads = buildPersonCommunicationThreads(activityEvents);
+    const q = filters.q.trim().toLowerCase();
+    if (!q) return threads;
+    return threads.filter((t) => {
+      const hay = [
+        t.title,
+        t.preview,
+        t.person?.name,
+        t.organization?.name,
+        ...(t.channels || []).map(channelLabel),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [moduleKey, activityEvents, filters.q]);
   const listSource =
     moduleKey === "calendar"
       ? calendarEvents.filter((row) => {
@@ -171,7 +193,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       : moduleKey === "tasks"
       ? tasks
       : moduleKey === "communications"
-        ? activityEvents
+        ? (communicationThreads as unknown as Record<string, unknown>[])
         : moduleKey === "dashboard" || moduleKey === "reports"
           ? (((dash?.risks as unknown[]) || []) as Record<string, unknown>[]).filter((row) => {
               const q = filters.q.trim().toLowerCase();
@@ -510,33 +532,58 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 </button>
               ))
             ) : moduleKey === "communications" ? (
-              pageSlice.items.map((a) => {
-                const selected = selectedId === String(a.id);
-                const personName = (a.person as { name?: string } | undefined)?.name || "Unknown contact";
-                const read =
-                  a.kind === "email" && typeof a.emailIsRead === "boolean"
-                    ? a.emailIsRead
-                      ? "Read"
-                      : "Unread"
-                    : null;
+              pageSlice.items.map((row) => {
+                const t = row as unknown as CommThread;
+                const selected =
+                  selectedId === t.id ||
+                  (t.person?.id && selectedId === t.person.id) ||
+                  t.messages.some((m) => String(m.id) === selectedId);
+                const personName = t.person?.name || t.title || "Unknown contact";
+                const primaryChannel = t.channels?.[0] || t.kind;
+                const ChannelIcon = channelIcon(primaryChannel);
                 return (
                   <button
-                    key={String(a.id)}
+                    key={t.id}
                     type="button"
-                    onClick={() => select(String(a.id))}
-                    className={`w-full text-left px-3 py-3 border-b cursor-pointer ${
-                      selected ? "bg-blue-50 border-l-4 border-l-[var(--color-accent)]" : "hover:bg-[var(--color-surface-muted)] border-l-4 border-l-transparent"
+                    onClick={() => select(t.id)}
+                    className={`w-full text-left px-3 py-3 border-b cursor-pointer transition-colors ${
+                      selected
+                        ? "bg-blue-50/80 border-l-4 border-l-[var(--color-accent)]"
+                        : "hover:bg-[var(--color-surface-muted)] border-l-4 border-l-transparent"
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="font-semibold text-sm truncate text-slate-900">{personName}</div>
-                      <Tag tone="slate">{channelLabel(a.kind)}</Tag>
-                    </div>
-                    <div className="text-sm text-slate-800 mt-0.5 line-clamp-2">{String(a.summary)}</div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      {shortDate(a.createdAt)}
-                      {read ? ` · ${read}` : ""}
-                      {a.wrapUp ? ` · wrap-up ${String(a.wrapUp)}` : " · wrap-up pending"}
+                    <div className="flex gap-3 items-start">
+                      <Avatar name={personName} size={40} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className={`text-sm truncate ${t.unread ? "font-semibold text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
+                            {personName}
+                          </div>
+                          <span className="shrink-0 text-[11px] text-[var(--color-text-muted)] tabular-nums">
+                            {shortDate(t.lastAt)}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+                          <ChannelIcon className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{t.preview || "No preview"}</span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          {t.unread ? (
+                            <span className="inline-flex h-1.5 w-1.5 rounded-full bg-[var(--color-accent)]" title="Unread" />
+                          ) : null}
+                          <span className="text-[11px] text-[var(--color-text-muted)]">
+                            {t.messages.length} {t.messages.length === 1 ? "item" : "items"}
+                          </span>
+                          <span className="text-[11px] text-[var(--color-border-strong)]">·</span>
+                          <span
+                            className={`text-[11px] ${
+                              t.wrapUp ? "text-[var(--color-text-muted)]" : "text-[var(--color-warning)]"
+                            }`}
+                          >
+                            {wrapUpLabel(t.wrapUp)}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   </button>
                 );
@@ -703,7 +750,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
           ) : moduleKey === "communications" ? (
             <div className="flex-1 min-h-0 overflow-auto p-4 sm:p-6">
               <CommunicationDetailPane
-                items={activityEvents}
+                threads={communicationThreads}
                 selectedId={selectedId}
                 canPlayRecording={canPlayRecording}
                 onViewCall={(activityId, kind) => act({ action: "view_call_artifact", activityId, kind })}
@@ -2415,6 +2462,8 @@ function channelLabel(kind: unknown): string {
     case "note":
     case "internal_note":
       return "Note";
+    case "conversation":
+      return "All";
     default:
       return String(kind || "Activity");
   }
@@ -2442,6 +2491,7 @@ function cleanEmailSummary(summary: unknown) {
   return String(summary || "")
     .replace(/^Reply:\s*/i, "")
     .replace(/^Email:\s*/i, "")
+    .replace(/^(Re:\s*)+/gi, "")
     .replace(/\s·\s*(un)?read$/i, "")
     .trim();
 }
@@ -2455,14 +2505,76 @@ type CommThread = {
   unread: boolean;
   wrapUp: string | null;
   messages: Record<string, unknown>[];
+  person?: { id?: string; name?: string };
+  organization?: { name?: string };
+  channels?: string[];
 };
 
+function personIdOf(item: Record<string, unknown>) {
+  return String(item.personId || (item.person as { id?: string } | undefined)?.id || "").trim();
+}
+
+function emailThreadGroupKey(item: Record<string, unknown>) {
+  const cid = String(item.conversationId || "").trim();
+  if (cid) return `thread:${cid}`;
+  const personId = personIdOf(item);
+  const subject = cleanEmailSummary(item.summary).toLowerCase();
+  if (personId && subject) return `thread:person:${personId}:subj:${subject}`;
+  return `item:${String(item.id)}`;
+}
+
+/** One tile per contact — all emails, calls, meetings, WhatsApp, notes in one chat. */
+function buildPersonCommunicationThreads(items: Record<string, unknown>[]): CommThread[] {
+  const groups = new Map<string, Record<string, unknown>[]>();
+  for (const item of items) {
+    const personId = personIdOf(item);
+    const key = personId ? `person:${personId}` : `item:${String(item.id)}`;
+    const list = groups.get(key) || [];
+    list.push(item);
+    groups.set(key, list);
+  }
+
+  const threads: CommThread[] = [];
+  for (const [key, msgs] of groups) {
+    const chronological = [...msgs].sort(
+      (a, b) => new Date(String(a.createdAt || 0)).getTime() - new Date(String(b.createdAt || 0)).getTime(),
+    );
+    const latest = chronological[chronological.length - 1];
+    const withPerson = [...chronological].reverse().find((m) => personIdOf(m));
+    const withOrg = [...chronological].reverse().find((m) => (m.organization as { name?: string } | undefined)?.name);
+    const person = withPerson?.person as { id?: string; name?: string } | undefined;
+    const channels = [...new Set(chronological.map((m) => String(m.kind || "")).filter(Boolean))];
+    const pending = chronological.some((m) => !m.wrapUp);
+    const latestWrap = latest.wrapUp != null ? String(latest.wrapUp) : null;
+    threads.push({
+      id: key,
+      kind: channels.length === 1 ? channels[0] : "conversation",
+      title: person?.name || "Unknown contact",
+      preview: (() => {
+        const summary = cleanEmailSummary(latest.summary) || String(latest.summary || "");
+        const body = String(latest.body || "").trim();
+        if (String(latest.kind) === "email") return summary || body.slice(0, 120);
+        return summary || body.slice(0, 120) || String(latest.aiSummary || "");
+      })(),
+      lastAt: String(latest.createdAt || ""),
+      unread: chronological.some((m) => m.kind === "email" && m.emailIsRead === false),
+      wrapUp: pending ? null : latestWrap,
+      messages: chronological,
+      person,
+      organization: withOrg?.organization as { name?: string } | undefined,
+      channels,
+    });
+  }
+
+  return threads.sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
+}
+
+/** Email subject threads (used on a person record Communication tab when browsing by channel). */
 function buildCommunicationThreads(items: Record<string, unknown>[]): CommThread[] {
   const groups = new Map<string, Record<string, unknown>[]>();
   for (const item of items) {
     const kind = String(item.kind || "");
-    const cid = String(item.conversationId || "").trim();
-    const key = kind === "email" && cid ? `thread:${cid}` : `item:${String(item.id)}`;
+    const key = kind === "email" ? emailThreadGroupKey(item) : `item:${String(item.id)}`;
     const list = groups.get(key) || [];
     list.push(item);
     groups.set(key, list);
@@ -2475,11 +2587,15 @@ function buildCommunicationThreads(items: Record<string, unknown>[]): CommThread
     );
     const latest = chronological[chronological.length - 1];
     const kind = String(latest.kind || "");
+    const outbound = chronological.find((m) => !isInboundMessage(m));
+    const titleSource = kind === "email" ? outbound || latest : latest;
     const title =
       kind === "email"
-        ? cleanEmailSummary(latest.summary) || "Email thread"
+        ? cleanEmailSummary(titleSource.summary) || "Email thread"
         : String(latest.summary || channelLabel(kind));
     const bodyPreview = String(latest.body || "").trim();
+    const withPerson = [...chronological].reverse().find((m) => personIdOf(m));
+    const withOrg = [...chronological].reverse().find((m) => (m.organization as { name?: string } | undefined)?.name);
     threads.push({
       id: key,
       kind,
@@ -2489,10 +2605,64 @@ function buildCommunicationThreads(items: Record<string, unknown>[]): CommThread
       unread: chronological.some((m) => m.kind === "email" && m.emailIsRead === false),
       wrapUp: latest.wrapUp != null ? String(latest.wrapUp) : null,
       messages: chronological,
+      person: withPerson?.person as { id?: string; name?: string } | undefined,
+      organization: withOrg?.organization as { name?: string } | undefined,
+      channels: [kind],
     });
   }
 
   return threads.sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
+}
+
+function wrapUpLabel(wrapUp: unknown) {
+  const v = String(wrapUp || "").trim();
+  if (!v) return "Needs wrap-up";
+  if (v === "next_action") return "Next action set";
+  if (v === "no_action" || v === "no_action_required") return "No action required";
+  if (v === "closed") return "Closed";
+  return v.replace(/_/g, " ");
+}
+
+function channelIcon(kind: unknown) {
+  switch (String(kind || "")) {
+    case "email":
+      return Mail;
+    case "call":
+      return Phone;
+    case "meeting":
+      return Video;
+    case "whatsapp":
+      return MessageCircle;
+    case "note":
+    case "internal_note":
+      return StickyNote;
+    default:
+      return MessageCircle;
+  }
+}
+
+function formatCommTime(v: unknown) {
+  if (!v) return "";
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function formatCommDay(v: unknown) {
+  if (!v) return "";
+  const d = new Date(String(v));
+  if (Number.isNaN(d.getTime())) return "";
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" });
 }
 
 function CommunicationChatView({
@@ -2500,37 +2670,55 @@ function CommunicationChatView({
   canPlayRecording,
   onViewCall,
   onWrapUp,
+  showPersonHeader = true,
 }: {
   thread: CommThread;
   canPlayRecording?: boolean;
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
   onWrapUp?: (activityId: string) => void;
+  showPersonHeader?: boolean;
 }) {
   const [artifactNotice, setArtifactNotice] = useState("");
   const pending = thread.messages.find((m) => !m.wrapUp);
+  const channelSummary = (thread.channels || [thread.kind])
+    .map(channelLabel)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .join(" · ");
+
+  const messageRows = thread.messages.map((item, index) => {
+    const day = formatCommDay(item.createdAt);
+    const prevDay = index > 0 ? formatCommDay(thread.messages[index - 1].createdAt) : "";
+    return { item, day, showDay: Boolean(day && day !== prevDay) };
+  });
 
   return (
-    <div className="flex flex-col h-full min-h-[320px]">
-      <div className="shrink-0 border-b border-[var(--color-border)] pb-3 mb-3">
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h3 className="text-base font-semibold text-slate-900 truncate">{thread.title}</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {thread.messages.length} message{thread.messages.length === 1 ? "" : "s"} · {channelLabel(thread.kind)}
-              {thread.wrapUp ? ` · wrap-up ${thread.wrapUp}` : " · wrap-up pending"}
+    <div className="flex flex-col h-full min-h-[360px]">
+      {showPersonHeader ? (
+        <div className="shrink-0 flex items-start gap-3 pb-4 mb-1 border-b border-[var(--color-border)]">
+          <Avatar name={thread.person?.name || thread.title} size={40} />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-[15px] font-semibold text-[var(--color-text)] truncate">
+                {thread.person?.name || thread.title}
+              </h3>
+              {thread.unread ? (
+                <span className="inline-flex items-center rounded-[var(--radius-sm)] bg-[var(--color-warning-bg)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-warning)]">
+                  Unread
+                </span>
+              ) : null}
+            </div>
+            <p className="text-[12px] text-[var(--color-text-muted)] mt-0.5">
+              {thread.messages.length} {thread.messages.length === 1 ? "item" : "items"}
+              {channelSummary ? ` · ${channelSummary}` : ""}
+              {" · "}
+              {wrapUpLabel(thread.wrapUp)}
             </p>
           </div>
-          <div className="flex flex-wrap gap-1">
-            <Tag tone={thread.kind === "email" ? "blue" : thread.kind === "call" ? "green" : thread.kind === "whatsapp" ? "amber" : "slate"}>
-              {channelLabel(thread.kind)}
-            </Tag>
-            {thread.unread ? <Tag tone="amber">Unread</Tag> : null}
-          </div>
         </div>
-      </div>
+      ) : null}
 
-      <div className="flex-1 overflow-auto space-y-3 pr-1">
-        {thread.messages.map((item) => {
+      <div className="flex-1 overflow-auto space-y-4 py-3 px-0.5">
+        {messageRows.map(({ item, day, showDay }) => {
           const kind = String(item.kind || "");
           const inbound = isInboundMessage(item);
           const actor = item.actor as { name?: string } | undefined;
@@ -2539,100 +2727,132 @@ function CommunicationChatView({
           const bodyWithoutTeams =
             kind === "meeting" && teamsUrl ? bodyText.replace(`Teams: ${teamsUrl}`, "").trim() : bodyText;
           const who = inbound
-            ? "Contact"
-            : actor?.name || (kind === "email" ? "You" : String(item.source || "TalentBridge"));
+            ? thread.person?.name || "Contact"
+            : actor?.name || "You";
+          const Icon = channelIcon(kind);
+          const subject =
+            kind === "email" ? cleanEmailSummary(item.summary) || String(item.summary || "Email") : null;
+          const body =
+            bodyWithoutTeams ||
+            (kind === "call"
+              ? String(item.aiSummary || "Call logged — no notes yet.")
+              : kind === "meeting"
+                ? "Meeting scheduled."
+                : kind === "note" || kind === "internal_note"
+                  ? String(item.summary || item.body || "Note")
+                  : String(item.summary || "—"));
 
           return (
-            <div key={String(item.id)} className={`flex ${inbound ? "justify-start" : "justify-end"}`}>
-              <div
-                className={`max-w-[min(100%,28rem)] rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
-                  inbound
-                    ? "rounded-bl-md bg-white border border-slate-200 text-slate-800"
-                    : "rounded-br-md bg-blue-600 text-white"
-                }`}
-              >
-                <div className={`text-[11px] mb-1 ${inbound ? "text-slate-500" : "text-blue-100"}`}>
-                  {who} · {fmtDate(item.createdAt)}
-                  {kind === "email" && typeof item.emailIsRead === "boolean"
-                    ? item.emailIsRead
-                      ? " · read"
-                      : " · unread"
-                    : ""}
+            <div key={String(item.id)}>
+              {showDay ? (
+                <div className="flex items-center gap-3 my-3">
+                  <div className="h-px flex-1 bg-[var(--color-border)]" />
+                  <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+                    {day}
+                  </span>
+                  <div className="h-px flex-1 bg-[var(--color-border)]" />
                 </div>
-                {kind === "email" ? (
-                  <div className={`text-xs font-medium mb-1 ${inbound ? "text-slate-700" : "text-blue-50"}`}>
-                    {cleanEmailSummary(item.summary) || String(item.summary || "Email")}
-                  </div>
-                ) : null}
-                <div className="whitespace-pre-wrap break-words">
-                  {bodyWithoutTeams ||
-                    (kind === "call"
-                      ? String(item.aiSummary || "Call logged — no notes yet.")
-                      : kind === "meeting"
-                        ? "Meeting scheduled."
-                        : String(item.summary || "—"))}
+              ) : null}
+              <div className={`flex gap-2.5 ${inbound ? "" : "flex-row-reverse"}`}>
+                <div
+                  className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+                    inbound ? "bg-slate-100 text-slate-600" : "bg-blue-50 text-[var(--color-accent)]"
+                  }`}
+                  title={channelLabel(kind)}
+                >
+                  <Icon className="h-3.5 w-3.5" />
                 </div>
-                {item.aiSummary && String(item.aiSummary) !== bodyText ? (
-                  <div className={`mt-2 text-xs ${inbound ? "text-slate-600" : "text-blue-100"}`}>
-                    AI: {String(item.aiSummary)}
-                  </div>
-                ) : null}
-                {kind === "meeting" && teamsUrl ? (
-                  <a
-                    href={teamsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`mt-2 inline-block text-xs underline ${inbound ? "text-blue-700" : "text-white"}`}
+                <div className={`min-w-0 max-w-[min(100%,36rem)] ${inbound ? "" : "items-end"}`}>
+                  <div
+                    className={`flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-1 text-[11px] ${
+                      inbound ? "" : "justify-end"
+                    }`}
                   >
-                    Join Teams meeting
-                  </a>
-                ) : null}
-                {kind === "call" ? (
-                  <div className={`mt-2 flex flex-wrap gap-3 text-xs ${inbound ? "text-blue-700" : "text-blue-100"}`}>
-                    {item.recordingRef && canPlayRecording && onViewCall && String(item.recordingRef) !== "[hidden]" ? (
-                      <button
-                        type="button"
-                        className="underline cursor-pointer"
-                        onClick={async () => {
-                          const result = await onViewCall(String(item.id), "recording");
-                          setArtifactNotice(
-                            result
-                              ? "Recording reference viewed — playback is controlled by tenant policy."
-                              : "Could not open recording reference.",
-                          );
-                        }}
-                      >
-                        Recording
-                      </button>
-                    ) : null}
-                    {item.transcriptRef && canPlayRecording && onViewCall && String(item.transcriptRef) !== "[hidden]" ? (
-                      <button
-                        type="button"
-                        className="underline cursor-pointer"
-                        onClick={async () => {
-                          const result = await onViewCall(String(item.id), "transcript");
-                          setArtifactNotice(
-                            result
-                              ? "Transcript reference viewed — content stays in VioTalk for POC."
-                              : "Could not open transcript reference.",
-                          );
-                        }}
-                      >
-                        Transcript
-                      </button>
+                    <span className="font-medium text-[var(--color-text-secondary)]">{who}</span>
+                    <span className="text-[var(--color-text-muted)]">{channelLabel(kind)}</span>
+                    <span className="text-[var(--color-text-muted)]">{formatCommTime(item.createdAt)}</span>
+                    {kind === "email" && item.emailIsRead === false ? (
+                      <span className="font-medium text-[var(--color-warning)]">Unread</span>
                     ) : null}
                   </div>
-                ) : null}
+                  <div
+                    className={`rounded-[var(--radius-lg)] border px-3.5 py-2.5 text-[13px] leading-relaxed ${
+                      inbound
+                        ? "border-[var(--color-border)] bg-white text-[var(--color-text)]"
+                        : "border-blue-100 bg-blue-50/80 text-[var(--color-text)]"
+                    }`}
+                  >
+                    {subject ? (
+                      <div className="text-[12px] font-semibold text-[var(--color-text)] mb-1.5">{subject}</div>
+                    ) : null}
+                    <div className="whitespace-pre-wrap break-words text-[var(--color-text-secondary)]">{body}</div>
+                    {item.aiSummary && String(item.aiSummary) !== bodyText && String(item.aiSummary) !== body ? (
+                      <div className="mt-2 rounded-[var(--radius-md)] bg-white/70 border border-[var(--color-border)] px-2.5 py-1.5 text-[12px] text-[var(--color-text-muted)]">
+                        <span className="font-medium text-[var(--color-text-secondary)]">Summary · </span>
+                        {String(item.aiSummary)}
+                      </div>
+                    ) : null}
+                    {kind === "meeting" && teamsUrl ? (
+                      <a
+                        href={teamsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-2 inline-flex text-[12px] font-medium text-[var(--color-accent)] hover:underline"
+                      >
+                        Join Teams meeting
+                      </a>
+                    ) : null}
+                    {kind === "call" &&
+                    ((item.recordingRef && String(item.recordingRef) !== "[hidden]") ||
+                      (item.transcriptRef && String(item.transcriptRef) !== "[hidden]")) ? (
+                      <div className="mt-2 flex flex-wrap gap-3 text-[12px]">
+                        {item.recordingRef && canPlayRecording && onViewCall && String(item.recordingRef) !== "[hidden]" ? (
+                          <button
+                            type="button"
+                            className="font-medium text-[var(--color-accent)] hover:underline cursor-pointer"
+                            onClick={async () => {
+                              const result = await onViewCall(String(item.id), "recording");
+                              setArtifactNotice(
+                                result
+                                  ? "Recording reference viewed — playback follows tenant policy."
+                                  : "Could not open recording reference.",
+                              );
+                            }}
+                          >
+                            Recording
+                          </button>
+                        ) : null}
+                        {item.transcriptRef && canPlayRecording && onViewCall && String(item.transcriptRef) !== "[hidden]" ? (
+                          <button
+                            type="button"
+                            className="font-medium text-[var(--color-accent)] hover:underline cursor-pointer"
+                            onClick={async () => {
+                              const result = await onViewCall(String(item.id), "transcript");
+                              setArtifactNotice(
+                                result
+                                  ? "Transcript reference viewed — content stays in VioTalk for POC."
+                                  : "Could not open transcript reference.",
+                              );
+                            }}
+                          >
+                            Transcript
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
               </div>
             </div>
           );
         })}
       </div>
 
-      {artifactNotice ? <p className="text-xs text-slate-600 mt-2">{artifactNotice}</p> : null}
+      {artifactNotice ? <p className="text-[12px] text-[var(--color-text-muted)] mt-2">{artifactNotice}</p> : null}
 
       {onWrapUp && pending ? (
-        <div className="shrink-0 pt-3 mt-2 border-t border-[var(--color-border)]">
+        <div className="shrink-0 pt-3 mt-1 border-t border-[var(--color-border)] flex items-center justify-between gap-3">
+          <p className="text-[12px] text-[var(--color-text-muted)]">This conversation still needs a wrap-up.</p>
           <button type="button" className={btnPrimary} onClick={() => onWrapUp(String(pending.id))}>
             Wrap up
           </button>
@@ -2694,21 +2914,24 @@ function CommunicationDetailContent({
 }
 
 function CommunicationDetailPane({
-  items,
+  threads,
   selectedId,
   onOpenPerson,
   onWrapUp,
   canPlayRecording,
   onViewCall,
 }: {
-  items: Record<string, unknown>[];
+  threads: CommThread[];
   selectedId: string;
   onOpenPerson?: (personId: string) => void;
   onWrapUp?: (activityId: string, personId: string) => void;
   canPlayRecording?: boolean;
   onViewCall?: (activityId: string, kind: "recording" | "transcript") => Promise<unknown>;
 }) {
-  const selected = items.find((a) => String(a.id) === selectedId) || null;
+  const selected =
+    threads.find((t) => t.id === selectedId) ||
+    threads.find((t) => t.messages.some((m) => String(m.id) === selectedId)) ||
+    null;
   if (!selected) {
     return (
       <EmptyState
@@ -2717,27 +2940,41 @@ function CommunicationDetailPane({
       />
     );
   }
-  const person = selected.person as { id?: string; name?: string } | undefined;
+  const person = selected.person;
+  const pending = selected.messages.find((m) => !m.wrapUp);
 
   return (
     <Card>
-      <CardHeader
-        title={String(selected.summary || channelLabel(selected.kind))}
-        action={
-          person?.id ? (
-            <TextLink onClick={() => onOpenPerson?.(String(person.id))}>Open {person.name || "contact"}</TextLink>
-          ) : undefined
-        }
-      />
-      <div className="px-4 py-3">
-        <CommunicationDetailContent
-          item={selected}
+      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+        <div className="min-w-0">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+            Conversation
+          </div>
+          <div className="text-sm font-semibold text-[var(--color-text)] truncate">
+            {person?.name || selected.title}
+          </div>
+        </div>
+        {person?.id ? (
+          <TextLink onClick={() => onOpenPerson?.(String(person.id))}>Open profile</TextLink>
+        ) : null}
+      </div>
+      <div className="px-4 py-3 bg-[var(--color-surface-muted)]/50">
+        <CommunicationChatView
+          thread={selected}
+          showPersonHeader={false}
           canPlayRecording={canPlayRecording}
           onViewCall={onViewCall}
-          onOpenPerson={onOpenPerson}
-          onWrapUp={(activityId, personId) => {
-            if (personId) onWrapUp?.(activityId, personId);
-          }}
+          onWrapUp={
+            onWrapUp && pending && person?.id
+              ? (activityId) => onWrapUp(activityId, String(person.id))
+              : onWrapUp && pending
+                ? (activityId) => {
+                    const msg = selected.messages.find((m) => String(m.id) === activityId);
+                    const pid = (msg?.person as { id?: string } | undefined)?.id || person?.id;
+                    if (pid) onWrapUp(activityId, String(pid));
+                  }
+                : undefined
+          }
         />
       </div>
     </Card>
@@ -2788,10 +3025,31 @@ function Timeline({
     return true;
   });
 
-  const threads = useMemo(
-    () => (mode === "communication" ? buildCommunicationThreads(items) : []),
-    [items, mode],
-  );
+  const threads = useMemo(() => {
+    if (mode !== "communication") return [];
+    // On a person/org record: one conversation stream (all channels) for this contact.
+    if (!items.length) return [];
+    const chronological = [...items].sort(
+      (a, b) => new Date(String(a.createdAt || 0)).getTime() - new Date(String(b.createdAt || 0)).getTime(),
+    );
+    const latest = chronological[chronological.length - 1];
+    const channels = [...new Set(chronological.map((m) => String(m.kind || "")).filter(Boolean))];
+    const pending = chronological.some((m) => !m.wrapUp);
+    return [
+      {
+        id: "contact-stream",
+        kind: channels.length === 1 ? channels[0] : "conversation",
+        title: String((record as { name?: string } | null)?.name || "Conversation"),
+        preview: String(latest.summary || latest.body || ""),
+        lastAt: String(latest.createdAt || ""),
+        unread: chronological.some((m) => m.kind === "email" && m.emailIsRead === false),
+        wrapUp: pending ? null : latest.wrapUp != null ? String(latest.wrapUp) : null,
+        messages: chronological,
+        person: { id: String((record as { id?: string } | null)?.id || ""), name: String((record as { name?: string } | null)?.name || "") },
+        channels,
+      } satisfies CommThread,
+    ];
+  }, [items, mode, record]);
 
   useEffect(() => {
     if (mode !== "communication") return;
@@ -2809,10 +3067,8 @@ function Timeline({
         return;
       }
     }
-    if (!selectedThreadId || !threads.some((t) => t.id === selectedThreadId)) {
-      setSelectedThreadId(threads[0].id);
-    }
-  }, [threads, selectedThreadId, focusId, mode, onFocusConsumed]);
+    setSelectedThreadId(threads[0].id);
+  }, [threads, focusId, mode, onFocusConsumed]);
 
   const title = mode === "notes" ? "Notes" : mode === "activity" ? "Activity" : "Communication";
   const selectedThread = threads.find((t) => t.id === selectedThreadId) || null;
@@ -2821,41 +3077,55 @@ function Timeline({
     const recent = items.slice(0, 8);
     return (
       <div>
-        <div className="flex flex-wrap gap-2 mb-3 text-xs">
+        <div className="flex flex-wrap gap-1 mb-3 border-b border-[var(--color-border)] pb-2">
           {["All", "Emails", "Calls", "Meetings", "Notes"].map((c) => (
             <button
               key={c}
               type="button"
               onClick={() => setChannel(c)}
-              className={`rounded-full px-2.5 py-1 cursor-pointer transition-colors ${channel === c ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              className={`px-2.5 py-1 text-[12px] cursor-pointer transition-colors border-b-2 -mb-2 ${
+                channel === c
+                  ? "border-[var(--color-accent)] text-[var(--color-accent)] font-medium"
+                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
             >
               {c}
             </button>
           ))}
         </div>
-        <ul className="space-y-3">
-          {recent.map((a) => (
-            <li key={String(a.id)}>
-              <button
-                type="button"
-                className="w-full text-left border-l-2 border-blue-600 pl-3 cursor-pointer hover:bg-slate-50/80 rounded-r-md py-0.5"
-                onClick={() => onOpenCommunication?.(String(a.id))}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="font-medium text-sm text-slate-900">
-                    {String(a.summary)}
-                    {a.kind === "email" && a.emailIsRead === false ? " · unread" : ""}
+        <ul className="divide-y divide-[var(--color-border)]">
+          {recent.map((a) => {
+            const Icon = channelIcon(a.kind);
+            return (
+              <li key={String(a.id)}>
+                <button
+                  type="button"
+                  className="w-full text-left py-2.5 cursor-pointer hover:bg-[var(--color-surface-muted)]/80 px-1 rounded-[var(--radius-md)]"
+                  onClick={() => onOpenCommunication?.(String(a.id))}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-600">
+                      <Icon className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className={`text-[13px] truncate ${a.kind === "email" && a.emailIsRead === false ? "font-semibold text-[var(--color-text)]" : "font-medium text-[var(--color-text)]"}`}>
+                          {String(a.kind) === "email" ? cleanEmailSummary(a.summary) || String(a.summary) : String(a.summary)}
+                        </div>
+                        <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{shortDate(a.createdAt)}</span>
+                      </div>
+                      <div className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+                        {(a.actor as { name?: string } | undefined)?.name || String(a.source || "system")}
+                        {" · "}
+                        {wrapUpLabel(a.wrapUp)}
+                      </div>
+                    </div>
                   </div>
-                  <Tag tone="slate">{channelLabel(a.kind)}</Tag>
-                </div>
-                <div className="text-xs text-slate-500">
-                  {(a.actor as { name?: string } | undefined)?.name || String(a.source || "system")} ·{" "}
-                  {fmtDate(a.createdAt)} · wrap-up {String(a.wrapUp || "pending")}
-                </div>
-              </button>
-            </li>
-          ))}
-          {!recent.length ? <li className="text-sm text-slate-400">No communication yet</li> : null}
+                </button>
+              </li>
+            );
+          })}
+          {!recent.length ? <li className="py-3 text-sm text-[var(--color-text-muted)]">No communication yet</li> : null}
         </ul>
       </div>
     );
@@ -2864,68 +3134,38 @@ function Timeline({
   if (mode === "communication") {
     const body = (
       <div className={embedded ? "" : "px-0"}>
-        <div className="flex flex-wrap gap-2 mb-3 text-xs px-4 pt-3">
+        <div className="flex flex-wrap gap-1 px-4 pt-2 border-b border-[var(--color-border)]">
           {["All", "Emails", "Calls", "Meetings", "Messages", "Notes"].map((c) => (
             <button
               key={c}
+              type="button"
               onClick={() => setChannel(c)}
-              className={`rounded-full px-2.5 py-1 cursor-pointer transition-colors ${channel === c ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+              className={`px-2.5 py-2 text-[12px] cursor-pointer transition-colors border-b-2 -mb-px ${
+                channel === c
+                  ? "border-[var(--color-accent)] text-[var(--color-accent)] font-medium"
+                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
             >
               {c}
             </button>
           ))}
         </div>
-        {!threads.length ? (
-          <div className="px-4 pb-4">
+        {!selectedThread ? (
+          <div className="px-4 pb-4 pt-4">
             <EmptyState
               title="No communication yet"
-              hint="Emails, VioTalk calls, Teams meetings, WhatsApp messages, and notes appear here. Click a conversation to open the chat view."
+              hint="Emails, calls, meetings, WhatsApp, and notes for this contact appear here in one timeline."
             />
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-[minmax(240px,300px)_1fr] min-h-[420px] border-t border-[var(--color-border)]">
-            <ul className="divide-y border-r border-[var(--color-border)] max-h-[560px] overflow-auto">
-              {threads.map((t) => {
-                const active = t.id === selectedThreadId;
-                return (
-                  <li key={t.id}>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedThreadId(t.id)}
-                      className={`w-full text-left px-3 py-3 cursor-pointer ${active ? "bg-blue-50" : "hover:bg-slate-50"}`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className={`text-sm line-clamp-2 ${t.unread ? "font-semibold text-slate-900" : "font-medium text-slate-800"}`}>
-                          {t.title}
-                        </div>
-                        <Tag tone="slate">{channelLabel(t.kind)}</Tag>
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-1 line-clamp-1">
-                        {t.preview || fmtDate(t.lastAt)}
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">
-                        {fmtDate(t.lastAt)}
-                        {t.messages.length > 1 ? ` · ${t.messages.length} msgs` : ""}
-                        {t.unread ? " · unread" : ""}
-                        {t.wrapUp ? ` · ${t.wrapUp}` : " · pending"}
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-            <div className="p-4 min-w-0 bg-[var(--color-surface-muted)]/40">
-              {selectedThread ? (
-                <CommunicationChatView
-                  thread={selectedThread}
-                  canPlayRecording={canPlayRecording}
-                  onViewCall={onViewCall}
-                  onWrapUp={onWrapUp}
-                />
-              ) : (
-                <EmptyState title="Select a conversation" hint="Choose a thread on the left to open the chat view." />
-              )}
-            </div>
+          <div className="p-4 min-h-[360px] bg-[var(--color-surface-muted)]/40">
+            <CommunicationChatView
+              thread={selectedThread}
+              showPersonHeader={false}
+              canPlayRecording={canPlayRecording}
+              onViewCall={onViewCall}
+              onWrapUp={onWrapUp}
+            />
           </div>
         )}
       </div>
