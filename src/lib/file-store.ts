@@ -70,8 +70,32 @@ export async function readStoredFile(key: string) {
   }
 }
 
-export function toArrayBuffer(buffer: Buffer) {
-  const copy = new Uint8Array(buffer.byteLength);
-  copy.set(buffer);
-  return copy.buffer;
+export function sniffContentType(buffer: Buffer, fileName?: string, hinted?: string) {
+  if (buffer.length >= 5) {
+    const head = buffer.subarray(0, 8);
+    const ascii = head.toString("latin1");
+    if (ascii.startsWith("%PDF")) return "application/pdf";
+    if (ascii.startsWith("{\\rtf")) return "application/rtf";
+    if (head[0] === 0x50 && head[1] === 0x4b) {
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    }
+    if (head[0] === 0xd0 && head[1] === 0xcf && head[2] === 0x11 && head[3] === 0xe0) {
+      return "application/msword";
+    }
+  }
+  return guessContentType(fileName || "", hinted);
+}
+
+export function previewDisposition(contentType: string) {
+  const inline =
+    contentType === "application/pdf" ||
+    contentType.startsWith("text/") ||
+    contentType.startsWith("image/");
+  return inline ? "inline" : "attachment";
+}
+
+export function toBinaryBody(body: Buffer | Uint8Array | ArrayBuffer) {
+  if (Buffer.isBuffer(body)) return new Uint8Array(body);
+  if (body instanceof Uint8Array) return body;
+  return new Uint8Array(body);
 }

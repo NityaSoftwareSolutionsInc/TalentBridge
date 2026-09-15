@@ -1,5 +1,5 @@
 import type { JobsNProfilesAdapter, JnpProfile } from "./types";
-import { jobsNProfilesHttp, jnpHttpConfigured } from "./jobsNProfilesHttp";
+import { jobsNProfilesHttp, jnpHttpConfigured, normalizePortalCandidateId } from "./jobsNProfilesHttp";
 
 const FIXTURES: JnpProfile[] = [
   {
@@ -73,20 +73,30 @@ export const jobsNProfilesStub: JobsNProfilesAdapter = {
   async listUpdatedProfiles() {
     return FIXTURES;
   },
+  async fetchResumeFile(input) {
+    if (!String(input?.resumeId || "").trim()) return null;
+    const profile = FIXTURES.find((p) => String(p.resumeId) === String(input.resumeId));
+    if (!profile) return null;
+    const text = `Stub resume preview for ${profile.name} (${profile.title}).\nResume file: ${profile.resumeFileName || input.fileName || "resume.pdf"}\n`;
+    const encoded = new TextEncoder().encode(text);
+    const body = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
+    return {
+      fileName: profile.resumeFileName || input.fileName || `resume-${input.resumeId}.txt`,
+      contentType: "text/plain; charset=utf-8",
+      body,
+    };
+  },
   async previewResume(resumeId, caller) {
     if (!String(caller?.requesterUserId || "").trim()) {
       throw new Error("JobsNProfiles requester is required");
     }
     const profile = FIXTURES.find((p) => String(p.resumeId) === String(resumeId));
     if (!profile) return null;
-    const text = `Stub resume preview for ${profile.name} (${profile.title}).\nResume file: ${profile.resumeFileName || "resume.pdf"}\n`;
-    const encoded = new TextEncoder().encode(text);
-    const body = encoded.buffer.slice(encoded.byteOffset, encoded.byteOffset + encoded.byteLength);
-    return {
+    return jobsNProfilesStub.fetchResumeFile!({
+      userId: normalizePortalCandidateId(profile.portalCandidateId),
+      resumeId: String(resumeId),
       fileName: profile.resumeFileName || `resume-${resumeId}.txt`,
-      contentType: "text/plain; charset=utf-8",
-      body,
-    };
+    });
   },
 };
 

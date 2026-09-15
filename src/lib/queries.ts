@@ -10,7 +10,7 @@ import {
 import { audit } from "./audit";
 import { prisma } from "./db";
 import { integrations } from "@/integrations";
-import { jnpHttpConfigured } from "@/integrations/jobsNProfilesHttp";
+import { jnpHttpConfigured, normalizePortalCandidateId } from "@/integrations/jobsNProfilesHttp";
 import { graphConfigured } from "@/integrations/graph";
 import type { JnpProfile } from "@/integrations/types";
 import type { Session } from "./auth";
@@ -36,10 +36,9 @@ import {
 } from "./jnp-gate";
 import {
   assertUploadable,
-  guessContentType,
   readStoredFile,
+  sniffContentType,
   storageKeyFor,
-  toArrayBuffer,
   writeStoredFile,
 } from "./file-store";
 
@@ -1808,7 +1807,7 @@ export async function addPersonFile(
       kind,
       name,
       source: "manual",
-      contentType: bytes ? guessContentType(originalName || name, input.contentType) : null,
+      contentType: bytes ? sniffContentType(bytes, originalName || name, input.contentType) : null,
       byteSize: bytes ? bytes.length : null,
     },
   });
@@ -1861,7 +1860,7 @@ export async function previewPersonResume(session: Session, fileId: string) {
       tenantId: session.tenantId,
     },
     include: {
-      person: { select: { id: true, tenantId: true } },
+      person: { select: { id: true, tenantId: true, portalCandidateId: true } },
       organization: { select: { id: true, tenantId: true } },
     },
   });
@@ -1890,8 +1889,8 @@ export async function previewPersonResume(session: Session, fileId: string) {
     });
     return {
       fileName: file.name,
-      contentType: file.contentType || guessContentType(file.name),
-      body: toArrayBuffer(stored),
+      contentType: sniffContentType(stored, file.name, file.contentType || undefined),
+      body: stored,
     };
   }
 
@@ -1901,10 +1900,18 @@ export async function previewPersonResume(session: Session, fileId: string) {
   if (!/^\d{1,20}$/.test(String(file.externalId))) {
     throw new Error("Invalid JobsNProfiles resume reference");
   }
+  const userId = normalizePortalCandidateId(file.person?.portalCandidateId || "");
+  if (!userId) {
+    throw new Error("JobsNProfiles candidate id is missing on this record");
+  }
   assertJnpPreviewRateLimit(session);
-  const caller = await ensureJnpCaller(session);
-  const preview = integrations.jobsNProfiles.previewResume
-    ? await integrations.jobsNProfiles.previewResume(file.externalId, caller)
+  await ensureJnpCaller(session);
+  const preview = integrations.jobsNProfiles.fetchResumeFile
+    ? await integrations.jobsNProfiles.fetchResumeFile({
+        userId,
+        resumeId: String(file.externalId),
+        fileName: file.name,
+      })
     : null;
   if (!preview) throw new Error("Resume file not available from JobsNProfiles");
   await audit({

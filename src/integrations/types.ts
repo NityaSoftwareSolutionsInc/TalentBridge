@@ -42,16 +42,24 @@ export type JnpAuthResult = {
   adapter: "live" | "stub";
 };
 
+export type JnpResumeBytes = {
+  fileName: string;
+  contentType: string;
+  body: ArrayBuffer;
+};
+
 export interface JobsNProfilesAdapter {
   authenticate(caller: JnpCaller): Promise<JnpAuthResult>;
   fetchProfile(portalCandidateId: string, caller: JnpCaller): Promise<JnpProfile | null>;
   listUpdatedProfiles(): Promise<JnpProfile[]>;
-  /** Stream/download primary resume file by JNP resume id. Returns null if unavailable. */
-  previewResume?(resumeId: string, caller: JnpCaller): Promise<{
+  /** Proxy the resume from /bs/resumes/{userId}/{resumeId}/{fileName}. Do not persist bytes. */
+  fetchResumeFile?(input: {
+    userId: string;
+    resumeId: string;
     fileName: string;
-    contentType: string;
-    body: ArrayBuffer;
-  } | null>;
+  }): Promise<JnpResumeBytes | null>;
+  /** Stream/download primary resume file by JNP resume id. Returns null if unavailable. */
+  previewResume?(resumeId: string, caller: JnpCaller): Promise<JnpResumeBytes | null>;
 }
 
 export type VioTalkCallRequest = {

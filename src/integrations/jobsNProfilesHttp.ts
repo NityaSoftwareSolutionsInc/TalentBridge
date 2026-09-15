@@ -218,58 +218,44 @@ export const jobsNProfilesHttp: JobsNProfilesAdapter = {
     return [];
   },
 
+  async fetchResumeFile(input) {
+    const userId = normalizePortalCandidateId(input.userId);
+    const resumeId = String(input.resumeId || "").trim();
+    const fileName = String(input.fileName || "").trim();
+    if (!userId || !resumeId || !fileName || !jnpHttpConfigured()) return null;
+    if (!/^\d{1,20}$/.test(userId) || !/^\d{1,20}$/.test(resumeId)) return null;
+    if (fileName.includes("/") || fileName.includes("\\") || fileName.includes("..")) return null;
+
+    const names = [fileName];
+    if (!/\.pdf$/i.test(fileName)) {
+      const pdfName = fileName.replace(/\.[^.]+$/, "") + ".pdf";
+      if (pdfName && pdfName !== fileName) names.push(pdfName);
+    }
+
+    for (const name of names) {
+      const res = await fetch(
+        `${baseUrl()}/bs/resumes/${encodeURIComponent(userId)}/${encodeURIComponent(resumeId)}/${encodeURIComponent(name)}`,
+        { method: "GET", redirect: "follow", signal: AbortSignal.timeout(20000) },
+      );
+      if (!res.ok) continue;
+      const headerType = res.headers.get("content-type") || "";
+      if (headerType.includes("application/json") || headerType.includes("text/html")) continue;
+      const body = await res.arrayBuffer();
+      if (!body.byteLength) continue;
+      const head = Buffer.from(body.slice(0, 220)).toString("utf8");
+      if (looksLikeUpstreamMarkup(head)) continue;
+      const contentType = headerType.split(";")[0].trim() || "application/octet-stream";
+      return { fileName: name, contentType, body };
+    }
+    return null;
+  },
+
   async previewResume(resumeId, caller) {
     const id = String(resumeId || "").trim();
     if (!id || !jnpHttpConfigured()) return null;
-    const requesterUserId = String(caller?.requesterUserId || "").trim();
-    if (!requesterUserId) throw new Error("JobsNProfiles requester is required");
-
-    const res = await fetch(`${baseUrl()}/talentbridge/preview_resume`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey(),
-      },
-      body: JSON.stringify({ resume_id: id, requester_user_id: requesterUserId }),
-      redirect: "manual",
-    });
-
-    if (res.status === 404) {
-      const text = await res.text().catch(() => "");
-      let message = "";
-      try {
-        const data = JSON.parse(text) as { error?: string };
-        message = String(data.error || "").trim();
-      } catch {
-        /* ignore non-JSON 404 bodies */
-      }
-      if (message && !/^resume not found$/i.test(message)) {
-        throw new JnpRequestError(message, "resume_unavailable");
-      }
-      return null;
+    if (!String(caller?.requesterUserId || "").trim()) {
+      throw new Error("JobsNProfiles requester is required");
     }
-    if (res.status >= 300 && res.status < 400) {
-      throw new JnpRequestError(
-        "JobsNProfiles resume file is not available for preview",
-        "resume_unavailable",
-      );
-    }
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw parseJnpError(res, text, "JobsNProfiles resume preview failed");
-    }
-
-    const contentType = res.headers.get("content-type") || "application/octet-stream";
-    if (contentType.includes("application/json")) {
-      const data = (await res.json().catch(() => null)) as { found?: boolean; error?: string } | null;
-      if (!data || data.found === false) return null;
-      return null;
-    }
-
-    const disposition = res.headers.get("content-disposition") || "";
-    const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
-    const fileName = match?.[1] ? decodeURIComponent(match[1].replace(/"/g, "")) : `resume-${id}.pdf`;
-    const body = await res.arrayBuffer();
-    return { fileName, contentType, body };
+    return null;
   },
 };

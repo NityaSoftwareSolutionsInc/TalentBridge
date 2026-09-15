@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { previewPersonResume } from "@/lib/queries";
 import { safeContentDispositionFileName } from "@/lib/jnp-links";
+import { previewDisposition, sniffContentType, toBinaryBody } from "@/lib/file-store";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const session = await getSession();
@@ -10,19 +14,25 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const fileId = String(url.searchParams.get("fileId") || "").trim();
   if (!fileId) return NextResponse.json({ error: "fileId is required" }, { status: 400 });
-  // UUID-shaped ids only — avoid odd injection into lookups
   if (!/^[0-9a-f-]{36}$/i.test(fileId)) {
     return NextResponse.json({ error: "Invalid file id" }, { status: 400 });
   }
 
   try {
     const preview = await previewPersonResume(session, fileId);
+    const bytes = toBinaryBody(preview.body);
+    const contentType = sniffContentType(
+      Buffer.from(bytes),
+      preview.fileName,
+      preview.contentType,
+    );
     const fileName = safeContentDispositionFileName(preview.fileName);
-    return new NextResponse(preview.body, {
+    return new NextResponse(bytes, {
       status: 200,
       headers: {
-        "Content-Type": preview.contentType || "application/octet-stream",
-        "Content-Disposition": `inline; filename="${fileName}"`,
+        "Content-Type": contentType,
+        "Content-Length": String(bytes.byteLength),
+        "Content-Disposition": `${previewDisposition(contentType)}; filename="${fileName}"`,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },
