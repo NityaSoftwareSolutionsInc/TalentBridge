@@ -1409,22 +1409,34 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   const resumeFile = vals.resumeFile instanceof File ? vals.resumeFile : null;
                   const { resumeFile: _drop, ...payload } = vals;
                   const data = await act(payload);
-                  if (data?.id && resumeFile) {
+                  if (!data?.id) return data;
+                  if (resumeFile) {
                     const fd = new FormData();
                     fd.append("personId", String(data.id));
                     fd.append("name", resumeFile.name);
                     fd.append("kind", "resume");
                     fd.append("file", resumeFile);
-                    const res = await fetch("/api/files", { method: "POST", body: fd });
-                    const uploaded = await res.json().catch(() => ({}));
-                    if (!res.ok) throw new Error(uploaded.error || "Resume upload failed");
-                    await load();
-                    const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
-                    setRecord(rec.record);
+                    setBusy(true);
+                    try {
+                      const res = await fetch("/api/files", { method: "POST", body: fd });
+                      const uploaded = await res.json().catch(() => ({}));
+                      if (!res.ok) {
+                        setError(
+                          uploaded.error ||
+                            "Candidate created, but resume upload failed. Open Files and upload again.",
+                        );
+                      }
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Resume upload failed");
+                    } finally {
+                      setBusy(false);
+                    }
                   }
-                  if (data?.id) {
-                    select(String(data.id), "person");
-                  }
+                  select(String(data.id), "person");
+                  setTab("Files");
+                  const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
+                  setRecord(rec.record);
+                  await load();
                   setDrawer("none");
                   return data;
                 }}

@@ -300,6 +300,18 @@ export async function searchPeople(
   return people.map((c) => serializePersonList(c));
 }
 
+const storedFileListSelect = {
+  id: true,
+  name: true,
+  kind: true,
+  source: true,
+  externalId: true,
+  storageKey: true,
+  contentType: true,
+  byteSize: true,
+  createdAt: true,
+} as const;
+
 export async function getPersonWorkspace(session: Session, personId: string) {
   const c = await prisma.person.findFirst({
     where: { id: personId, tenantId: session.tenantId },
@@ -313,7 +325,7 @@ export async function getPersonWorkspace(session: Session, personId: string) {
       hiringManagerReqs: true,
       activityEvents: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 50 },
       tasks: { include: { owner: true }, orderBy: { dueAt: "asc" } },
-      files: true,
+      files: { select: storedFileListSelect, orderBy: { createdAt: "desc" } },
       interviews: { include: { requirement: true, organization: true } },
       placements: { include: { organization: true, requirement: true } },
       ownershipReqs: { where: { status: "pending" }, include: { requester: true } },
@@ -329,7 +341,7 @@ export async function getPersonWorkspace(session: Session, personId: string) {
         take: 8,
       })
     : [];
-  return { ...serializePersonDetail(c, session), people };
+  return { ...serializePersonDetail(c as Parameters<typeof serializePersonDetail>[0], session), people };
 }
 
 export async function getOrganizationWorkspace(session: Session, organizationId: string) {
@@ -345,14 +357,14 @@ export async function getOrganizationWorkspace(session: Session, organizationId:
       placements: { include: { candidate: true } },
       msaDocuments: true,
       purchaseOrders: true,
-      files: true,
+      files: { select: storedFileListSelect, orderBy: { createdAt: "desc" } },
       activityEvents: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 40 },
       tasks: { include: { owner: true }, orderBy: { dueAt: "asc" } },
       calendarEvents: { orderBy: { startsAt: "asc" }, take: 20 },
     },
   });
   if (!a) return null;
-  return serializeOrganizationDetail(a, session);
+  return serializeOrganizationDetail(a as Parameters<typeof serializeOrganizationDetail>[0], session);
 }
 
 function searchTokens(q: string) {
@@ -1852,9 +1864,11 @@ export async function addPersonFile(
   const kindRaw = String(input.kind || "other").trim().toLowerCase();
   const kind = kindRaw === "resume" ? "resume" : "other";
   const bytes = input.bytes;
-  if (bytes) {
-    assertUploadable(originalName || name, bytes.length);
+  if (!bytes || !bytes.length) {
+    throw new Error("A file is required to Preview later — name-only documents are not supported");
   }
+  assertUploadable(originalName || name, bytes.length);
+  const contentType = sniffContentType(bytes, originalName || name, input.contentType);
 
   const file = await prisma.storedFile.create({
     data: {
@@ -1864,23 +1878,22 @@ export async function addPersonFile(
       kind,
       name,
       source: "manual",
-      contentType: bytes ? sniffContentType(bytes, originalName || name, input.contentType) : null,
-      byteSize: bytes ? bytes.length : null,
+      content: bytes,
+      contentType,
+      byteSize: bytes.length,
     },
   });
 
-  if (bytes) {
+  // Best-effort disk mirror (Preview prefers DB `content`).
+  try {
     const storageKey = storageKeyFor(session.tenantId, file.id);
-    try {
-      await writeStoredFile(storageKey, bytes);
-      await prisma.storedFile.update({
-        where: { id: file.id },
-        data: { storageKey },
-      });
-    } catch (error) {
-      await prisma.storedFile.delete({ where: { id: file.id } }).catch(() => undefined);
-      throw error;
-    }
+    await writeStoredFile(storageKey, bytes);
+    await prisma.storedFile.update({
+      where: { id: file.id },
+      data: { storageKey },
+    });
+  } catch {
+    /* disk optional — DB content is enough for Preview */
   }
 
   if (kind === "resume" && person) {
@@ -1900,13 +1913,15 @@ export async function addPersonFile(
       name,
       kind,
       source: "manual",
-      stored: Boolean(bytes),
-      byteSize: bytes ? bytes.length : null,
+      stored: true,
+      byteSize: bytes.length,
     },
   });
   return serializeStoredFile({
     ...file,
-    storageKey: bytes ? storageKeyFor(session.tenantId, file.id) : null,
+    storageKey: file.storageKey,
+    byteSize: bytes.length,
+    contentType,
   });
 }
 
@@ -1927,11 +1942,20 @@ export async function previewPersonResume(session: Session, fileId: string) {
     throw new Error("File not found");
   }
 
-  if (file.storageKey) {
-    const stored = await readStoredFile(file.storageKey);
-    if (!stored || !stored.length) throw new Error("File not found");
-    if (file.byteSize != null && file.byteSize > 0 && stored.length !== file.byteSize) {
-      throw new Error("Stored file is incomplete. Upload the document again.");
+  // Local bytes (manual upload in DB or disk) — do not duplicate JNP files on disk.
+  if ((file.content && file.content.length) || file.storageKey) {
+    let stored: Buffer | null = null;
+    if (file.content && file.content.length) {
+      stored = Buffer.from(file.content);
+    } else if (file.storageKey) {
+      stored = await readStoredFile(file.storageKey);
+    }
+    if (!stored || !stored.length) {
+      throw new Error(
+        file.source === "manual"
+          ? "This manual file has no stored document. Upload the PDF again from Files."
+          : "File not found",
+      );
     }
     await audit({
       tenantId: session.tenantId,
@@ -1952,6 +1976,10 @@ export async function previewPersonResume(session: Session, fileId: string) {
       contentType: sniffContentType(stored, file.name, file.contentType || undefined),
       body: stored,
     };
+  }
+
+  if (file.source === "manual") {
+    throw new Error("This manual file has no stored document. Upload the PDF again from Files.");
   }
 
   if (file.source !== "JobsNProfiles" || !file.externalId) {
@@ -2085,7 +2113,7 @@ export async function createPerson(
   }
 
   // Resume binary is uploaded separately via /api/files after create (CreateForm).
-  // Do not create a name-only StoredFile — that blocks Preview.
+  // Do not create a name-only StoredFile — that hides Preview.
 
   await audit({
     tenantId: session.tenantId,
@@ -2096,6 +2124,7 @@ export async function createPerson(
     after: {
       ...personAuditFields(person),
       resumeName: resumeName || null,
+      resumePendingUpload: Boolean(resumeName),
     },
   });
   return person;
@@ -3464,7 +3493,10 @@ function serializeStoredFile(f: {
     contentType: f.contentType ?? null,
     byteSize: f.byteSize ?? null,
     createdAt: f.createdAt,
-    previewable: Boolean(f.storageKey) || (f.source === "JobsNProfiles" && Boolean(f.externalId)),
+    previewable:
+      Boolean(f.storageKey) ||
+      Boolean(f.byteSize && f.byteSize > 0) ||
+      (f.source === "JobsNProfiles" && Boolean(f.externalId)),
   };
 }
 

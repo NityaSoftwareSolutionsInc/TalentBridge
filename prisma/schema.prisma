@@ -751,6 +751,8 @@ model StoredFile {
   externalId     String?  @map("external_id")
   /// Relative path under FILE_STORAGE_PATH when a binary was uploaded in TalentBridge.
   storageKey     String?  @map("storage_key")
+  /// Manual upload bytes (POC). Prefer this over disk so Preview works without volume mounts.
+  content        Bytes?
   contentType    String?  @map("content_type")
   byteSize       Int?     @map("byte_size")
   version        Int      @default(1)
