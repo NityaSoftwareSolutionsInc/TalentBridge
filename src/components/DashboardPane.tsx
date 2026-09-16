@@ -217,13 +217,13 @@ export function DashPane({
           </div>
           <ul className="divide-y divide-[var(--color-border)]">
             {ownershipRequests.map((r) => {
-              const module = r.person?.kind === "candidate" ? "candidates" : "clients";
+              const recordModule = r.person?.kind === "candidate" ? "candidates" : "clients";
               return (
                 <li key={r.id} className="px-5 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <button
                     type="button"
                     className="text-left min-w-0 cursor-pointer"
-                    onClick={() => onOpen(module, r.person?.id)}
+                    onClick={() => onOpen(recordModule, r.person?.id)}
                   >
                     <div className="text-[13px] font-medium text-[var(--color-text)]">
                       {r.requester?.name || "Teammate"} requested {r.type || "transfer"} on {r.person?.name || "record"}

@@ -1842,7 +1842,7 @@ export async function requestOwnership(
   });
 
   if (owner?.enabled && owner.email) {
-    const module = person.kind === "candidate" ? "candidates" : "clients";
+    const recordModule = person.kind === "candidate" ? "candidates" : "clients";
     await sendOwnershipRequestEmail({
       toEmail: owner.email,
       toName: owner.name,
@@ -1850,7 +1850,7 @@ export async function requestOwnership(
       personName: person.name,
       type: type === OwnershipRequestType.collaboration ? "collaboration" : "transfer",
       note,
-      recordUrl: `${appBaseUrl()}/${module}?id=${person.id}`,
+      recordUrl: `${appBaseUrl()}/${recordModule}?id=${person.id}`,
     });
   }
 
@@ -2005,8 +2005,8 @@ export async function decideOwnership(session: Session, requestId: string, accep
     },
   });
 
-  const module = person.kind === "candidate" ? "candidates" : "clients";
-  const recordUrl = `${appBaseUrl()}/${module}?id=${person.id}`;
+  const recordModule = person.kind === "candidate" ? "candidates" : "clients";
+  const recordUrl = `${appBaseUrl()}/${recordModule}?id=${person.id}`;
   const typeLabel = req.type === OwnershipRequestType.collaboration ? "collaboration" : "transfer";
   const notifyTargets = [
     requester?.enabled && requester.email && requester.id !== session.userId
