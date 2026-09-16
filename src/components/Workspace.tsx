@@ -60,7 +60,23 @@ type Session = {
   recordingPlaybackAllowed?: boolean;
 };
 
-type Drawer = "none" | "call" | "wrap" | "submit" | "note" | "email" | "meeting" | "jnp" | "req" | "create" | "create-user" | "edit" | "dnc";
+type Drawer =
+  | "none"
+  | "call"
+  | "wrap"
+  | "submit"
+  | "note"
+  | "email"
+  | "meeting"
+  | "jnp"
+  | "req"
+  | "edit-req"
+  | "create"
+  | "create-org"
+  | "import-clients"
+  | "create-user"
+  | "edit"
+  | "dnc";
 
 export function Workspace({ moduleKey }: { moduleKey: string }) {
   const router = useRouter();
@@ -86,12 +102,15 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [busy, setBusy] = useState(false);
   const [callActivityId, setCallActivityId] = useState<string | null>(null);
   const [wrapPersonId, setWrapPersonId] = useState<string | null>(null);
+  const [wrapRequirementId, setWrapRequirementId] = useState<string | null>(null);
+  const [wrapSubmissionId, setWrapSubmissionId] = useState<string | null>(null);
   const [proposed, setProposed] = useState("");
   const [badges, setBadges] = useState({ tasks: 0, communications: 0 });
   const [menu, setMenu] = useState<"none" | "help" | "user" | "more" | "bell">("none");
   const [starred, setStarred] = useState(false);
   const [extraFilters, setExtraFilters] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
+  const [editRequirementId, setEditRequirementId] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -127,8 +146,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       excludeRequirementId: params.get("excludeRequirementId") || "",
       workAuthorization: params.get("workAuthorization") || "",
       sort: params.get("sort") || "",
+      segment: params.get("segment") || (moduleKey === "clients" ? "companies" : ""),
+      stage: params.get("stage") || "",
     }),
-    [params],
+    [params, moduleKey],
   );
 
   const setFilter = (key: string, value: string) => {
@@ -154,6 +175,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       "excludeRequirementId",
       "workAuthorization",
       "sort",
+      "stage",
     ].forEach((key) => next.delete(key));
     next.delete("page");
     router.replace(`/${moduleKey}?${next.toString()}`);
@@ -293,7 +315,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     if (!["candidates", "clients", "vendors"].includes(moduleKey)) return;
     const next = new URLSearchParams(params.toString());
     next.set("id", String(list[0].id));
-    next.set("type", "person");
+    const firstType =
+      list[0].type === "organization" || (moduleKey === "clients" && (params.get("segment") || "companies") === "companies")
+        ? "organization"
+        : "person";
+    next.set("type", firstType);
     router.replace(`/${moduleKey}?${next.toString()}`);
   }, [list, selectedId, moduleKey, params, router, settings, session?.userId, isAdmin]);
 
@@ -455,6 +481,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     return rows.filter((row, i, all) => all.findIndex((r) => r.name === row.name) === i).slice(0, 8);
   })();
 
+  const canManageClients = ["sales", "operations", "admin"].includes(session?.role || "");
+  const clientsSegment = moduleKey === "clients" ? (filters.segment === "contacts" ? "contacts" : "companies") : "";
+  const orgContactCount = ((record?.people as unknown[]) || []).length;
+
   const primaryAction =
     moduleKey === "settings" && isAdmin ? (
       <Button onClick={() => setDrawer("create-user")}>
@@ -470,10 +500,25 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
         <CalendarDays className="h-4 w-4" />
         Schedule meeting
       </Button>
-    ) : ["candidates", "clients", "vendors"].includes(moduleKey) ? (
+    ) : moduleKey === "clients" && canManageClients ? (
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" onClick={() => setDrawer("import-clients")}>
+          Import
+        </Button>
+        <Button onClick={() => setDrawer("create-org")}>
+          <Plus className="h-4 w-4" />
+          Add Client
+        </Button>
+      </div>
+    ) : moduleKey === "candidates" ? (
       <Button onClick={() => setDrawer("create")}>
         <Plus className="h-4 w-4" />
-        Add {moduleKey === "candidates" ? "Candidate" : moduleKey === "vendors" ? "Vendor person" : "Client person"}
+        Add Candidate
+      </Button>
+    ) : moduleKey === "vendors" ? (
+      <Button onClick={() => setDrawer("create")}>
+        <Plus className="h-4 w-4" />
+        Add Vendor person
       </Button>
     ) : undefined;
 
@@ -509,17 +554,49 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               </div>
             </div>
           ) : (
-            <ListToolbar
-              moduleKey={moduleKey}
-              total={pageSlice.total}
-              filters={filters}
-              extraOpen={extraFilters}
-              users={users}
-              requirements={requirements}
-              onToggleExtra={() => setExtraFilters((v) => !v)}
-              onFilter={setFilter}
-              onClear={clearFilters}
-            />
+            <>
+              {moduleKey === "clients" ? (
+                <div className="px-3 pt-2 flex gap-1 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
+                  {(
+                    [
+                      ["companies", "Companies"],
+                      ["contacts", "Contacts"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`px-3 py-1.5 text-xs font-medium rounded-t-md cursor-pointer ${
+                        clientsSegment === key
+                          ? "bg-white border border-b-white border-[var(--color-border)] text-slate-900 -mb-px"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                      onClick={() => {
+                        const next = new URLSearchParams(params.toString());
+                        next.set("segment", key);
+                        next.delete("id");
+                        next.delete("type");
+                        next.delete("page");
+                        router.replace(`/${moduleKey}?${next.toString()}`);
+                      }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <ListToolbar
+                moduleKey={moduleKey}
+                total={pageSlice.total}
+                filters={filters}
+                extraOpen={extraFilters}
+                users={users}
+                requirements={requirements}
+                onToggleExtra={() => setExtraFilters((v) => !v)}
+                onFilter={setFilter}
+                onClear={clearFilters}
+              />
+            </>
           )}
           <div className="flex-1 overflow-auto">
             {moduleKey === "dashboard" || moduleKey === "reports" ? (
@@ -632,6 +709,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               pageSlice.items.map((row) => {
                 const rowAvail = availabilityBadge(row.availability, row.status);
                 const selected = selectedId === row.id;
+                const rowType =
+                  row.type === "organization" || (moduleKey === "clients" && clientsSegment === "companies")
+                    ? "organization"
+                    : "person";
                 return (
                 <div
                   key={String(row.id)}
@@ -639,7 +720,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 >
                 <button
                   type="button"
-                  onClick={() => select(String(row.id), "person")}
+                  onClick={() => select(String(row.id), rowType)}
                   className="flex-1 min-w-0 text-left px-3 py-3 flex gap-3 cursor-pointer transition-colors"
                 >
                   <Avatar name={String(row.name)} size={40} />
@@ -655,7 +736,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                         <div className="text-[11px] text-slate-500 shrink-0">{shortDate(row.lastOutreachAt, true)}</div>
                       )}
                     </div>
-                    {row.title || row.companyName ? (
+                    {rowType === "organization" ? (
+                      <div className="text-xs text-slate-600 truncate">
+                        {[row.title, row.location].filter(Boolean).map(String).join(" · ") || "Client company"}
+                      </div>
+                    ) : row.title || row.companyName ? (
                     <div className="text-xs text-slate-600 truncate">
                       {String(row.title || "")}
                       {row.companyName ? ` | ${String(row.companyName)}` : ""}
@@ -679,7 +764,13 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     ) : (
                       <div className="text-[11px] text-slate-600 truncate">
                         {String(row.ownerName || "")}
-                        {row.nextAction ? ` · Next: ${String(row.nextAction)}` : ""}
+                        {rowType === "organization" && row.openRequirements != null
+                          ? ` · ${String(row.openRequirements)} open jobs`
+                          : row.nextAction
+                            ? ` · Next: ${String(row.nextAction)}`
+                            : row.stage
+                              ? ` · ${String(row.stage)}`
+                              : ""}
                       </div>
                     )}
                     {moduleKey !== "candidates" ? (
@@ -833,6 +924,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             variant="secondary"
                             className="!bg-transparent !border-[var(--color-accent)] !text-[var(--color-accent)] hover:!bg-blue-50 hover:!text-[var(--color-accent)]"
                             onClick={() => setDrawer("edit")}
+                            disabled={isOrganization}
+                            title={isOrganization ? "Edit company fields in a later slice" : "Edit contact"}
                           >
                             Edit
                           </Button>
@@ -991,12 +1084,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 <Tabs
                   items={
                     isOrganization
-                      ? ["Overview", "People", "Requirements", "Candidates Submitted", "Interviews", "Placements", "Communication", "Tasks", "MSA/PO", "Files"]
+                      ? ["Overview", "Contacts", "Requirements", "Candidates Submitted", "Interviews", "Placements", "Communication", "Tasks", "MSA/PO", "Documents", "Reports"]
                       : isCandidate
                         ? ["Overview", "Skills/Profile", "Requirements", "Submissions", "Interviews", "Placements", "Communication", "Tasks", "Notes", "Files", "Relationships", "Activity"]
                         : ["Overview", "Communication", "Notes", "Meetings", "Files", "Relationships", "Activity"]
                   }
-                  value={tab}
+                  value={tab === "People" ? "Contacts" : tab === "Files" && isOrganization ? "Documents" : tab}
                   onChange={setTab}
                   getLabel={tabLabel}
                 />
@@ -1016,6 +1109,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           onEdit={() => setDrawer("edit")}
                           onOpenSubmissions={() => setTab("Submissions")}
                         />
+                        <OwnershipTrailCard record={record} />
                     </div>
                     <div className="min-w-0 space-y-4">
                       <Card>
@@ -1242,16 +1336,30 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     isOrganization={isOrganization}
                     isCandidate={isCandidate}
                     relatedPeople={relatedPeople}
-                    canAddRequirement={Boolean(isOrganization && ["sales", "operations", "admin"].includes(session?.role || ""))}
+                    canAddRequirement={Boolean(isOrganization && canManageClients && orgContactCount > 0)}
+                    canAddContact={Boolean(isOrganization && canManageClients)}
                     jnpUrl={jnpUrl}
                     canPlayRecording={canPlayRecording}
                     canViewMsa={canViewMsa}
                     canViewPo={canViewPo}
                     commFocusId={commFocusId}
-                    onAddRequirement={() => setDrawer("req")}
+                    onAddRequirement={() => {
+                      if (orgContactCount < 1) {
+                        setError("Add a Contact first, then open a Requirement (hiring manager required).");
+                        setTab("Contacts");
+                        return;
+                      }
+                      setEditRequirementId(null);
+                      setDrawer("req");
+                    }}
+                    onEditRequirement={(id) => {
+                      setEditRequirementId(id);
+                      setDrawer("edit-req");
+                    }}
+                    onAddContact={() => setDrawer("create")}
                     onAddNote={() => setDrawer("note")}
                     onSubmit={() => setDrawer("submit")}
-                    onOpenPerson={(id) => router.push(`/clients?id=${id}&type=person`)}
+                    onOpenPerson={(id) => router.push(`/clients?id=${id}&type=person&segment=contacts`)}
                     onAddFile={async ({ name, kind, file }) => {
                       const fd = new FormData();
                       const recordType = params.get("type") || (record?.type === "organization" ? "organization" : "person");
@@ -1329,11 +1437,15 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     action: "wrap_up",
                     personId: wrapPersonId || selectedId,
                     activityId: callActivityId,
+                    requirementId: wrapRequirementId || undefined,
+                    submissionId: wrapSubmissionId || undefined,
                     ...vals,
                   });
                   setDrawer("none");
                   setCallActivityId(null);
                   setWrapPersonId(null);
+                  setWrapRequirementId(null);
+                  setWrapSubmissionId(null);
                 }}
               />
             ) : null}
@@ -1348,8 +1460,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   if (data) {
                     setCallActivityId(data.activityId);
                     setWrapPersonId(selectedId);
+                    setWrapRequirementId(vals.requirementId);
+                    setWrapSubmissionId(data.submissionId ? String(data.submissionId) : null);
                     setProposed("Follow up on submission with the client");
                     setDrawer("wrap");
+                    setTab("Submissions");
                   }
                 }}
               />
@@ -1438,12 +1553,54 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 }}
               />
             ) : null}
-            {drawer === "req" ? (
+            {drawer === "req" || drawer === "edit-req" ? (
               <ReqForm
                 users={users}
+                contacts={((record?.people as { person: { id: string; name: string; title?: string } }[]) || []).map((p) => p.person)}
+                initial={
+                  drawer === "edit-req" && editRequirementId
+                    ? ((record?.requirements as Record<string, unknown>[]) || []).find((r) => String(r.id) === editRequirementId) || null
+                    : null
+                }
+                onClose={() => {
+                  setEditRequirementId(null);
+                  setDrawer("none");
+                }}
+                onSave={async (vals) => {
+                  if (drawer === "edit-req" && editRequirementId) {
+                    await act({ action: "update_requirement", requirementId: editRequirementId, ...vals });
+                  } else {
+                    await act({ action: "create_requirement", organizationId: selectedId, ...vals });
+                  }
+                  setEditRequirementId(null);
+                  setDrawer("none");
+                }}
+              />
+            ) : null}
+            {drawer === "create-org" ? (
+              <ClientOrgForm
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
-                  await act({ action: "create_requirement", organizationId: selectedId, ...vals });
+                  const data = await act({ action: "create_organization", role: "client", ...vals });
+                  if (data?.id) {
+                    const next = new URLSearchParams(params.toString());
+                    next.set("segment", "companies");
+                    next.set("id", String(data.id));
+                    next.set("type", "organization");
+                    router.replace(`/clients?${next.toString()}`);
+                  }
+                  setDrawer("none");
+                }}
+              />
+            ) : null}
+            {drawer === "import-clients" ? (
+              <ImportClientsForm
+                onClose={() => setDrawer("none")}
+                onSave={async (rows) => {
+                  const data = await act({ action: "import_clients", rows });
+                  if (data?.created?.[0]?.organizationId) {
+                    select(String(data.created[0].organizationId), "organization");
+                  }
                   setDrawer("none");
                 }}
               />
@@ -1451,6 +1608,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
             {drawer === "create" ? (
               <CreateForm
                 moduleKey={moduleKey}
+                organizationId={isOrganization ? selectedId : undefined}
+                stages={["Lead", "Suspect", "Prospect", "Customer"]}
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
                   const resumeFile = vals.resumeFile instanceof File ? vals.resumeFile : null;
@@ -1479,10 +1638,16 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       setBusy(false);
                     }
                   }
-                  select(String(data.id), "person");
-                  setTab("Files");
-                  const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
-                  setRecord(rec.record);
+                  if (isOrganization) {
+                    setTab("Contacts");
+                    const rec = await fetch(`/api/record?type=organization&id=${selectedId}`).then((r) => r.json());
+                    setRecord(rec.record);
+                  } else {
+                    select(String(data.id), "person");
+                    setTab("Files");
+                    const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
+                    setRecord(rec.record);
+                  }
                   await load();
                   setDrawer("none");
                   return data;
@@ -1530,6 +1695,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
 function tabLabel(tab: string) {
   if (tab === "Skills/Profile") return "Skills / Profile";
   if (tab === "MSA/PO") return "MSA / PO";
+  if (tab === "Contacts" || tab === "People") return "Contacts";
+  if (tab === "Documents") return "Documents";
   return tab;
 }
 function fmtDate(v: unknown) {
@@ -1728,7 +1895,11 @@ function Candidate360Header({
   const lastResumeName = String(record?.lastResume || "").trim();
   const resumeHref = lastResumeName ? resolveResumeOpenHref(record, jnpUrl, lastResumeName) : "";
   const items: { label: string; value: React.ReactNode; title?: string }[] = [
-    { label: "Owner", value: (record?.owner as { name?: string } | undefined)?.name || "—" },
+    {
+      label: "Owner",
+      value: (record?.owner as { name?: string } | undefined)?.name || "—",
+      title: String(record?.ownershipChainLabel || "") || undefined,
+    },
     { label: "Last outreach", value: shortDate(record?.lastOutreachAt) || "—" },
     { label: "Next action", value: String(record?.nextAction || "—") },
     { label: "Status", value: String(record?.availability || record?.status || "—") },
@@ -1782,12 +1953,15 @@ function RecordTabs({
   isCandidate,
   relatedPeople,
   canAddRequirement,
+  canAddContact,
   jnpUrl,
   canPlayRecording,
   canViewMsa,
   canViewPo,
   commFocusId,
   onAddRequirement,
+  onEditRequirement,
+  onAddContact,
   onAddNote,
   onSubmit,
   onOpenPerson,
@@ -1804,12 +1978,15 @@ function RecordTabs({
   isCandidate: boolean;
   relatedPeople: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[];
   canAddRequirement: boolean;
+  canAddContact?: boolean;
   jnpUrl: string;
   canPlayRecording?: boolean;
   canViewMsa?: boolean;
   canViewPo?: boolean;
   commFocusId?: string | null;
   onAddRequirement: () => void;
+  onEditRequirement?: (id: string) => void;
+  onAddContact?: () => void;
   onAddNote: () => void;
   onSubmit: () => void;
   onOpenPerson: (id: string) => void;
@@ -1820,7 +1997,8 @@ function RecordTabs({
   onWrapUpActivity?: (activityId: string) => void;
   onCommFocusConsumed?: () => void;
 }) {
-  if (tab === "Overview" && isOrganization) {
+  const normalizedTab = tab === "People" ? "Contacts" : tab === "Files" && isOrganization ? "Documents" : tab;
+  if (normalizedTab === "Overview" && isOrganization) {
     return (
       <Card>
         <CardHeader title="Overview" />
@@ -1830,63 +2008,88 @@ function RecordTabs({
       </Card>
     );
   }
-  if (tab === "Skills/Profile") {
+  if (normalizedTab === "Skills/Profile") {
     return <SkillsProfilePane record={record} jnpUrl={jnpUrl} />;
   }
-  if (tab === "Requirements") {
+  if (normalizedTab === "Requirements") {
     return (
       <RequirementsPane
         record={record}
         isOrganization={isOrganization}
         canAdd={canAddRequirement}
         onAdd={onAddRequirement}
+        onEdit={onEditRequirement}
       />
     );
   }
-  if (tab === "Submissions" || tab === "Candidates Submitted") {
+  if (normalizedTab === "Submissions" || normalizedTab === "Candidates Submitted") {
     return <SubmissionsPane record={record} isCandidate={isCandidate} onSubmit={isCandidate ? onSubmit : undefined} />;
   }
-  if (tab === "Interviews" || tab === "Meetings") {
+  if (normalizedTab === "Interviews" || normalizedTab === "Meetings") {
     return <InterviewsPane record={record} />;
   }
-  if (tab === "Placements") {
+  if (normalizedTab === "Placements") {
     return <PlacementsPane record={record} />;
   }
-  if (tab === "Communication") {
+  if (normalizedTab === "Communication") {
+    const privacy = (record?.communicationPrivacy as { priorHidden?: number; note?: string } | undefined) || undefined;
     return (
-      <Timeline
+      <div className="space-y-3">
+        {privacy?.priorHidden ? (
+          <div className="border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 leading-relaxed">
+            {privacy.priorHidden} prior communication item{privacy.priorHidden === 1 ? "" : "s"} retained with the previous owner (privacy). Submissions and interviews remain visible.
+          </div>
+        ) : null}
+        <Timeline
+          record={record}
+          mode="communication"
+          canPlayRecording={canPlayRecording}
+          onViewCall={onViewCall}
+          onWrapUp={onWrapUpActivity}
+          focusId={commFocusId}
+          onFocusConsumed={onCommFocusConsumed}
+        />
+      </div>
+    );
+  }
+  if (normalizedTab === "Activity") {
+    return <Timeline record={record} mode="activity" canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
+  }
+  if (normalizedTab === "Tasks") {
+    return <TasksPane record={record} />;
+  }
+  if (normalizedTab === "Notes") {
+    return <Timeline record={record} mode="notes" onAddNote={onAddNote} canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
+  }
+  if (normalizedTab === "Files" || normalizedTab === "Documents") {
+    return <FilesPane record={record} onAddFile={onAddFile} onDeleteFile={onDeleteFile} />;
+  }
+  if (normalizedTab === "Relationships" || normalizedTab === "Contacts") {
+    return (
+      <RelationshipsPane
         record={record}
-        mode="communication"
-        canPlayRecording={canPlayRecording}
-        onViewCall={onViewCall}
-        onWrapUp={onWrapUpActivity}
-        focusId={commFocusId}
-        onFocusConsumed={onCommFocusConsumed}
+        relatedPeople={relatedPeople}
+        onOpen={onOpenPerson}
+        title={isOrganization ? "Contacts" : "Relationships"}
+        canAdd={Boolean(canAddContact)}
+        onAdd={onAddContact}
       />
     );
   }
-  if (tab === "Activity") {
-    return <Timeline record={record} mode="activity" canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
-  }
-  if (tab === "Tasks") {
-    return <TasksPane record={record} />;
-  }
-  if (tab === "Notes") {
-    return <Timeline record={record} mode="notes" onAddNote={onAddNote} canPlayRecording={canPlayRecording} onViewCall={onViewCall} />;
-  }
-  if (tab === "Files") {
-    return <FilesPane record={record} onAddFile={onAddFile} onDeleteFile={onDeleteFile} />;
-  }
-  if (tab === "Relationships" || tab === "People") {
-    return <RelationshipsPane record={record} relatedPeople={relatedPeople} onOpen={onOpenPerson} />;
-  }
-  if (tab === "MSA/PO") {
+  if (normalizedTab === "MSA/PO") {
     return (
       <Card>
         <CardHeader title="MSA & Purchase Orders" />
         <div className="p-4">
           <Commercial record={record} canViewMsa={canViewMsa} canViewPo={canViewPo} onView={onViewCommercial} />
         </div>
+      </Card>
+    );
+  }
+  if (normalizedTab === "Reports") {
+    return (
+      <Card>
+        <EmptyState title="Reports on this Client" hint="Pipeline and commercial reports open from the Reports module." />
       </Card>
     );
   }
@@ -1952,13 +2155,16 @@ function RequirementsPane({
   isOrganization,
   canAdd,
   onAdd,
+  onEdit,
 }: {
   record: Record<string, unknown> | null;
   isOrganization: boolean;
   canAdd: boolean;
   onAdd: () => void;
+  onEdit?: (id: string) => void;
 }) {
-  const organizationReqs = (record?.requirements as { id: string; title: string; status?: string; location?: string; openedAt?: string; hiringManager?: { name?: string } }[]) || [];
+  const organizationReqs = (record?.requirements as { id: string; title: string; status?: string; location?: string; openedAt?: string; skills?: string[]; employmentType?: string; billRate?: string; hiringManager?: { name?: string } }[]) || [];
+  const contactCount = ((record?.people as unknown[]) || []).length;
   const fromSubs = ((record?.submissions as { id: string; stage?: string; organization?: { name?: string }; requirement?: { id?: string; title?: string; status?: string; location?: string } }[]) || []).map((s) => ({
     id: s.requirement?.id || s.id,
     title: s.requirement?.title || "Requirement",
@@ -1974,7 +2180,7 @@ function RequirementsPane({
         client: String(record?.name || ""),
         status: r.status || "open",
         location: r.location || "",
-        stage: r.hiringManager?.name ? `HM ${r.hiringManager.name}` : "",
+        stage: [r.hiringManager?.name ? `HM ${r.hiringManager.name}` : "", r.employmentType || "", r.billRate ? `Bill ${r.billRate}` : ""].filter(Boolean).join(" · "),
       }))
     : fromSubs.filter((row, i, all) => all.findIndex((r) => r.id === row.id) === i);
   return (
@@ -1988,7 +2194,13 @@ function RequirementsPane({
           {rows.map((r) => (
             <li key={r.id} className="px-4 py-3 flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-medium">{r.title}</div>
+                {isOrganization && onEdit ? (
+                  <button type="button" className="text-sm font-medium text-left hover:text-blue-700 cursor-pointer" onClick={() => onEdit(r.id)}>
+                    {r.title}
+                  </button>
+                ) : (
+                  <div className="text-sm font-medium">{r.title}</div>
+                )}
                 <div className="text-xs text-slate-500">
                   {[r.client, r.location].filter(Boolean).join(" · ")}
                 </div>
@@ -2003,10 +2215,121 @@ function RequirementsPane({
       ) : (
         <EmptyState
           title="No requirements yet"
-          hint={isOrganization ? "Add a Requirement on this Client. Jobs are not a left-nav module." : "Submit Profile against a Client job to attach a requirement here."}
+          hint={
+            isOrganization
+              ? contactCount < 1
+                ? "Add a Contact first, then open a Requirement. Jobs are not a left-nav module."
+                : "Add a Requirement on this Client. Jobs are not a left-nav module."
+              : "Submit Profile against a Client job to attach a requirement here."
+          }
         />
       )}
     </Card>
+  );
+}
+
+function OwnershipTrailCard({ record }: { record: Record<string, unknown> | null }) {
+  const trail = (record?.ownershipTrail as {
+    id: string;
+    step: number;
+    fromOwner?: { name?: string } | null;
+    toOwner: { name: string };
+    startedAt?: string;
+    endedAt?: string | null;
+    isCurrent?: boolean;
+    submissionCount?: number;
+    interviewCount?: number;
+  }[]) || [];
+  if (!trail.length) return null;
+  return (
+    <Card>
+      <CardHeader title="Ownership history" />
+      <div className="px-4 pb-4 space-y-4">
+        <p className="text-xs text-slate-500 leading-relaxed">
+          Work history stays on this record. Communication from a prior owner does not transfer.
+        </p>
+
+        {/* Step progress: A → B → C */}
+        <ol className="flex items-start gap-0 overflow-x-auto pb-1">
+          {trail.map((h, idx) => {
+            const done = !h.isCurrent;
+            const current = Boolean(h.isCurrent);
+            return (
+              <li key={h.id} className="flex items-start min-w-0 flex-1 last:flex-none">
+                <div className="flex flex-col items-center text-center min-w-[4.5rem] max-w-[7rem]">
+                  <span
+                    className={[
+                      "flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold border",
+                      current
+                        ? "border-slate-800 bg-slate-800 text-white"
+                        : done
+                          ? "border-slate-400 bg-white text-slate-700"
+                          : "border-slate-300 bg-slate-50 text-slate-500",
+                    ].join(" ")}
+                    aria-current={current ? "step" : undefined}
+                  >
+                    {h.step || idx + 1}
+                  </span>
+                  <span className={`mt-1.5 text-[12px] leading-tight truncate w-full ${current ? "font-semibold text-slate-900" : "text-slate-700"}`}>
+                    {h.toOwner.name}
+                  </span>
+                  <span className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-500">
+                    {current ? "Current" : "Complete"}
+                  </span>
+                </div>
+                {idx < trail.length - 1 ? (
+                  <div
+                    className={`mt-3.5 h-px flex-1 min-w-[1.25rem] mx-1 ${done ? "bg-slate-400" : "bg-slate-200"}`}
+                    aria-hidden
+                  />
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-200">
+              <th className="pb-2 pr-2 font-medium w-8">#</th>
+              <th className="pb-2 pr-2 font-medium">Owner</th>
+              <th className="pb-2 pr-2 font-medium">Period</th>
+              <th className="pb-2 pr-2 font-medium text-right">Subs</th>
+              <th className="pb-2 font-medium text-right">Ints</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {trail.map((h, idx) => (
+              <tr key={h.id} className={`align-top ${h.isCurrent ? "bg-slate-50/80" : ""}`}>
+                <td className="py-2.5 pr-2 text-xs text-slate-500 tabular-nums">{h.step || idx + 1}</td>
+                <td className="py-2.5 pr-2">
+                  <div className="font-medium text-slate-900">{h.toOwner.name}</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    {h.isCurrent ? "Current" : h.fromOwner?.name ? `Succeeded ${h.fromOwner.name}` : "Initial"}
+                  </div>
+                </td>
+                <td className="py-2.5 pr-2 text-xs text-slate-600 whitespace-nowrap">
+                  {shortDate(h.startedAt)}
+                  <span className="text-slate-400"> – </span>
+                  {h.endedAt ? shortDate(h.endedAt) : "Present"}
+                </td>
+                <td className="py-2.5 pr-2 text-right tabular-nums text-slate-700">{h.submissionCount ?? 0}</td>
+                <td className="py-2.5 text-right tabular-nums text-slate-700">{h.interviewCount ?? 0}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+function AttributionCell({ name, prior }: { name: string; prior?: boolean }) {
+  return (
+    <div>
+      <div className="text-slate-900">{name || "—"}</div>
+      {prior ? <div className="text-[11px] text-slate-500 mt-0.5">Prior owner</div> : null}
+    </div>
   );
 }
 
@@ -2019,12 +2342,16 @@ function SubmissionsPane({
   isCandidate: boolean;
   onSubmit?: () => void;
 }) {
+  const currentOwnerId = (record?.owner as { id?: string } | undefined)?.id;
   const subs = (record?.submissions as {
     id: string;
     stage?: string;
     sentAt?: string;
     resumeVersion?: string;
     source?: string;
+    recruiterId?: string;
+    submittedBy?: string;
+    recruiter?: { id?: string; name?: string };
     candidate?: { name?: string };
     requirement?: { title?: string };
     organization?: { name?: string };
@@ -2039,30 +2366,38 @@ function SubmissionsPane({
       {subs.length ? (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-left text-[11px] uppercase tracking-wide text-slate-500 border-b">
+            <thead className="text-left text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-200">
               <tr>
-                {!isCandidate ? <th className="px-4 py-2 font-medium">Candidate</th> : null}
-                <th className="px-4 py-2 font-medium">Client / job</th>
-                <th className="px-4 py-2 font-medium">Hiring manager</th>
-                <th className="px-4 py-2 font-medium">Stage</th>
-                <th className="px-4 py-2 font-medium">Sent</th>
-                <th className="px-4 py-2 font-medium">Resume</th>
+                {!isCandidate ? <th className="px-4 py-2.5 font-medium">Candidate</th> : null}
+                <th className="px-4 py-2.5 font-medium">Client / job</th>
+                <th className="px-4 py-2.5 font-medium">Hiring manager</th>
+                <th className="px-4 py-2.5 font-medium">Submitted by</th>
+                <th className="px-4 py-2.5 font-medium">Stage</th>
+                <th className="px-4 py-2.5 font-medium">Sent</th>
+                <th className="px-4 py-2.5 font-medium">Resume</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
-              {subs.map((s) => (
-                <tr key={s.id} className="align-top">
-                  {!isCandidate ? <td className="px-4 py-3">{s.candidate?.name || "—"}</td> : null}
-                  <td className="px-4 py-3">
-                    <div className="font-medium">{s.organization?.name || "—"}</div>
-                    <div className="text-xs text-slate-500">{s.requirement?.title || "—"}</div>
-                  </td>
-                  <td className="px-4 py-3">{s.clientPerson?.name || "—"}</td>
-                  <td className="px-4 py-3"><Tag tone="purple">{s.stage || "Submitted"}</Tag></td>
-                  <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{shortDate(s.sentAt)}</td>
-                  <td className="px-4 py-3 text-slate-500">{s.resumeVersion || "—"}</td>
-                </tr>
-              ))}
+            <tbody className="divide-y divide-slate-100">
+              {subs.map((s) => {
+                const by = s.submittedBy || s.recruiter?.name || "—";
+                const prior = Boolean(s.recruiterId && currentOwnerId && s.recruiterId !== currentOwnerId);
+                return (
+                  <tr key={s.id} className="align-top hover:bg-slate-50/80">
+                    {!isCandidate ? <td className="px-4 py-3">{s.candidate?.name || "—"}</td> : null}
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-slate-900">{s.organization?.name || "—"}</div>
+                      <div className="text-xs text-slate-500 mt-0.5">{s.requirement?.title || "—"}</div>
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">{s.clientPerson?.name || "—"}</td>
+                    <td className="px-4 py-3">
+                      <AttributionCell name={by} prior={prior} />
+                    </td>
+                    <td className="px-4 py-3"><Tag tone="purple">{s.stage || "Submitted"}</Tag></td>
+                    <td className="px-4 py-3 text-slate-500 whitespace-nowrap">{shortDate(s.sentAt)}</td>
+                    <td className="px-4 py-3 text-slate-500">{s.resumeVersion || "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -2074,6 +2409,7 @@ function SubmissionsPane({
 }
 
 function InterviewsPane({ record }: { record: Record<string, unknown> | null }) {
+  const currentOwnerId = (record?.owner as { id?: string } | undefined)?.id;
   const rows = (record?.interviews as {
     id: string;
     scheduledAt?: string;
@@ -2081,6 +2417,9 @@ function InterviewsPane({ record }: { record: Record<string, unknown> | null }) 
     outcome?: string;
     teamsJoinUrl?: string;
     location?: string;
+    arrangedById?: string | null;
+    arrangedByName?: string;
+    arrangedBy?: { id?: string; name?: string } | null;
     candidate?: { name?: string };
     organization?: { name?: string };
     requirement?: { title?: string };
@@ -2098,23 +2437,32 @@ function InterviewsPane({ record }: { record: Record<string, unknown> | null }) 
       <CardHeader title="Interviews / Meetings" />
       {rows.length || meetings.length ? (
         <ul className="divide-y">
-          {rows.map((i) => (
-            <li key={i.id} className="px-4 py-3 flex items-start gap-3">
-              <CalendarDays className="h-4 w-4 mt-0.5 text-blue-600 shrink-0" />
+          {rows.map((i) => {
+            const by = i.arrangedByName || i.arrangedBy?.name || "—";
+            const byId = i.arrangedById || i.arrangedBy?.id;
+            const prior = Boolean(byId && currentOwnerId && byId !== currentOwnerId);
+            return (
+            <li key={i.id} className="px-4 py-3 flex items-start gap-3 hover:bg-slate-50/80">
+              <CalendarDays className="h-4 w-4 mt-0.5 text-slate-500 shrink-0" />
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">{i.requirement?.title || "Interview"}</div>
-                <div className="text-xs text-slate-500">
+                <div className="text-sm font-medium text-slate-900">{i.requirement?.title || "Interview"}</div>
+                <div className="text-xs text-slate-500 mt-0.5">
                   {[i.candidate?.name, i.organization?.name, shortDate(i.scheduledAt), i.location].filter(Boolean).join(" · ")}
                 </div>
+                <div className="text-xs text-slate-600 mt-1">
+                  Arranged by {by}
+                  {prior ? <span className="text-slate-500"> · prior owner</span> : null}
+                </div>
                 {i.teamsJoinUrl ? (
-                  <a href={i.teamsJoinUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-700 hover:underline">
+                  <a href={i.teamsJoinUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-700 hover:underline mt-1 inline-block">
                     Join Teams
                   </a>
                 ) : null}
               </div>
               <Tag tone={i.outcome === "pending" ? "amber" : i.outcome === "passed" ? "green" : "slate"}>{i.outcome || "pending"}</Tag>
             </li>
-          ))}
+            );
+          })}
           {meetings.filter((m) => !rows.some((i) => i.id === m.id)).map((m) => (
             <li key={m.id} className="px-4 py-3 flex items-start gap-3">
               <CalendarDays className="h-4 w-4 mt-0.5 text-blue-600 shrink-0" />
@@ -2466,24 +2814,30 @@ function RelationshipsPane({
   record,
   relatedPeople,
   onOpen,
+  title = "Relationships",
+  canAdd,
+  onAdd,
 }: {
   record: Record<string, unknown> | null;
   relatedPeople: { id?: string; name: string; title: string; badge: string; tone: "blue" | "purple" | "amber" }[];
   onOpen: (id: string) => void;
+  title?: string;
+  canAdd?: boolean;
+  onAdd?: () => void;
 }) {
-  const people = (record?.people as { person: { id: string; name: string; title: string }; roleOnOrganization?: string }[]) || [];
+  const people = (record?.people as { person: { id: string; name: string; title: string; stage?: string }; roleOnOrganization?: string }[]) || [];
   const rows = relatedPeople.length
     ? relatedPeople
     : people.map((p) => ({
         id: p.person.id,
         name: p.person.name,
         title: p.person.title,
-        badge: p.roleOnOrganization || "Related",
+        badge: p.person.stage || p.roleOnOrganization || "Related",
         tone: "amber" as const,
       }));
   return (
     <Card>
-      <CardHeader title="Relationships" />
+      <CardHeader title={title} action={canAdd && onAdd ? <TextLink onClick={onAdd}>+ Add Contact</TextLink> : undefined} />
       {rows.length ? (
         <ul className="divide-y">
           {rows.map((p) => (
@@ -2504,7 +2858,10 @@ function RelationshipsPane({
           ))}
         </ul>
       ) : (
-        <EmptyState title="No related people" hint="Hiring managers and other people linked through submissions show here. Staff users are not people records." />
+        <EmptyState
+          title={title === "Contacts" ? "No contacts yet" : "No related people"}
+          hint={title === "Contacts" ? "Add a hiring manager or other Client contact here before opening a Requirement." : "Hiring managers and other people linked through submissions show here. Staff users are not people records."}
+        />
       )}
     </Card>
   );
@@ -2512,10 +2869,35 @@ function RelationshipsPane({
 
 function AccountOverview({ record }: { record: Record<string, unknown> | null }) {
   const intel = (record?.intelligence as Record<string, unknown>) || {};
+  const labels: Record<string, string> = {
+    relationshipOwner: "Relationship Owner",
+    lastContact: "Last Contact",
+    lastOutreach: "Last Contact",
+    nextAction: "Next Action",
+    openRequirements: "Open Requirements",
+    submissions: "Submissions",
+    interviews: "Interviews",
+    placements: "Placements",
+    averageClientResponseTime: "Average Client Response Time",
+    requirementAging: "Requirement Aging",
+    relationshipHealth: "Relationship Health",
+    msaStatus: "MSA Status",
+    poRisk: "PO Risk",
+    recentCommitments: "Recent Commitments",
+  };
+  const extras = [
+    ["Industry", record?.industry],
+    ["Location", record?.location],
+    ["Website", record?.website],
+    ["Main phone", record?.phone],
+  ].filter(([, v]) => Boolean(v && String(v).trim()));
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {extras.map(([k, v]) => (
+        <Field key={String(k)} label={String(k)} value={String(v)} />
+      ))}
       {Object.entries(intel).map(([k, v]) => (
-        <Field key={k} label={k} value={String(v ?? "—")} />
+        <Field key={k} label={labels[k] || k} value={String(v ?? "—")} />
       ))}
     </div>
   );
@@ -3486,13 +3868,27 @@ function SubmitForm({
     resumeOptions[0]?.name ||
     defaultResumeName ||
     "resume.pdf";
-  const [requirementId, setRequirementId] = useState(String(requirements[0]?.id || ""));
+  const [requirementId, setRequirementId] = useState(
+    String((requirements.find((r) => String(r.status || "open") === "open") || requirements[0])?.id || ""),
+  );
   const selectedReq = requirements.find((r) => String(r.id) === requirementId);
   const hiringManager = selectedReq?.hiringManager as { id?: string; name?: string } | undefined;
-  const [clientPersonId, setClientPersonId] = useState(String(hiringManager?.id || ""));
+  const orgPeople =
+    ((selectedReq?.organization as { affiliations?: { person?: { id?: string; name?: string; title?: string } }[] } | undefined)
+      ?.affiliations || [])
+      .map((a) => a.person)
+      .filter((p): p is { id: string; name: string; title?: string } => Boolean(p?.id && p?.name));
+  const clientPeople =
+    orgPeople.length > 0
+      ? orgPeople
+      : hiringManager?.id
+        ? [{ id: String(hiringManager.id), name: String(hiringManager.name || "Hiring manager") }]
+        : [];
+  const [clientPersonId, setClientPersonId] = useState(String(hiringManager?.id || clientPeople[0]?.id || ""));
   const [resumeName, setResumeName] = useState(initial);
   const [customResume, setCustomResume] = useState(!resumeOptions.some((f) => f.name === initial));
   const [message, setMessage] = useState("Please find the attached profile for your open requirement.");
+  const openRequirements = requirements.filter((r) => String(r.status || "open") === "open");
   return (
     <form
       className="space-y-3"
@@ -3517,11 +3913,15 @@ function SubmitForm({
             setRequirementId(e.target.value);
             const next = requirements.find((r) => String(r.id) === e.target.value);
             const hm = next?.hiringManager as { id?: string } | undefined;
-            setClientPersonId(String(hm?.id || ""));
+            const nextPeople =
+              ((next?.organization as { affiliations?: { person?: { id?: string } }[] } | undefined)?.affiliations || [])
+                .map((a) => a.person?.id)
+                .filter(Boolean);
+            setClientPersonId(String(hm?.id || nextPeople[0] || ""));
           }}
           required
         >
-          {requirements.map((r) => (
+          {(openRequirements.length ? openRequirements : requirements).map((r) => (
             <option key={String(r.id)} value={String(r.id)}>
               {String((r.organization as { name?: string } | undefined)?.name || "")} — {String(r.title)}
             </option>
@@ -3531,7 +3931,15 @@ function SubmitForm({
       <label className="block text-sm">
         Client person
         <FieldSelect wrapClassName="mt-1" value={clientPersonId} onChange={(e) => setClientPersonId(e.target.value)} required>
-          {hiringManager?.id ? <option value={hiringManager.id}>{hiringManager.name || "Hiring manager"}</option> : <option value="">No hiring manager on this job</option>}
+          {clientPeople.length ? (
+            clientPeople.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}{p.title ? ` — ${p.title}` : ""}
+              </option>
+            ))
+          ) : (
+            <option value="">No hiring manager on this job</option>
+          )}
         </FieldSelect>
       </label>
       <label className="block text-sm">
@@ -3586,18 +3994,23 @@ function SubmitForm({
 
 function CreateForm({
   moduleKey,
+  organizationId,
+  stages = ["Lead", "Suspect", "Prospect", "Customer"],
   onClose,
   onSave,
 }: {
   moduleKey: string;
+  organizationId?: string;
+  stages?: string[];
   onClose: () => void;
   onSave: (vals: Record<string, unknown>) => Promise<{ id?: string } | null | void>;
 }) {
   const kind =
     moduleKey === "vendors" ? "vendor_person" : moduleKey === "clients" ? "client_person" : "candidate";
   const isCandidate = kind === "candidate";
+  const needsCompany = kind === "client_person";
   const label =
-    kind === "vendor_person" ? "Vendor person" : kind === "client_person" ? "Client person" : "Candidate";
+    kind === "vendor_person" ? "Vendor person" : kind === "client_person" ? "Client contact" : "Candidate";
   const [busy, setBusy] = useState(false);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
   const [vals, setVals] = useState({
@@ -3622,6 +4035,7 @@ function CreateForm({
     currentRate: "",
     expectedRate: "",
     resumeName: "",
+    stage: stages[0] || "Lead",
   });
   const set = (key: keyof typeof vals) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setVals((prev) => ({ ...prev, [key]: e.target.value }));
@@ -3631,6 +4045,9 @@ function CreateForm({
       className="space-y-3"
       onSubmit={async (e) => {
         e.preventDefault();
+        if (needsCompany && !organizationId) {
+          return;
+        }
         setBusy(true);
         try {
           await onSave({
@@ -3640,6 +4057,7 @@ function CreateForm({
             preferredLocation: vals.preferredLocation || vals.location,
             resumeName: resumeFile?.name || vals.resumeName || "",
             resumeFile,
+            ...(organizationId ? { organizationId, stage: vals.stage } : !isCandidate ? { stage: vals.stage } : {}),
           });
         } finally {
           setBusy(false);
@@ -3647,10 +4065,23 @@ function CreateForm({
       }}
     >
       <h2 className="text-lg font-semibold">Add {label}</h2>
+      {needsCompany && !organizationId ? (
+        <p className="text-xs text-amber-800">Open a Client company first, then add Contacts from the Contacts tab.</p>
+      ) : null}
       <Label>Name</Label>
       <FieldInput value={vals.name} onChange={set("name")} required />
       <Label>Title</Label>
       <FieldInput value={vals.title} onChange={set("title")} placeholder={isCandidate ? "Primary title" : "Role"} />
+      {!isCandidate ? (
+        <>
+          <Label>Stage</Label>
+          <FieldSelect className="w-full" value={vals.stage} onChange={set("stage")}>
+            {stages.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </FieldSelect>
+        </>
+      ) : null}
       {isCandidate ? (
         <>
           <Label>Secondary title</Label>
@@ -3730,7 +4161,7 @@ function CreateForm({
         </>
       ) : null}
       <div className="flex gap-2 pt-1">
-        <button className={btnPrimary} disabled={busy}>{busy ? "Creating…" : "Create"}</button>
+        <button className={btnPrimary} disabled={busy || (needsCompany && !organizationId)}>{busy ? "Creating…" : "Create"}</button>
         <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>
           Cancel
         </button>
@@ -4465,37 +4896,322 @@ function JnpForm({
     </form>
   );
 }
+function ClientOrgForm({
+  onClose,
+  onSave,
+}: {
+  onClose: () => void;
+  onSave: (v: { name: string; industry: string; location: string; website: string; phone: string }) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [vals, setVals] = useState({ name: "", industry: "", location: "", website: "", phone: "" });
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        try {
+          await onSave(vals);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <h2 className="text-lg font-semibold">Add Client</h2>
+      <p className="text-xs text-slate-500">Create the Client company in TalentBridge — not from JobsNProfiles. Then add Contacts and open a Requirement.</p>
+      <Label>Company name *</Label>
+      <FieldInput value={vals.name} onChange={(e) => setVals((p) => ({ ...p, name: e.target.value }))} required />
+      <Label>Industry</Label>
+      <FieldInput value={vals.industry} onChange={(e) => setVals((p) => ({ ...p, industry: e.target.value }))} placeholder="Staffing, Healthcare, FinTech…" />
+      <Label>Location</Label>
+      <FieldInput value={vals.location} onChange={(e) => setVals((p) => ({ ...p, location: e.target.value }))} placeholder="City, ST" />
+      <Label>Website <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldInput value={vals.website} onChange={(e) => setVals((p) => ({ ...p, website: e.target.value }))} placeholder="https://…" />
+      <Label>Main phone <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldInput value={vals.phone} onChange={(e) => setVals((p) => ({ ...p, phone: e.target.value }))} placeholder="(555) 555-5555" />
+      <div className="flex gap-2">
+        <button className={btnPrimary} disabled={busy}>{busy ? "Creating…" : "Create"}</button>
+        <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function ImportClientsForm({
+  onClose,
+  onSave,
+}: {
+  onClose: () => void;
+  onSave: (rows: {
+    companyName: string;
+    industry?: string;
+    location?: string;
+    contactName?: string;
+    contactEmail?: string;
+    contactPhone?: string;
+    contactTitle?: string;
+    stage?: string;
+  }[]) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<
+    { companyName: string; industry?: string; location?: string; contactName?: string; contactEmail?: string; contactPhone?: string; contactTitle?: string; stage?: string }[]
+  >([]);
+  const [error, setError] = useState("");
+
+  function parseCsv(text: string) {
+    const lines = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (lines.length < 2) throw new Error("CSV needs a header row and at least one data row");
+    const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/\s+/g, ""));
+    const idx = (names: string[]) => headers.findIndex((h) => names.includes(h));
+    const companyI = idx(["company", "companyname", "client", "name", "organization"]);
+    if (companyI < 0) throw new Error("Map a Company / Client column in the header");
+    const industryI = idx(["industry"]);
+    const locationI = idx(["location", "city"]);
+    const contactI = idx(["contact", "contactname", "person", "hiringmanager"]);
+    const emailI = idx(["email", "contactemail"]);
+    const phoneI = idx(["phone", "contactphone"]);
+    const titleI = idx(["title", "contacttitle", "role"]);
+    const stageI = idx(["stage"]);
+    return lines.slice(1).map((line) => {
+      const cols = line.split(",").map((c) => c.trim());
+      return {
+        companyName: cols[companyI] || "",
+        industry: industryI >= 0 ? cols[industryI] : undefined,
+        location: locationI >= 0 ? cols[locationI] : undefined,
+        contactName: contactI >= 0 ? cols[contactI] : undefined,
+        contactEmail: emailI >= 0 ? cols[emailI] : undefined,
+        contactPhone: phoneI >= 0 ? cols[phoneI] : undefined,
+        contactTitle: titleI >= 0 ? cols[titleI] : undefined,
+        stage: stageI >= 0 ? cols[stageI] : undefined,
+      };
+    });
+  }
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!preview.length) {
+          setError("Upload a CSV and preview before commit");
+          return;
+        }
+        setBusy(true);
+        try {
+          await onSave(preview);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <h2 className="text-lg font-semibold">Import Clients</h2>
+      <p className="text-xs text-slate-500">CSV/spreadsheet import only — map columns, preview, commit. Not from JobsNProfiles.</p>
+      <p className="text-xs text-slate-500">Header example: Company,Industry,Location,Contact,Email,Phone,Title,Stage</p>
+      <input
+        type="file"
+        accept=".csv,text/csv"
+        className="w-full text-sm file:mr-3 file:rounded file:border-0 file:bg-slate-100 file:px-3 file:py-1.5"
+        onChange={async (e) => {
+          setError("");
+          const file = e.target.files?.[0];
+          if (!file) return;
+          try {
+            const text = await file.text();
+            setPreview(parseCsv(text));
+          } catch (err) {
+            setPreview([]);
+            setError(err instanceof Error ? err.message : "Could not parse CSV");
+          }
+        }}
+      />
+      {error ? <p className="text-xs text-red-700">{error}</p> : null}
+      {preview.length ? (
+        <div className="rounded border max-h-48 overflow-auto text-xs">
+          <table className="w-full text-left">
+            <thead className="bg-slate-50 sticky top-0">
+              <tr>
+                <th className="px-2 py-1">Company</th>
+                <th className="px-2 py-1">Contact</th>
+                <th className="px-2 py-1">Stage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.slice(0, 50).map((r, i) => (
+                <tr key={`${r.companyName}-${i}`} className="border-t">
+                  <td className="px-2 py-1">{r.companyName || "—"}</td>
+                  <td className="px-2 py-1">{r.contactName || "—"}</td>
+                  <td className="px-2 py-1">{r.stage || "Lead"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="px-2 py-1 text-slate-500">{preview.length} row(s) ready to commit</p>
+        </div>
+      ) : null}
+      <div className="flex gap-2">
+        <button className={btnPrimary} disabled={busy || !preview.length}>{busy ? "Importing…" : "Commit import"}</button>
+        <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
 function ReqForm({
   users,
+  contacts,
+  initial,
   onClose,
   onSave,
 }: {
   users: Record<string, unknown>[];
+  contacts: { id: string; name: string; title?: string }[];
+  initial?: Record<string, unknown> | null;
   onClose: () => void;
-  onSave: (v: { title: string; skills: string; location: string; assignedRecruiterIds: string[] }) => Promise<void>;
+  onSave: (v: {
+    title: string;
+    skills: string;
+    location: string;
+    hiringManagerId: string;
+    assignedRecruiterIds: string[];
+    status: string;
+    targetFillAt: string;
+    billRate: string;
+    payRate: string;
+    employmentType: string;
+    duration: string;
+    clearance: string;
+  }) => Promise<void>;
 }) {
-  const [title, setTitle] = useState("");
-  const recruiter = users.find((u) => (u.memberships as { role: string }[] | undefined)?.[0]?.role === "recruiter");
+  const CLEARANCE_OPTIONS = ["None", "Public Trust", "Secret", "Top Secret", "TS/SCI"];
+  const initialRecruiters = ((initial?.recruiters as { userId?: string; user?: { id?: string } }[]) || [])
+    .map((r) => String(r.userId || r.user?.id || ""))
+    .filter(Boolean);
+  const [busy, setBusy] = useState(false);
+  const [title, setTitle] = useState(String(initial?.title || ""));
+  const [skills, setSkills] = useState(Array.isArray(initial?.skills) ? (initial?.skills as string[]).join(", ") : "");
+  const [location, setLocation] = useState(String(initial?.location || ""));
+  const [hiringManagerId, setHiringManagerId] = useState(
+    String((initial?.hiringManager as { id?: string } | undefined)?.id || initial?.hiringManagerId || contacts[0]?.id || ""),
+  );
+  const [status, setStatus] = useState(String(initial?.status || "open"));
+  const [targetFillAt, setTargetFillAt] = useState(
+    initial?.targetFillAt ? String(initial.targetFillAt).slice(0, 10) : "",
+  );
+  const [billRate, setBillRate] = useState(rateInputValue(initial?.billRate));
+  const [payRate, setPayRate] = useState(rateInputValue(initial?.payRate));
+  const [employmentType, setEmploymentType] = useState(String(initial?.employmentType || ""));
+  const [duration, setDuration] = useState(String(initial?.duration || ""));
+  const [clearance, setClearance] = useState(String(initial?.clearance || ""));
+  const [assignedRecruiterIds, setAssignedRecruiterIds] = useState<string[]>(
+    initialRecruiters.length
+      ? initialRecruiters
+      : users
+          .filter((u) => ((u.memberships as { role: string }[] | undefined) || []).some((m) => m.role === "recruiter"))
+          .slice(0, 1)
+          .map((u) => String(u.id)),
+  );
+
   return (
     <form
       className="space-y-3"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        onSave({
-          title,
-          skills: "Java, AWS",
-          location: "Remote",
-          assignedRecruiterIds: recruiter ? [String(recruiter.id)] : [],
-        });
+        setBusy(true);
+        try {
+          await onSave({
+            title,
+            skills,
+            location,
+            hiringManagerId,
+            assignedRecruiterIds,
+            status,
+            targetFillAt,
+            billRate,
+            payRate,
+            employmentType,
+            duration,
+            clearance,
+          });
+        } finally {
+          setBusy(false);
+        }
       }}
     >
-      <h2 className="text-lg font-semibold">Requirement</h2>
-      <input className="w-full border rounded px-2 py-2" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} required />
+      <h2 className="text-lg font-semibold">{initial ? "Edit Requirement" : "Add Requirement"}</h2>
+      <p className="text-xs text-slate-500">Jobs live on the Client — not a left-nav module. Hiring manager and recruiters are required.</p>
+      {!contacts.length ? (
+        <p className="text-xs text-amber-800">Add a Contact on this Client before creating a Requirement.</p>
+      ) : null}
+      <Label>Title *</Label>
+      <FieldInput value={title} onChange={(e) => setTitle(e.target.value)} required />
+      <Label>Skills *</Label>
+      <FieldInput value={skills} onChange={(e) => setSkills(e.target.value)} placeholder="Java, AWS, Kubernetes" required />
+      <Label>Location *</Label>
+      <FieldInput value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Remote / City, ST" required />
+      <Label>Hiring manager *</Label>
+      <FieldSelect className="w-full" value={hiringManagerId} onChange={(e) => setHiringManagerId(e.target.value)} required>
+        <option value="">Select contact</option>
+        {contacts.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}{c.title ? ` — ${c.title}` : ""}</option>
+        ))}
+      </FieldSelect>
+      <Label>Assigned recruiters *</Label>
+      <div className="max-h-36 overflow-auto rounded border px-2 py-1 space-y-1">
+        {users.map((u) => {
+          const id = String(u.id);
+          const checked = assignedRecruiterIds.includes(id);
+          return (
+            <label key={id} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={() =>
+                  setAssignedRecruiterIds((prev) => (checked ? prev.filter((x) => x !== id) : [...prev, id]))
+                }
+              />
+              <span>{String(u.name)}</span>
+            </label>
+          );
+        })}
+      </div>
+      <Label>Status</Label>
+      <FieldSelect className="w-full" value={status} onChange={(e) => setStatus(e.target.value)}>
+        <option value="open">Open</option>
+        <option value="on_hold">On hold</option>
+        <option value="filled">Filled</option>
+        <option value="cancelled">Cancelled</option>
+      </FieldSelect>
+      <Label>Target fill date</Label>
+      <FieldInput type="date" value={targetFillAt} onChange={(e) => setTargetFillAt(e.target.value)} />
+      <p className="text-xs font-medium text-slate-600 pt-1">Optional US staffing details</p>
+      <Label>Employment type <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldSelect className="w-full" value={employmentType} onChange={(e) => setEmploymentType(e.target.value)}>
+        <option value="">Select</option>
+        {EMPLOYMENT_TYPE_OPTIONS.map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </FieldSelect>
+      <Label>Bill rate <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <RateField value={billRate} onChange={(e) => setBillRate(e.target.value)} placeholder="95/hr" />
+      <Label>Pay rate <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <RateField value={payRate} onChange={(e) => setPayRate(e.target.value)} placeholder="75/hr" />
+      <Label>Duration <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldInput value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="6 months / 12 months / Perm" />
+      <Label>Clearance <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldSelect className="w-full" value={clearance} onChange={(e) => setClearance(e.target.value)}>
+        <option value="">Select</option>
+        {CLEARANCE_OPTIONS.map((o) => (
+          <option key={o} value={o}>{o}</option>
+        ))}
+      </FieldSelect>
       <div className="flex gap-2">
-        <button className={btnPrimary}>Create</button>
-        <button type="button" className={btnGhost} onClick={onClose}>
-          Cancel
-        </button>
+        <button className={btnPrimary} disabled={busy || !contacts.length}>{busy ? "Saving…" : initial ? "Save" : "Create"}</button>
+        <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>Cancel</button>
       </div>
     </form>
   );

@@ -186,6 +186,7 @@ model Tenant {
   auditEvents      AuditEvent[]
   titleIndexes     TitleIndex[]
   ownershipReqs    OwnershipRequest[]
+  ownershipHistory PersonOwnershipHistory[]
   exceptions       ExceptionItem[]
   agentMaps        VioTalkAgentMap[]
   mailboxMaps      MailboxMap[]
@@ -259,6 +260,11 @@ model User {
   jnpMap              JnpUserMap?
   ownershipRequested  OwnershipRequest[]    @relation("OwnershipRequester")
   ownershipTarget     OwnershipRequest[]    @relation("OwnershipTarget")
+  ownershipFrom       PersonOwnershipHistory[] @relation("OwnershipHistoryFrom")
+  ownershipTo         PersonOwnershipHistory[] @relation("OwnershipHistoryTo")
+  submissionsAsRecruiter Submission[]       @relation("SubmissionRecruiter")
+  submissionsAsBdm    Submission[]           @relation("SubmissionBdm")
+  interviewsArranged  Interview[]            @relation("InterviewArrangedBy")
   assignedReqs        RequirementRecruiter[]
   bdms                Requirement[]         @relation("RequirementBdm")
   organizedEvents     CalendarEvent[]       @relation("CalendarOrganizer")
@@ -310,6 +316,9 @@ model Organization {
   name       String
   industry   String   @default("")
   location   String   @default("")
+  /// Optional US extras (not C.9 required).
+  website    String   @default("")
+  phone      String   @default("")
   status     String   @default("active")
   ownerId    String   @map("owner_id")
   owner      User     @relation("OrganizationOwner", fields: [ownerId], references: [id])
@@ -368,6 +377,8 @@ model Person {
   source          String      @default("manual")
   ownerId         String      @map("owner_id")
   owner           User        @relation("PersonOwner", fields: [ownerId], references: [id])
+  /// When current owner took ownership — prior Communication stays private to prior owner/actors.
+  ownerSince      DateTime    @default(now()) @map("owner_since")
   doNotReach    Boolean     @default(false) @map("do_not_reach")
   doNotReachReason String   @default("") @map("do_not_reach_reason")
   doNotEmail      Boolean     @default(false) @map("do_not_email")
@@ -406,6 +417,7 @@ model Person {
   interviews       Interview[]
   placements       Placement[]
   ownershipReqs    OwnershipRequest[] @relation("OwnershipPerson")
+  ownershipHistory PersonOwnershipHistory[]
   calendarEvents   CalendarEvent[]
 
   @@index([tenantId, kind])
@@ -421,6 +433,30 @@ model Person {
   /// Array containment (`skills has …`)
   @@index([skills], type: Gin, map: "people_skills_gin_idx")
   @@map("people")
+  @@schema("talentbridge")
+}
+
+/// Durable A → B → C ownership trail. Communication stays private; this trail + submission/interview attribution remain visible.
+model PersonOwnershipHistory {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  personId    String    @map("person_id")
+  person      Person    @relation(fields: [personId], references: [id], onDelete: Cascade)
+  /// Null = initial assignment (create / first owner).
+  fromOwnerId String?   @map("from_owner_id")
+  fromOwner   User?     @relation("OwnershipHistoryFrom", fields: [fromOwnerId], references: [id])
+  toOwnerId   String    @map("to_owner_id")
+  toOwner     User      @relation("OwnershipHistoryTo", fields: [toOwnerId], references: [id])
+  startedAt   DateTime  @map("started_at")
+  endedAt     DateTime? @map("ended_at")
+  note        String    @default("")
+  requestId   String?   @map("request_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([tenantId, personId, startedAt])
+  @@index([tenantId, personId, endedAt])
+  @@map("person_ownership_history")
   @@schema("talentbridge")
 }
 
@@ -486,6 +522,12 @@ model Requirement {
   openedAt        DateTime           @default(now()) @map("opened_at")
   targetFillAt    DateTime?          @map("target_fill_at")
   portalJobId     String?            @map("portal_job_id")
+  /// Optional US staffing extras (not C.4 required).
+  billRate        String             @default("") @map("bill_rate")
+  payRate         String             @default("") @map("pay_rate")
+  employmentType  String             @default("") @map("employment_type")
+  duration        String             @default("")
+  clearance       String             @default("")
   createdAt       DateTime           @default(now()) @map("created_at")
 
   recruiters     RequirementRecruiter[]
@@ -529,7 +571,9 @@ model Submission {
   clientPersonId String       @map("client_person_id")
   clientPerson   Person       @relation("SubmissionClientPerson", fields: [clientPersonId], references: [id])
   recruiterId     String       @map("recruiter_id")
+  recruiter       User         @relation("SubmissionRecruiter", fields: [recruiterId], references: [id])
   bdmId           String       @map("bdm_id")
+  bdm             User         @relation("SubmissionBdm", fields: [bdmId], references: [id])
   stage           String       @default("Submitted")
   emailMessageId  String?      @map("email_message_id")
   /// Microsoft Graph conversation id for the hub-sent thread (replies sync by this).
@@ -569,6 +613,9 @@ model Interview {
   requirement    Requirement  @relation(fields: [requirementId], references: [id])
   submissionId   String?      @map("submission_id")
   submission     Submission?  @relation(fields: [submissionId], references: [id])
+  /// Recruiter who arranged this interview — stays attributed after ownership transfer.
+  arrangedById   String?      @map("arranged_by_id")
+  arrangedBy     User?        @relation("InterviewArrangedBy", fields: [arrangedById], references: [id])
   scheduledAt    DateTime     @map("scheduled_at")
   endsAt         DateTime?    @map("ends_at")
   location       String       @default("")
@@ -582,6 +629,7 @@ model Interview {
 
   @@index([tenantId, outcome, scheduledAt])
   @@index([tenantId, candidateId])
+  @@index([tenantId, arrangedById])
   @@map("interviews")
   @@schema("talentbridge")
 }

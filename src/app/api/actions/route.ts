@@ -22,6 +22,7 @@ import {
   decideOwnership,
   deletePersonFile,
   exportDashboard,
+  importClientRows,
   ingestOutlookMail,
   placeCall,
   requestOwnership,
@@ -31,6 +32,7 @@ import {
   syncJnp,
   toggleDnc,
   updatePerson,
+  updateRequirement,
   upsertEmailSignature,
   deleteEmailSignature,
   setDefaultEmailSignature,
@@ -55,6 +57,7 @@ export async function POST(req: Request) {
             nextActionTitle: body.nextActionTitle as string | undefined,
             dueAt: body.dueAt as string | undefined,
             requirementId: body.requirementId as string | undefined,
+            submissionId: body.submissionId as string | undefined,
           }),
         );
       case "call":
@@ -172,6 +175,9 @@ export async function POST(req: Request) {
             expectedRate: body.expectedRate as string | undefined,
             timezone: body.timezone as string | undefined,
             resumeName: body.resumeName as string | undefined,
+            organizationId: body.organizationId as string | undefined,
+            roleOnOrganization: body.roleOnOrganization as string | undefined,
+            stage: body.stage as string | undefined,
           }),
         );
       case "update_person":
@@ -206,6 +212,8 @@ export async function POST(req: Request) {
             role: body.role as "client" | "vendor",
             industry: body.industry as string | undefined,
             location: body.location as string | undefined,
+            website: body.website as string | undefined,
+            phone: body.phone as string | undefined,
           }),
         );
       case "create_requirement":
@@ -213,16 +221,69 @@ export async function POST(req: Request) {
           await createRequirement(session, {
             organizationId: String(body.organizationId),
             title: String(body.title),
-            skills: String(body.skills || "")
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean),
+            skills: Array.isArray(body.skills)
+              ? (body.skills as string[])
+              : String(body.skills || "")
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
             location: String(body.location || ""),
             hiringManagerId: body.hiringManagerId ? String(body.hiringManagerId) : undefined,
             assignedRecruiterIds: Array.isArray(body.assignedRecruiterIds)
               ? (body.assignedRecruiterIds as string[])
               : [],
+            status: body.status as string | undefined,
+            targetFillAt: body.targetFillAt as string | undefined,
+            billRate: body.billRate as string | undefined,
+            payRate: body.payRate as string | undefined,
+            employmentType: body.employmentType as string | undefined,
+            duration: body.duration as string | undefined,
+            clearance: body.clearance as string | undefined,
           }),
+        );
+      case "update_requirement":
+        return NextResponse.json(
+          await updateRequirement(session, String(body.requirementId), {
+            title: body.title as string | undefined,
+            skills: Array.isArray(body.skills)
+              ? (body.skills as string[])
+              : body.skills != null
+                ? String(body.skills)
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                : undefined,
+            location: body.location as string | undefined,
+            hiringManagerId: body.hiringManagerId ? String(body.hiringManagerId) : undefined,
+            assignedRecruiterIds: Array.isArray(body.assignedRecruiterIds)
+              ? (body.assignedRecruiterIds as string[])
+              : undefined,
+            status: body.status as string | undefined,
+            targetFillAt: (body.targetFillAt as string | null | undefined) ?? undefined,
+            billRate: body.billRate as string | undefined,
+            payRate: body.payRate as string | undefined,
+            employmentType: body.employmentType as string | undefined,
+            duration: body.duration as string | undefined,
+            clearance: body.clearance as string | undefined,
+          }),
+        );
+      case "import_clients":
+        return NextResponse.json(
+          await importClientRows(
+            session,
+            Array.isArray(body.rows)
+              ? (body.rows as {
+                  companyName: string;
+                  industry?: string;
+                  location?: string;
+                  contactName?: string;
+                  contactEmail?: string;
+                  contactPhone?: string;
+                  contactTitle?: string;
+                  stage?: string;
+                }[])
+              : [],
+          ),
         );
       case "note":
         return NextResponse.json(

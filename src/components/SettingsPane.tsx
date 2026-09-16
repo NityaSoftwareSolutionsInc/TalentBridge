@@ -276,7 +276,8 @@ export function SettingsPane({
       if (auditFilter === "jnp" && e.action !== "jnp_sync") return false;
       if (auditFilter === "person" && !["create_person", "update_person", "add_note", "toggle_dnc", "add_person_file", "delete_person_file"].includes(e.action))
         return false;
-      if (auditFilter === "outlook" && !["send_email", "ingest_outlook"].includes(e.action)) return false;
+      if (auditFilter === "outlook" && !["send_email", "ingest_outlook", "email_inbound", "submit_profile"].includes(e.action))
+        return false;
       if (auditFilter === "teams" && e.action !== "schedule_meeting") return false;
       if (
         auditFilter === "access" &&
@@ -1359,7 +1360,7 @@ export function SettingsPane({
                   <option value="all">All events</option>
                   <option value="person">Person / notes / files / DNC</option>
                   <option value="jnp">JNP candidate sync</option>
-                  <option value="outlook">Outlook send / ingest</option>
+                  <option value="outlook">Email / Outlook (send · ingest · replies)</option>
                   <option value="teams">Teams meetings</option>
                   <option value="wrap-up">Wrap-up</option>
                   <option value="submit">Submit</option>
@@ -1391,7 +1392,7 @@ export function SettingsPane({
                     <tr key={e.id} className="border-t border-slate-100 align-top">
                       <td className="py-2 pr-3 text-slate-600 whitespace-nowrap">{fmtTime(e.createdAt)}</td>
                       <td className="py-2 pr-3">{e.actorName}</td>
-                      <td className="py-2 pr-3">{e.action.replaceAll("_", " ")}</td>
+                      <td className="py-2 pr-3">{auditActionLabel(e.action)}</td>
                       <td className="py-2 pr-3 text-slate-600">
                         {e.entityType} · {e.entityId.slice(0, 8)}
                       </td>
@@ -1411,6 +1412,30 @@ export function SettingsPane({
   );
 }
 
+function auditActionLabel(action: string) {
+  const labels: Record<string, string> = {
+    send_email: "Email sent",
+    email_inbound: "Email reply ingested",
+    ingest_outlook: "Outlook ingest",
+    submit_profile: "Submit profile",
+    schedule_meeting: "Meeting scheduled",
+    ownership_transfer: "Ownership transfer requested",
+    ownership_collaboration: "Collaboration requested",
+    ownership_decide: "Ownership decision",
+    add_note: "Note added",
+    wrap_up: "Wrap-up",
+    place_call: "Call placed",
+    viotalk_call: "Call placed",
+    change_stage: "Stage changed",
+    create_person: "Person created",
+    jnp_sync: "JNP sync",
+    login: "Login",
+    logout: "Logout",
+    login_failed: "Login failed",
+  };
+  return labels[action] || action.replaceAll("_", " ");
+}
+
 function auditAfterLabel(e: AuditRow) {
   const sensitive = /recording|transcript|msa|po|export|view_file/i.test(`${e.action} ${e.entityType} ${e.after}`);
   if (sensitive) {
@@ -1425,6 +1450,26 @@ function auditAfterLabel(e: AuditRow) {
   const parsed = parseJson(e.after);
   if (parsed && typeof parsed === "object") {
     const rec = parsed as Record<string, unknown>;
+    if (e.action === "send_email" || e.action === "email_inbound" || e.action === "submit_profile") {
+      const bits = [
+        rec.subject ? `Subject: ${String(rec.subject)}` : "",
+        rec.to ? `To: ${String(rec.to)}` : "",
+        rec.from ? `From: ${String(rec.from)}` : "",
+        rec.candidateName ? `Candidate: ${String(rec.candidateName)}` : "",
+        rec.personName ? `Person: ${String(rec.personName)}` : "",
+        rec.organizationName ? `Client: ${String(rec.organizationName)}` : "",
+      ].filter(Boolean);
+      if (bits.length) return bits.slice(0, 3).join(" · ");
+    }
+    if (e.action === "ownership_decide") {
+      const bits = [
+        rec.accepted === false ? "Dismissed" : rec.accepted ? "Accepted" : "",
+        rec.fromOwnerName && rec.toOwnerName ? `${rec.fromOwnerName} → ${rec.toOwnerName}` : "",
+        rec.type ? String(rec.type) : "",
+        rec.communicationPrivacy ? "Prior communication retained" : "",
+      ].filter(Boolean);
+      if (bits.length) return bits.join(" · ");
+    }
     return Object.entries(rec)
       .slice(0, 3)
       .map(([k, v]) => `${k}: ${typeof v === "object" ? "…" : String(v)}`)

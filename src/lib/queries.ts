@@ -146,6 +146,8 @@ export async function searchPeople(
     excludeRequirementId?: string;
     stage?: string;
     workAuthorization?: string;
+    /** Clients/Vendors: companies (default for clients) | contacts */
+    segment?: string;
   },
 ) {
   const tenantId = session.tenantId;
@@ -161,6 +163,7 @@ export async function searchPeople(
     department: true,
     location: true,
     status: true,
+    stage: true,
     source: true,
     createdAt: true,
     lastOutreachAt: true,
@@ -174,7 +177,7 @@ export async function searchPeople(
       take: 1,
       select: {
         roleOnOrganization: true,
-        organization: { select: { name: true } },
+        organization: { select: { id: true, name: true } },
       },
     },
     candidateSubs: {
@@ -189,13 +192,74 @@ export async function searchPeople(
   } satisfies Prisma.PersonSelect;
 
   if (module === "clients" || module === "vendors") {
+    const roleKind = module === "clients" ? OrganizationRoleKind.client : OrganizationRoleKind.vendor;
+    const segment =
+      filters.segment === "contacts" || filters.segment === "companies"
+        ? filters.segment
+        : module === "clients"
+          ? "companies"
+          : "contacts";
+
+    if (segment === "companies") {
+      const orgs = await prisma.organization.findMany({
+        where: {
+          tenantId,
+          roles: { some: { role: roleKind } },
+          location: filters.location ? { contains: filters.location, mode: "insensitive" } : undefined,
+          AND: [
+            filters.q
+              ? {
+                  OR: [
+                    { name: { contains: filters.q, mode: "insensitive" } },
+                    { industry: { contains: filters.q, mode: "insensitive" } },
+                    { location: { contains: filters.q, mode: "insensitive" } },
+                  ],
+                }
+              : {},
+          ],
+        },
+        include: {
+          owner: { select: { name: true } },
+          requirements: { where: { status: "open" }, select: { id: true } },
+          tasks: { where: { status: "open" }, orderBy: { dueAt: "asc" }, take: 1, select: { title: true, dueAt: true } },
+          _count: { select: { affiliations: true, requirements: true, submissions: true } },
+        },
+        orderBy: [{ createdAt: "desc" }, { lastOutreachAt: "desc" }],
+        take: 100,
+      });
+      return orgs.map((o) => ({
+        id: o.id,
+        type: "organization" as const,
+        name: o.name,
+        title: o.industry || "",
+        department: "",
+        location: o.location,
+        status: o.status,
+        stage: "",
+        source: "manual",
+        createdAt: o.createdAt,
+        lastOutreachAt: o.lastOutreachAt,
+        nextAction: o.tasks[0]?.title ?? "",
+        nextActionDueAt: o.tasks[0]?.dueAt ?? null,
+        ownerName: o.owner.name,
+        companyName: o.name,
+        roleOnOrganization: module === "clients" ? "Client" : "Vendor",
+        skills: [] as string[],
+        tags: [o.industry, o.status, o.requirements.length ? `${o.requirements.length} open` : ""].filter(Boolean).slice(0, 3),
+        previousSubmissions: [] as { client: string; job: string; stage: string }[],
+        openRequirements: o.requirements.length,
+        peopleCount: o._count.affiliations,
+        submissionsCount: o._count.submissions,
+      }));
+    }
+
     const kind = module === "clients" ? PersonKind.client_person : PersonKind.vendor_person;
     const people = await prisma.person.findMany({
       where: {
         tenantId,
         kind,
         location: filters.location ? { contains: filters.location, mode: "insensitive" } : undefined,
-        status: filters.stage || undefined,
+        stage: filters.stage || undefined,
         AND: [
           filters.q
             ? {
@@ -221,7 +285,7 @@ export async function searchPeople(
       orderBy: [{ createdAt: "desc" }, { lastOutreachAt: "desc" }],
       take: 100,
     });
-    return people.map((c) => serializePersonList(c));
+    return people.map((c) => ({ ...serializePersonList(c), type: "person" as const }));
   }
 
   const lastOutreachDays = filters.lastOutreach ? Number(filters.lastOutreach) : undefined;
@@ -322,19 +386,53 @@ export async function getPersonWorkspace(session: Session, personId: string) {
       coOwners: { include: { user: true } },
       titleIndex: true,
       affiliations: { include: { organization: { include: { roles: true, msaDocuments: true, purchaseOrders: true } } } },
-      candidateSubs: { include: { requirement: true, organization: true, clientPerson: true } },
-      clientPersonSubs: { include: { requirement: true, candidate: true } },
+      candidateSubs: {
+        include: {
+          requirement: true,
+          organization: true,
+          clientPerson: true,
+          recruiter: { select: { id: true, name: true } },
+        },
+      },
+      clientPersonSubs: { include: { requirement: true, candidate: true, recruiter: { select: { id: true, name: true } } } },
       hiringManagerReqs: true,
       activityEvents: { include: { actor: true }, orderBy: { createdAt: "desc" }, take: 50 },
       tasks: { include: { owner: true }, orderBy: { dueAt: "asc" } },
       files: { select: storedFileListSelect, orderBy: { createdAt: "desc" } },
-      interviews: { include: { requirement: true, organization: true } },
+      interviews: {
+        include: {
+          requirement: true,
+          organization: true,
+          arrangedBy: { select: { id: true, name: true } },
+          submission: { include: { recruiter: { select: { id: true, name: true } } } },
+        },
+      },
       placements: { include: { organization: true, requirement: true } },
       ownershipReqs: { where: { status: "pending" }, include: { requester: true } },
+      ownershipHistory: {
+        include: {
+          fromOwner: { select: { id: true, name: true } },
+          toOwner: { select: { id: true, name: true } },
+        },
+        orderBy: { startedAt: "asc" },
+      },
       calendarEvents: { orderBy: { startsAt: "asc" }, take: 20 },
     },
   });
   if (!c) return null;
+  await ensurePersonOwnershipHistorySeed(c);
+  // Reload history if we just seeded (cheap second read only when empty)
+  const ownershipHistory =
+    c.ownershipHistory.length > 0
+      ? c.ownershipHistory
+      : await prisma.personOwnershipHistory.findMany({
+          where: { personId: c.id, tenantId: session.tenantId },
+          include: {
+            fromOwner: { select: { id: true, name: true } },
+            toOwner: { select: { id: true, name: true } },
+          },
+          orderBy: { startedAt: "asc" },
+        });
   const organizationIds = c.affiliations.map((p) => p.organization.id);
   const people = organizationIds.length
     ? await prisma.personOrganizationAffiliation.findMany({
@@ -343,7 +441,13 @@ export async function getPersonWorkspace(session: Session, personId: string) {
         take: 8,
       })
     : [];
-  return { ...serializePersonDetail(c as Parameters<typeof serializePersonDetail>[0], session), people };
+  return {
+    ...serializePersonDetail(
+      { ...c, ownershipHistory } as Parameters<typeof serializePersonDetail>[0],
+      session,
+    ),
+    people,
+  };
 }
 
 export async function getOrganizationWorkspace(session: Session, organizationId: string) {
@@ -746,21 +850,39 @@ export async function listCalendar(session: Session) {
 }
 
 export async function listCommunications(session: Session) {
-  return prisma.activityEvent.findMany({
+  const rows = await prisma.activityEvent.findMany({
     where: {
       tenantId: session.tenantId,
       kind: { in: ["email", "call", "meeting", "whatsapp", "note"] },
     },
     include: { actor: true, person: true, organization: true },
     orderBy: { createdAt: "desc" },
-    take: 80,
+    take: 120,
   });
+  // Org inbox respects the same privacy rule: prior Communication does not follow a transferred owner.
+  if (session.role === "admin" || session.role === "operations") return rows.slice(0, 80);
+  return rows
+    .filter((a) => {
+      if (a.actorId === session.userId) return true;
+      if (!a.person) return true;
+      const ownerSince = a.person.ownerSince || a.person.createdAt;
+      return a.createdAt >= ownerSince;
+    })
+    .slice(0, 80);
 }
 
 export async function listRequirements(session: Session, organizationId?: string) {
   return prisma.requirement.findMany({
     where: { tenantId: session.tenantId, organizationId: organizationId || undefined },
-    include: { organization: true, hiringManager: true, recruiters: { include: { user: true } } },
+    include: {
+      organization: {
+        include: {
+          affiliations: { include: { person: { select: { id: true, name: true, email: true, title: true, kind: true } } } },
+        },
+      },
+      hiringManager: true,
+      recruiters: { include: { user: true } },
+    },
     orderBy: { openedAt: "desc" },
   });
 }
@@ -772,6 +894,7 @@ export async function wrapUp(session: Session, input: {
   nextActionTitle?: string;
   dueAt?: string;
   requirementId?: string;
+  submissionId?: string;
 }) {
   const activity = input.activityId
     ? await prisma.activityEvent.findFirst({ where: { id: input.activityId, tenantId: session.tenantId } })
@@ -783,6 +906,7 @@ export async function wrapUp(session: Session, input: {
           actorId: session.userId,
           personId: input.personId,
           requirementId: input.requirementId,
+          submissionId: input.submissionId,
           wrapUp: input.outcome,
         },
       });
@@ -794,6 +918,10 @@ export async function wrapUp(session: Session, input: {
     });
   }
 
+  const requirementId = input.requirementId || activity?.requirementId || undefined;
+  const submissionId = input.submissionId || activity?.submissionId || undefined;
+  const organizationId = activity?.organizationId || undefined;
+
   let taskId: string | undefined;
   if (input.outcome === WrapUpOutcome.next_action && input.nextActionTitle) {
     const task = await prisma.task.create({
@@ -803,7 +931,9 @@ export async function wrapUp(session: Session, input: {
         dueAt: input.dueAt ? new Date(input.dueAt) : daysFromNow(1),
         ownerId: session.userId,
         personId: input.personId,
-        requirementId: input.requirementId,
+        requirementId,
+        submissionId,
+        organizationId,
         sourceEventId: activity?.id,
       },
     });
@@ -829,7 +959,7 @@ export async function wrapUp(session: Session, input: {
     action: "wrap_up",
     entityType: "activity_event",
     entityId: activity?.id ?? input.personId,
-    after: { outcome: input.outcome, taskId },
+    after: { outcome: input.outcome, taskId, requirementId, submissionId },
   });
 
   return { activityId: activity?.id, taskId };
@@ -878,7 +1008,13 @@ export async function placeCall(session: Session, personId: string) {
     action: "viotalk_call",
     entityType: "activity_event",
     entityId: activity.id,
-    after: { callId: result.callId },
+    after: {
+      personId,
+      personName: person.name,
+      callId: result.callId,
+      durationSeconds: result.durationSeconds,
+      channel: "call",
+    },
   });
 
   return { activityId: activity.id, proposedFollowUp: result.proposedFollowUp, callId: result.callId };
@@ -900,13 +1036,18 @@ export async function submitProfile(
     include: { organization: true },
   });
   if (!req) throw new Error("Requirement required — cannot submit to a company with no job");
+  if (req.status !== "open") throw new Error("Submit Profile is only allowed against Open requirements");
   const candidate = await prisma.person.findFirst({
     where: { id: input.candidateId, tenantId: session.tenantId },
   });
   const clientPerson = await prisma.person.findFirst({
-    where: { id: input.clientPersonId, tenantId: session.tenantId },
+    where: { id: input.clientPersonId, tenantId: session.tenantId, kind: PersonKind.client_person },
   });
   if (!candidate || !clientPerson) throw new Error("Candidate and Client person required");
+  const affiliated = await prisma.personOrganizationAffiliation.findFirst({
+    where: { organizationId: req.organizationId, personId: clientPerson.id },
+  });
+  if (!affiliated) throw new Error("Client contact must belong to the Requirement’s Client company");
   if (outreachChannelBlocks(candidate).email) throw new Error("Do not reach is on — outbound email disabled.");
   if (!session.mailbox) throw new Error("Outlook is not connected — open Settings and Connect Outlook");
 
@@ -960,7 +1101,22 @@ export async function submitProfile(
     action: "submit_profile",
     entityType: "submission",
     entityId: submission.id,
-    after: { emailMessageId: sent.messageId, conversationId: sent.conversationId },
+    after: {
+      candidateId: candidate.id,
+      candidateName: candidate.name,
+      requirementId: req.id,
+      requirementTitle: req.title,
+      organizationId: req.organizationId,
+      organizationName: req.organization.name,
+      clientPersonId: clientPerson.id,
+      to: clientPerson.email,
+      recruiterId: session.userId,
+      mailbox: session.mailbox,
+      emailMessageId: sent.messageId,
+      conversationId: sent.conversationId || null,
+      resumeVersion: input.resumeName || candidate.lastResume,
+      channel: "email",
+    },
   });
 
   return { submissionId: submission.id, activityId: activity.id, messageId: sent.messageId };
@@ -1063,12 +1219,18 @@ export async function sendEmail(
     entityType: "activity_event",
     entityId: activity.id,
     after: {
-      messageId: sent.messageId,
-      conversationId: sent.conversationId,
+      personId: person.id,
+      personName: person.name,
+      subject,
       to,
       cc,
+      mailbox: session.mailbox,
+      messageId: sent.messageId,
+      conversationId: sent.conversationId || null,
       includeSignature: includeSignature && Boolean(signature),
       signatureId,
+      channel: "email",
+      // Body intentionally omitted from audit (privacy).
     },
   });
 
@@ -1159,6 +1321,7 @@ export async function scheduleMeeting(
         organizationId: requirement.organizationId,
         requirementId: requirement.id,
         submissionId: requirement.submissions[0]?.id,
+        arrangedById: session.userId,
         scheduledAt: startsAt,
         endsAt,
         location: useTeams ? "Microsoft Teams" : "",
@@ -1218,7 +1381,19 @@ export async function scheduleMeeting(
     action: "schedule_meeting",
     entityType: "calendar_event",
     entityId: event.id,
-    after: { graphEventId, teamsJoinUrl, interviewId },
+    after: {
+      personId: person.id,
+      personName: person.name,
+      title,
+      asInterview: Boolean(input.asInterview),
+      interviewId: interviewId || null,
+      requirementId: requirement?.id || null,
+      organizationId: organizationId || null,
+      teams: useTeams,
+      graphEventId: graphEventId || null,
+      startsAt: startsAt.toISOString(),
+      endsAt: endsAt.toISOString(),
+    },
   });
 
   return {
@@ -1425,7 +1600,7 @@ export async function ingestOutlookMail(session: Session) {
 
       const readLabel =
         typeof msg.isRead === "boolean" ? (msg.isRead ? " · read" : " · unread") : "";
-      await prisma.activityEvent.create({
+      const inbound = await prisma.activityEvent.create({
         data: {
           tenantId: session.tenantId,
           kind: "email",
@@ -1440,6 +1615,25 @@ export async function ingestOutlookMail(session: Session) {
           organizationId: organizationId || null,
           requirementId: requirementId || null,
           submissionId: submissionId || null,
+        },
+      });
+      await audit({
+        tenantId: session.tenantId,
+        actorId: session.userId,
+        action: "email_inbound",
+        entityType: "activity_event",
+        entityId: inbound.id,
+        after: {
+          personId: personId || null,
+          organizationId: organizationId || null,
+          submissionId: submissionId || null,
+          subject: msg.subject || "",
+          from: msg.from || "",
+          conversationId: cid,
+          mailbox: map.mailbox,
+          messageId: msg.internetMessageId || msg.messageId,
+          isRead: typeof msg.isRead === "boolean" ? msg.isRead : null,
+          channel: "email",
         },
       });
       created += 1;
@@ -1548,7 +1742,13 @@ export async function requestOwnership(
     action: `ownership_${type}`,
     entityType: "person",
     entityId: personId,
-    after: { requestId: row.id },
+    after: {
+      requestId: row.id,
+      type,
+      note: String(note || "").slice(0, 200),
+      requesterId: session.userId,
+      targetOwnerId: person.ownerId,
+    },
   });
   return row;
 }
@@ -1563,15 +1763,56 @@ export async function decideOwnership(session: Session, requestId: string, accep
   if (!req) throw new Error("Request not found");
   const person = await prisma.person.findFirst({
     where: { id: req.personId, tenantId: session.tenantId },
-    select: { id: true, ownerId: true },
+    select: { id: true, ownerId: true, name: true, createdAt: true },
   });
   if (!person) throw new Error("Person not found");
   const before = { ownerId: person.ownerId, status: req.status, type: req.type };
+  const requester = await prisma.user.findFirst({
+    where: { id: req.requesterId, tenantId: session.tenantId },
+    select: { id: true, name: true },
+  });
+  const previousOwner = await prisma.user.findFirst({
+    where: { id: person.ownerId, tenantId: session.tenantId },
+    select: { id: true, name: true },
+  });
 
   if (accept && req.type === "transfer") {
+    const transferredAt = new Date();
     await prisma.person.update({
       where: { id: req.personId },
+      data: { ownerId: req.requesterId, ownerSince: transferredAt },
+    });
+    await recordOwnershipTransfer({
+      tenantId: session.tenantId,
+      personId: req.personId,
+      fromOwnerId: person.ownerId,
+      toOwnerId: req.requesterId,
+      at: transferredAt,
+      ownedSince: person.createdAt,
+      note: req.note || "",
+      requestId: req.id,
+    });
+    // Open follow-ups move with the relationship. Communication does NOT transfer (privacy).
+    // Submissions + interviews stay on the person and remain visible to the new owner — attributed to who did them.
+    await prisma.task.updateMany({
+      where: {
+        tenantId: session.tenantId,
+        personId: req.personId,
+        status: "open",
+        ownerId: person.ownerId,
+      },
       data: { ownerId: req.requesterId },
+    });
+    await prisma.activityEvent.create({
+      data: {
+        tenantId: session.tenantId,
+        kind: "ownership",
+        summary: `Ownership transferred: ${previousOwner?.name || "previous owner"} → ${requester?.name || "new owner"}. Prior Communication stays private — submissions and interviews remain on this record with who did what.`,
+        body: req.note || "",
+        source: "talentbridge",
+        actorId: session.userId,
+        personId: req.personId,
+      },
     });
   }
   if (accept && req.type === "collaboration") {
@@ -1582,6 +1823,17 @@ export async function decideOwnership(session: Session, requestId: string, accep
     } catch (e) {
       if (!isUniqueViolation(e)) throw e;
     }
+    await prisma.activityEvent.create({
+      data: {
+        tenantId: session.tenantId,
+        kind: "ownership",
+        summary: `Collaboration accepted: ${requester?.name || "teammate"} added as co-owner`,
+        body: req.note || "",
+        source: "talentbridge",
+        actorId: session.userId,
+        personId: req.personId,
+      },
+    });
   }
   const row = await prisma.ownershipRequest.update({
     where: { id: requestId },
@@ -1595,12 +1847,20 @@ export async function decideOwnership(session: Session, requestId: string, accep
     entityId: req.personId,
     before,
     after: {
+      personName: person.name,
       ownerId: accept && req.type === "transfer" ? req.requesterId : person.ownerId,
+      fromOwnerId: previousOwner?.id || person.ownerId,
+      fromOwnerName: previousOwner?.name || null,
+      toOwnerId: accept && req.type === "transfer" ? req.requesterId : null,
+      toOwnerName: accept && req.type === "transfer" ? requester?.name || null : null,
       status: row.status,
       type: req.type,
       accepted: accept,
       requestId: req.id,
       requesterId: req.requesterId,
+      tasksReassigned: accept && req.type === "transfer",
+      communicationPrivacy: accept && req.type === "transfer" ? "prior_communication_retained" : undefined,
+      workHistory: accept && req.type === "transfer" ? "submissions_interviews_retained_with_attribution" : undefined,
     },
   });
   return row;
@@ -1725,6 +1985,16 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
   const person = existingByPortal
     ? await prisma.person.update({ where: { id: existingByPortal.id }, data })
     : await prisma.person.create({ data });
+
+  if (!existingByPortal) {
+    await seedInitialOwnershipHistory({
+      tenantId: session.tenantId,
+      personId: person.id,
+      ownerId: session.userId,
+      startedAt: person.createdAt,
+      note: "Initial owner (JobsNProfiles sync)",
+    });
+  }
 
   await prisma.titleIndex.upsert({
     where: { personId: person.id },
@@ -2123,6 +2393,10 @@ export async function createPerson(
     timezone?: string;
     /** Resume file name / label for POC (binary storage later). */
     resumeName?: string;
+    /** Required for client_person / vendor_person — Contact belongs to company (C.9). */
+    organizationId?: string;
+    roleOnOrganization?: string;
+    stage?: string;
   },
 ) {
   const kind =
@@ -2145,6 +2419,38 @@ export async function createPerson(
     input.experienceYears != null && input.experienceYears !== ""
       ? Number(input.experienceYears) || 0
       : 0;
+
+  const organizationId = input.organizationId ? String(input.organizationId).trim() : "";
+  if (kind === PersonKind.client_person) {
+    if (!organizationId) {
+      throw new Error("Client contact must belong to a Client company — open Client 360 → Contacts");
+    }
+    const org = await prisma.organization.findFirst({
+      where: {
+        id: organizationId,
+        tenantId: session.tenantId,
+        roles: { some: { role: OrganizationRoleKind.client } },
+      },
+      select: { id: true },
+    });
+    if (!org) throw new Error("Company not found in this tenant");
+  } else if (kind === PersonKind.vendor_person && organizationId) {
+    const org = await prisma.organization.findFirst({
+      where: {
+        id: organizationId,
+        tenantId: session.tenantId,
+        roles: { some: { role: OrganizationRoleKind.vendor } },
+      },
+      select: { id: true },
+    });
+    if (!org) throw new Error("Vendor company not found in this tenant");
+  }
+
+  const settings = await tenantSettings(session.tenantId);
+  const stage =
+    input.stage && settings.relationshipStages.includes(input.stage)
+      ? input.stage
+      : settings.relationshipStages[0] || "Lead";
 
   const person = await prisma.person.create({
     data: {
@@ -2175,7 +2481,24 @@ export async function createPerson(
       lastResume: resumeName,
       ownerId: session.userId,
       source: "manual",
+      ...(kind !== PersonKind.candidate ? { stage } : {}),
+      affiliations: organizationId
+        ? {
+            create: {
+              organizationId,
+              roleOnOrganization: String(input.roleOnOrganization || title || "").trim(),
+            },
+          }
+        : undefined,
     },
+  });
+
+  await seedInitialOwnershipHistory({
+    tenantId: session.tenantId,
+    personId: person.id,
+    ownerId: session.userId,
+    startedAt: person.createdAt,
+    note: "Initial owner",
   });
 
   if (kind === PersonKind.candidate && (title || skills.length)) {
@@ -2204,6 +2527,7 @@ export async function createPerson(
       ...personAuditFields(person),
       resumeName: resumeName || null,
       resumePendingUpload: Boolean(resumeName),
+      organizationId: organizationId || null,
     },
   });
   return person;
@@ -2323,7 +2647,14 @@ export async function updatePerson(
 
 export async function createOrganization(
   session: Session,
-  input: { name: string; role: "client" | "vendor"; industry?: string; location?: string },
+  input: {
+    name: string;
+    role: "client" | "vendor";
+    industry?: string;
+    location?: string;
+    website?: string;
+    phone?: string;
+  },
 ) {
   if (!["sales", "operations", "admin"].includes(session.role)) {
     throw new Error("Clients/Vendors are created in TalentBridge by sales/ops/admin — not fetched from JobsNProfiles");
@@ -2334,6 +2665,8 @@ export async function createOrganization(
       name: input.name,
       industry: input.industry || "",
       location: input.location || "",
+      website: String(input.website || "").trim(),
+      phone: String(input.phone || "").trim(),
       ownerId: session.userId,
       roles: { create: { role: input.role === "vendor" ? OrganizationRoleKind.vendor : OrganizationRoleKind.client } },
     },
@@ -2357,24 +2690,77 @@ export async function createRequirement(
     location: string;
     hiringManagerId?: string;
     assignedRecruiterIds: string[];
+    status?: string;
+    targetFillAt?: string;
+    billRate?: string;
+    payRate?: string;
+    employmentType?: string;
+    duration?: string;
+    clearance?: string;
   },
 ) {
-  if (!session.permissions.includes("clients") && session.role !== "recruiter") {
-    // sales/ops/admin create reqs; recruiter may not
-  }
   if (!["sales", "operations", "admin"].includes(session.role)) {
     throw new Error("Create Requirement is a sales/ops/admin action");
   }
+  const title = String(input.title || "").trim();
+  if (!title) throw new Error("Requirement title is required");
+  const skills = (input.skills || []).map((s) => String(s).trim()).filter(Boolean);
+  if (!skills.length) throw new Error("Skills are required");
+  const location = String(input.location || "").trim();
+  if (!location) throw new Error("Location is required");
+  const hiringManagerId = String(input.hiringManagerId || "").trim();
+  if (!hiringManagerId) throw new Error("Hiring-manager contact is required — add a Contact on this Client first");
+  const assignedRecruiterIds = Array.from(new Set((input.assignedRecruiterIds || []).map(String).filter(Boolean)));
+  if (!assignedRecruiterIds.length) throw new Error("Assign at least one recruiter (hand-off)");
+
+  const org = await prisma.organization.findFirst({
+    where: {
+      id: input.organizationId,
+      tenantId: session.tenantId,
+      roles: { some: { role: OrganizationRoleKind.client } },
+    },
+    select: { id: true },
+  });
+  if (!org) throw new Error("Client company not found");
+
+  const affiliation = await prisma.personOrganizationAffiliation.findFirst({
+    where: {
+      organizationId: org.id,
+      personId: hiringManagerId,
+      person: { tenantId: session.tenantId, kind: PersonKind.client_person },
+    },
+  });
+  if (!affiliation) throw new Error("Hiring manager must be a Contact on this Client");
+
+  const recruiters = await prisma.user.findMany({
+    where: { tenantId: session.tenantId, id: { in: assignedRecruiterIds }, enabled: true },
+    select: { id: true },
+  });
+  if (recruiters.length !== assignedRecruiterIds.length) throw new Error("One or more recruiters were not found");
+
+  const statusRaw = String(input.status || "open").toLowerCase().replace(/\s+/g, "_");
+  const status =
+    statusRaw === "on_hold" || statusRaw === "filled" || statusRaw === "cancelled" || statusRaw === "open"
+      ? statusRaw
+      : "open";
+
   const req = await prisma.requirement.create({
     data: {
       tenantId: session.tenantId,
-      organizationId: input.organizationId,
-      title: input.title,
-      skills: input.skills,
-      location: input.location,
-      hiringManagerId: input.hiringManagerId,
+      organizationId: org.id,
+      title,
+      skills,
+      location,
+      hiringManagerId,
       bdmId: session.userId,
-      recruiters: { create: input.assignedRecruiterIds.map((userId) => ({ userId })) },
+      status: status as "open" | "on_hold" | "filled" | "cancelled",
+      targetFillAt: input.targetFillAt ? new Date(input.targetFillAt) : null,
+      billRate: normalizeRateInput(input.billRate),
+      payRate: normalizeRateInput(input.payRate),
+      employmentType: String(input.employmentType || "").trim(),
+      duration: String(input.duration || "").trim(),
+      clearance: String(input.clearance || "").trim(),
+      recruiters: { create: assignedRecruiterIds.map((userId) => ({ userId })) },
     },
   });
   await audit({
@@ -2385,6 +2771,174 @@ export async function createRequirement(
     entityId: req.id,
   });
   return req;
+}
+
+export async function updateRequirement(
+  session: Session,
+  requirementId: string,
+  input: {
+    title?: string;
+    skills?: string[];
+    location?: string;
+    hiringManagerId?: string;
+    assignedRecruiterIds?: string[];
+    status?: string;
+    targetFillAt?: string | null;
+    billRate?: string;
+    payRate?: string;
+    employmentType?: string;
+    duration?: string;
+    clearance?: string;
+  },
+) {
+  if (!["sales", "operations", "admin"].includes(session.role)) {
+    throw new Error("Update Requirement is a sales/ops/admin action");
+  }
+  const existing = await prisma.requirement.findFirst({
+    where: { id: requirementId, tenantId: session.tenantId },
+    include: { recruiters: true },
+  });
+  if (!existing) throw new Error("Requirement not found");
+
+  const data: Prisma.RequirementUpdateInput = {};
+  if (input.title != null) {
+    const title = String(input.title).trim();
+    if (!title) throw new Error("Requirement title is required");
+    data.title = title;
+  }
+  if (input.skills != null) {
+    const skills = input.skills.map((s) => String(s).trim()).filter(Boolean);
+    if (!skills.length) throw new Error("Skills are required");
+    data.skills = skills;
+  }
+  if (input.location != null) {
+    const location = String(input.location).trim();
+    if (!location) throw new Error("Location is required");
+    data.location = location;
+  }
+  if (input.targetFillAt !== undefined) {
+    data.targetFillAt = input.targetFillAt ? new Date(input.targetFillAt) : null;
+  }
+  if (input.status != null) {
+    const statusRaw = String(input.status).toLowerCase().replace(/\s+/g, "_");
+    if (!["open", "on_hold", "filled", "cancelled"].includes(statusRaw)) throw new Error("Unknown requirement status");
+    data.status = statusRaw as "open" | "on_hold" | "filled" | "cancelled";
+  }
+  if (input.billRate != null) data.billRate = normalizeRateInput(input.billRate);
+  if (input.payRate != null) data.payRate = normalizeRateInput(input.payRate);
+  if (input.employmentType != null) data.employmentType = String(input.employmentType).trim();
+  if (input.duration != null) data.duration = String(input.duration).trim();
+  if (input.clearance != null) data.clearance = String(input.clearance).trim();
+  if (input.hiringManagerId) {
+    const affiliation = await prisma.personOrganizationAffiliation.findFirst({
+      where: {
+        organizationId: existing.organizationId,
+        personId: input.hiringManagerId,
+        person: { tenantId: session.tenantId, kind: PersonKind.client_person },
+      },
+    });
+    if (!affiliation) throw new Error("Hiring manager must be a Contact on this Client");
+    data.hiringManager = { connect: { id: input.hiringManagerId } };
+  }
+  if (input.assignedRecruiterIds) {
+    const assignedRecruiterIds = Array.from(new Set(input.assignedRecruiterIds.map(String).filter(Boolean)));
+    if (!assignedRecruiterIds.length) throw new Error("Assign at least one recruiter (hand-off)");
+    const recruiters = await prisma.user.findMany({
+      where: { tenantId: session.tenantId, id: { in: assignedRecruiterIds }, enabled: true },
+      select: { id: true },
+    });
+    if (recruiters.length !== assignedRecruiterIds.length) throw new Error("One or more recruiters were not found");
+    await prisma.requirementRecruiter.deleteMany({ where: { requirementId: existing.id } });
+    data.recruiters = { create: assignedRecruiterIds.map((userId) => ({ userId })) };
+  }
+
+  const req = await prisma.requirement.update({
+    where: { id: existing.id },
+    data,
+  });
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "update_requirement",
+    entityType: "requirement",
+    entityId: req.id,
+    before: { status: existing.status, title: existing.title },
+    after: { status: req.status, title: req.title },
+  });
+  return req;
+}
+
+export async function importClientRows(
+  session: Session,
+  rows: {
+    companyName: string;
+    industry?: string;
+    location?: string;
+    contactName?: string;
+    contactEmail?: string;
+    contactPhone?: string;
+    contactTitle?: string;
+    stage?: string;
+  }[],
+) {
+  if (!["sales", "operations", "admin"].includes(session.role)) {
+    throw new Error("Client import is a sales/ops/admin action — not fetched from JobsNProfiles");
+  }
+  if (!Array.isArray(rows) || !rows.length) throw new Error("No rows to import");
+  if (rows.length > 200) throw new Error("Import limited to 200 rows per commit");
+
+  const settings = await tenantSettings(session.tenantId);
+  const created: { organizationId: string; personId?: string; companyName: string }[] = [];
+  const skipped: { row: number; reason: string }[] = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const companyName = String(row.companyName || "").trim();
+    if (!companyName) {
+      skipped.push({ row: i + 1, reason: "Company name required" });
+      continue;
+    }
+    try {
+      const organization = await createOrganization(session, {
+        name: companyName,
+        role: "client",
+        industry: row.industry,
+        location: row.location,
+      });
+      let personId: string | undefined;
+      const contactName = String(row.contactName || "").trim();
+      if (contactName) {
+        const stage =
+          row.stage && settings.relationshipStages.includes(row.stage)
+            ? row.stage
+            : settings.relationshipStages[0] || "Lead";
+        const person = await createPerson(session, {
+          name: contactName,
+          kind: "client_person",
+          email: row.contactEmail,
+          phone: row.contactPhone,
+          title: row.contactTitle,
+          organizationId: organization.id,
+          stage,
+        });
+        personId = person.id;
+      }
+      created.push({ organizationId: organization.id, personId, companyName });
+    } catch (e) {
+      skipped.push({ row: i + 1, reason: e instanceof Error ? e.message : "Import failed" });
+    }
+  }
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "import_clients",
+    entityType: "organization",
+    entityId: session.tenantId,
+    after: { created: created.length, skipped: skipped.length },
+  });
+
+  return { created, skipped, createdCount: created.length, skippedCount: skipped.length };
 }
 
 export async function addNote(session: Session, personId: string, body: string, visibility: "shared" | "internal") {
@@ -3529,6 +4083,7 @@ function serializePersonList(c: {
   department: string;
   location: string;
   status: string;
+  stage?: string;
   source: string;
   createdAt: Date;
   lastOutreachAt: Date | null;
@@ -3539,7 +4094,7 @@ function serializePersonList(c: {
   owner: { name: string };
   skills: string[];
   candidateSubs: { stage: string; organization: { name: string }; requirement: { title: string } }[];
-  affiliations: { roleOnOrganization: string; organization: { name: string } }[];
+  affiliations: { roleOnOrganization: string; organization: { id?: string; name: string } }[];
 }) {
   const company = c.affiliations[0];
   return {
@@ -3549,6 +4104,7 @@ function serializePersonList(c: {
     department: c.department,
     location: c.location,
     status: c.status,
+    stage: c.stage || "",
     source: c.source,
     createdAt: c.createdAt,
     lastOutreachAt: c.lastOutreachAt,
@@ -3558,9 +4114,10 @@ function serializePersonList(c: {
     workAuthorization: c.workAuthorization,
     ownerName: c.owner.name,
     companyName: company?.organization.name ?? "",
+    companyId: company?.organization.id ?? "",
     roleOnOrganization: company?.roleOnOrganization ?? "",
     skills: c.skills,
-    tags: [company?.roleOnOrganization, c.status, ...c.skills].filter((t, i, a) => Boolean(t) && a.indexOf(t) === i).slice(0, 3),
+    tags: [company?.roleOnOrganization, c.stage || c.status, ...c.skills].filter((t, i, a) => Boolean(t) && a.indexOf(t) === i).slice(0, 3),
     previousSubmissions: c.candidateSubs.map((s) => ({
       client: s.organization.name,
       job: s.requirement.title,
@@ -3596,6 +4153,120 @@ function serializeStoredFile(f: {
   };
 }
 
+function isPrivateCommunicationKind(kind: string) {
+  const k = String(kind || "").toLowerCase();
+  return ["email", "call", "whatsapp", "meeting", "note", "internal_note", "conversation"].includes(k);
+}
+
+async function seedInitialOwnershipHistory(input: {
+  tenantId: string;
+  personId: string;
+  ownerId: string;
+  startedAt: Date;
+  note?: string;
+}) {
+  const existing = await prisma.personOwnershipHistory.count({
+    where: { tenantId: input.tenantId, personId: input.personId },
+  });
+  if (existing > 0) return;
+  await prisma.personOwnershipHistory.create({
+    data: {
+      tenantId: input.tenantId,
+      personId: input.personId,
+      fromOwnerId: null,
+      toOwnerId: input.ownerId,
+      startedAt: input.startedAt,
+      endedAt: null,
+      note: input.note || "Initial owner",
+    },
+  });
+}
+
+/** Close current open segment and open the next A→B (or B→C) segment. */
+async function recordOwnershipTransfer(input: {
+  tenantId: string;
+  personId: string;
+  fromOwnerId: string;
+  toOwnerId: string;
+  at: Date;
+  ownedSince?: Date;
+  note?: string;
+  requestId?: string;
+}) {
+  await seedInitialOwnershipHistory({
+    tenantId: input.tenantId,
+    personId: input.personId,
+    ownerId: input.fromOwnerId,
+    startedAt: input.ownedSince || input.at,
+    note: "Initial owner (backfill)",
+  });
+  // Prefer ending the open segment for the previous owner; fall back to any open row.
+  const open =
+    (await prisma.personOwnershipHistory.findFirst({
+      where: {
+        tenantId: input.tenantId,
+        personId: input.personId,
+        toOwnerId: input.fromOwnerId,
+        endedAt: null,
+      },
+      orderBy: { startedAt: "desc" },
+    })) ||
+    (await prisma.personOwnershipHistory.findFirst({
+      where: { tenantId: input.tenantId, personId: input.personId, endedAt: null },
+      orderBy: { startedAt: "desc" },
+    }));
+  if (open) {
+    await prisma.personOwnershipHistory.update({
+      where: { id: open.id },
+      data: { endedAt: input.at },
+    });
+  }
+  await prisma.personOwnershipHistory.create({
+    data: {
+      tenantId: input.tenantId,
+      personId: input.personId,
+      fromOwnerId: input.fromOwnerId,
+      toOwnerId: input.toOwnerId,
+      startedAt: input.at,
+      endedAt: null,
+      note: input.note || "",
+      requestId: input.requestId,
+    },
+  });
+}
+
+async function ensurePersonOwnershipHistorySeed(person: {
+  id: string;
+  tenantId: string;
+  ownerId: string;
+  createdAt: Date;
+  ownershipHistory: unknown[];
+}) {
+  if (person.ownershipHistory.length > 0) return;
+  await seedInitialOwnershipHistory({
+    tenantId: person.tenantId,
+    personId: person.id,
+    ownerId: person.ownerId,
+    startedAt: person.createdAt,
+    note: "Initial owner (backfill)",
+  });
+}
+
+/** Prior owner's Communication does not transfer. Submissions/interviews stay on the record. */
+function canViewPersonCommunication(
+  session: Session,
+  activity: { kind: string; actorId?: string | null; createdAt: Date; submissionId?: string | null },
+  ownerSince: Date,
+) {
+  if (!isPrivateCommunicationKind(activity.kind)) return true;
+  // Submission send evidence is also on Submissions tab; hide prior private email/call bodies from new owner.
+  if (activity.actorId && activity.actorId === session.userId) return true;
+  if (activity.createdAt >= ownerSince) return true;
+  // Authorized tenant reviewers (ops/admin) may still open Communication for audit — not recruiters.
+  if (session.role === "admin" || session.role === "operations") return true;
+  return false;
+}
+
 function serializePersonDetail(
   c: Prisma.PersonGetPayload<{
     include: {
@@ -3603,21 +4274,96 @@ function serializePersonDetail(
       coOwners: { include: { user: true } };
       titleIndex: true;
       affiliations: { include: { organization: { include: { roles: true; msaDocuments: true; purchaseOrders: true } } } };
-      candidateSubs: { include: { requirement: true; organization: true; clientPerson: true } };
-      clientPersonSubs: { include: { requirement: true; candidate: true } };
+      candidateSubs: {
+        include: {
+          requirement: true;
+          organization: true;
+          clientPerson: true;
+          recruiter: { select: { id: true; name: true } };
+        };
+      };
+      clientPersonSubs: {
+        include: { requirement: true; candidate: true; recruiter: { select: { id: true; name: true } } };
+      };
       hiringManagerReqs: true;
       activityEvents: { include: { actor: true } };
       tasks: { include: { owner: true } };
       files: true;
-      interviews: { include: { requirement: true; organization: true } };
+      interviews: {
+        include: {
+          requirement: true;
+          organization: true;
+          arrangedBy: { select: { id: true; name: true } };
+          submission: { include: { recruiter: { select: { id: true; name: true } } } };
+        };
+      };
       placements: { include: { organization: true; requirement: true } };
       ownershipReqs: { include: { requester: true } };
+      ownershipHistory: {
+        include: {
+          fromOwner: { select: { id: true; name: true } };
+          toOwner: { select: { id: true; name: true } };
+        };
+      };
       calendarEvents: true;
     };
   }>,
   session: Session,
 ) {
   const showRecording = session.permissions.includes("recording") && session.recordingPlaybackAllowed;
+  const ownerSince = c.ownerSince || c.createdAt;
+  const visibleActivity = c.activityEvents.filter((a) => canViewPersonCommunication(session, a, ownerSince));
+  // Meetings that are pure prior-owner calendar chatter stay private; interview objects transfer.
+  const visibleMeetings = c.calendarEvents.filter((ev) => {
+    if (session.role === "admin" || session.role === "operations") return true;
+    if (ev.createdAt >= ownerSince) return true;
+    // Keep interview-linked calendar rows if we can detect them by title prefix
+    if (/^interview\b/i.test(String(ev.title || ""))) return true;
+    return false;
+  });
+
+  const submissions = c.candidateSubs.map((s) => ({
+    ...s,
+    recruiter: s.recruiter,
+    submittedBy: s.recruiter?.name || "—",
+  }));
+  const interviews = c.interviews.map((i) => {
+    const arranged = i.arrangedBy || i.submission?.recruiter || null;
+    return {
+      ...i,
+      arrangedBy: arranged,
+      arrangedByName: arranged?.name || "—",
+    };
+  });
+
+  const ownershipTrail = (c.ownershipHistory || []).map((h, idx) => {
+    const end = h.endedAt || new Date();
+    const start = h.startedAt;
+    const submissionCount = submissions.filter(
+      (s) => s.recruiterId === h.toOwnerId && s.sentAt >= start && s.sentAt <= end,
+    ).length;
+    const interviewCount = interviews.filter((i) => {
+      const byId = i.arrangedById || i.submission?.recruiterId;
+      const at = i.createdAt || i.scheduledAt;
+      return byId === h.toOwnerId && at >= start && at <= end;
+    }).length;
+    return {
+      id: h.id,
+      step: idx + 1,
+      fromOwner: h.fromOwner ? { id: h.fromOwner.id, name: h.fromOwner.name } : null,
+      toOwner: { id: h.toOwner.id, name: h.toOwner.name },
+      startedAt: h.startedAt,
+      endedAt: h.endedAt,
+      isCurrent: !h.endedAt,
+      note: h.note,
+      submissionCount,
+      interviewCount,
+      label: h.endedAt
+        ? `${h.toOwner.name} owned · ${submissionCount} submission(s) · ${interviewCount} interview(s)`
+        : `${h.toOwner.name} (current) · ${submissionCount} submission(s) · ${interviewCount} interview(s)`,
+    };
+  });
+
   return {
     type: "person" as const,
     id: c.id,
@@ -3656,6 +4402,7 @@ function serializePersonDetail(
     nextActionDueAt: c.nextActionDueAt,
     portalCandidateId: c.portalCandidateId,
     owner: { id: c.owner.id, name: c.owner.name },
+    ownerSince,
     isOwnedByOther: c.ownerId !== session.userId,
     coOwners: c.coOwners.map((x) => x.user.name),
     titleIndex: c.titleIndex,
@@ -3670,17 +4417,30 @@ function serializePersonDetail(
       hasMsa: p.organization.msaDocuments.length > 0,
       hasPo: p.organization.purchaseOrders.length > 0,
     })),
-    submissions: c.candidateSubs,
-    interviews: c.interviews,
-    meetings: c.calendarEvents,
+    // Business work objects transfer with the relationship — attributed to who did the work
+    submissions,
+    interviews,
+    meetings: visibleMeetings,
     placements: c.placements,
     requirements: c.hiringManagerReqs,
     files: c.files.map(serializeStoredFile),
     upcoming: c.tasks.filter((t) => t.status === "open"),
-    tasks: c.tasks,
+    tasks: c.tasks.filter(
+      (t) =>
+        t.ownerId === session.userId ||
+        t.createdAt >= ownerSince ||
+        session.role === "admin" ||
+        session.role === "operations",
+    ),
     ownershipRequests: c.ownershipReqs,
+    ownershipTrail,
+    ownershipChainLabel: ownershipTrail.map((h) => h.toOwner.name).join(" → ") || c.owner.name,
     activeRequirements: c.candidateSubs.filter((s) => !["Rejected", "Placement"].includes(s.stage)).length,
-    activityEvents: c.activityEvents.map((a) => ({
+    communicationPrivacy: {
+      priorHidden: c.activityEvents.length - visibleActivity.length,
+      note: "Prior Communication does not transfer with ownership. Submissions and interviews remain visible with who did what.",
+    },
+    activityEvents: visibleActivity.map((a) => ({
       ...a,
       recordingRef: showRecording ? a.recordingRef : a.recordingRef ? "[hidden]" : null,
       transcriptRef: showRecording ? a.transcriptRef : a.transcriptRef ? "[hidden]" : null,
@@ -3707,6 +4467,8 @@ function serializeOrganization(
     name: a.name,
     industry: a.industry,
     location: a.location,
+    website: a.website,
+    phone: a.phone,
     status: a.status,
     ownerName: a.owner.name,
     lastOutreachAt: a.lastOutreachAt,
@@ -3750,6 +4512,8 @@ function serializeOrganizationDetail(
     name: a.name,
     industry: a.industry,
     location: a.location,
+    website: a.website,
+    phone: a.phone,
     status: a.status,
     owner: { id: a.owner.id, name: a.owner.name },
     lastOutreachAt: a.lastOutreachAt,
@@ -3774,14 +4538,18 @@ function serializeOrganizationDetail(
     })),
     intelligence: {
       relationshipOwner: a.owner.name,
-      lastOutreach: a.lastOutreachAt,
+      lastContact: a.lastOutreachAt ? a.lastOutreachAt.toISOString() : "—",
       nextAction: a.tasks.find((t) => t.status === "open")?.title ?? "None",
       openRequirements: a.requirements.filter((r) => r.status === "open").length,
       submissions: a.submissions.length,
       interviews: a.interviews.length,
       placements: a.placements.length,
+      averageClientResponseTime: "—",
+      requirementAging: a.requirements.filter((r) => r.status === "open" && r.submissions.length === 0).length,
+      relationshipHealth: a.lastOutreachAt ? "Active" : "Needs outreach",
       msaStatus: a.msaDocuments[0]?.status ?? "none",
       poRisk: a.purchaseOrders[0] ? (po ? a.purchaseOrders[0].status : "PO on file") : "none",
+      recentCommitments: a.tasks.filter((t) => t.status === "open").length,
     },
   };
 }

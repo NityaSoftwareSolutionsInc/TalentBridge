@@ -39,6 +39,7 @@ export async function GET(req: Request) {
     excludeRequirementId: url.searchParams.get("excludeRequirementId") || undefined,
     workAuthorization: url.searchParams.get("workAuthorization") || undefined,
     stage: url.searchParams.get("stage") || undefined,
+    segment: url.searchParams.get("segment") || undefined,
   };
 
   const badges = await navBadges(session.tenantId);
