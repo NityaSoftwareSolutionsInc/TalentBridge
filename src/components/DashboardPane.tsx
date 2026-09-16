@@ -37,6 +37,7 @@ const RISK_META: Record<string, { label: string; tone: "red" | "amber" | "blue" 
   callback_today: { label: "Callback", tone: "blue" },
   msa_expiry: { label: "MSA expiry", tone: "red" },
   po_risk: { label: "PO risk", tone: "red" },
+  ownership_request: { label: "Ownership", tone: "amber" },
 };
 
 const KPI_META: Record<
@@ -70,6 +71,13 @@ const KPI_META: Record<
     icon: ClipboardList,
     wash: "bg-rose-50",
     iconColor: "text-rose-700",
+  },
+  ownershipPending: {
+    hint: "Transfer / collaboration waiting on you or admin",
+    href: "/dashboard",
+    icon: Inbox,
+    wash: "bg-slate-100",
+    iconColor: "text-slate-700",
   },
 };
 
@@ -125,14 +133,24 @@ export function DashPane({
   dash,
   onOpen,
   onExport,
+  onOwnershipDecide,
 }: {
   dash: Record<string, unknown> | null;
   onOpen: (module: string, id?: string | null) => void;
   onExport?: () => void;
+  onOwnershipDecide?: (requestId: string, accept: boolean) => void;
 }) {
   const kpis = (dash?.kpis as Record<string, number>) || {};
   const risks = (dash?.risks as Risk[]) || [];
   const opps = (dash?.opportunities as Opportunity[]) || [];
+  const ownershipRequests = (dash?.ownershipRequests as {
+    id: string;
+    type?: string;
+    note?: string;
+    canDecide?: boolean;
+    requester?: { name?: string };
+    person?: { id?: string; name?: string; kind?: string };
+  }[]) || [];
 
   return (
     <div className="p-5 sm:p-6 space-y-5">
@@ -153,7 +171,7 @@ export function DashPane({
         ) : null}
       </header>
 
-      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
         {Object.entries(kpis).map(([key, value]) => {
           const meta = KPI_META[key];
           const Icon = meta?.icon || ClipboardList;
@@ -183,6 +201,61 @@ export function DashPane({
           );
         })}
       </section>
+
+      {ownershipRequests.length ? (
+        <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)] overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-[var(--color-border)]">
+            <div>
+              <h2 className="text-[13px] font-semibold text-[var(--color-text)]">Ownership requests</h2>
+              <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
+                Current owner can Accept (release) or Dismiss. Admin / operations / sales with transfer permission can also decide.
+              </p>
+            </div>
+            <span className="inline-flex items-center rounded-[var(--radius-md)] bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+              {ownershipRequests.length}
+            </span>
+          </div>
+          <ul className="divide-y divide-[var(--color-border)]">
+            {ownershipRequests.map((r) => {
+              const module = r.person?.kind === "candidate" ? "candidates" : "clients";
+              return (
+                <li key={r.id} className="px-5 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    type="button"
+                    className="text-left min-w-0 cursor-pointer"
+                    onClick={() => onOpen(module, r.person?.id)}
+                  >
+                    <div className="text-[13px] font-medium text-[var(--color-text)]">
+                      {r.requester?.name || "Teammate"} requested {r.type || "transfer"} on {r.person?.name || "record"}
+                    </div>
+                    {r.note ? <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{r.note}</div> : null}
+                  </button>
+                  {r.canDecide && onOwnershipDecide ? (
+                    <span className="flex gap-3 shrink-0 text-sm">
+                      <button
+                        type="button"
+                        className="font-medium text-slate-900 underline-offset-2 hover:underline cursor-pointer"
+                        onClick={() => onOwnershipDecide(r.id, true)}
+                      >
+                        Accept / release
+                      </button>
+                      <button
+                        type="button"
+                        className="text-slate-600 underline-offset-2 hover:underline cursor-pointer"
+                        onClick={() => onOwnershipDecide(r.id, false)}
+                      >
+                        Dismiss
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500 shrink-0">Awaiting owner / admin</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
 
       <section className="grid grid-cols-1 xl:grid-cols-5 gap-4">
         <div className="xl:col-span-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-sm)] overflow-hidden">
@@ -218,10 +291,9 @@ export function DashPane({
               })}
             </ul>
           ) : (
-            <div className="px-5 py-12 text-center">
+            <div className="px-5 py-10 text-center">
               <CheckCircle2 className="mx-auto h-8 w-8 text-[var(--color-success)]" />
-              <p className="mt-2 text-sm font-medium text-[var(--color-text)]">Queue is clear</p>
-              <p className="mt-1 text-xs text-[var(--color-text-muted)]">No SLA breaches in this tenant right now.</p>
+              <p className="mt-2 text-sm font-medium text-[var(--color-text)]">No SLA risks right now</p>
             </div>
           )}
         </div>

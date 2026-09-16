@@ -189,3 +189,70 @@ export async function sendUserDisabledEmail(user: {
     console.error("[sendgrid] user-disabled notice failed", error);
   }
 }
+
+/** Notify current owner A when B requests transfer/collaboration. */
+export async function sendOwnershipRequestEmail(input: {
+  toEmail: string;
+  toName: string;
+  requesterName: string;
+  personName: string;
+  type: "transfer" | "collaboration";
+  note?: string;
+  recordUrl: string;
+}) {
+  const kind = input.type === "transfer" ? "ownership transfer" : "collaboration";
+  try {
+    await deliver({
+      to: input.toEmail,
+      name: input.toName,
+      subject: `${input.requesterName} requested ${kind} for ${input.personName}`,
+      intro: [
+        `${input.requesterName} requested ${kind} on ${input.personName}.`,
+        input.note ? `Note: ${input.note}` : "",
+        "Open TalentBridge to Accept (release) or Dismiss the request. Admin and operations can also decide.",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      ctaLabel: "Review request",
+      ctaUrl: input.recordUrl,
+      stubLabel: "ownership-request",
+    });
+  } catch (error) {
+    console.error("[sendgrid] ownership-request notice failed", error);
+  }
+}
+
+/** Notify parties after Accept / Dismiss. */
+export async function sendOwnershipDecisionEmail(input: {
+  toEmail: string;
+  toName: string;
+  personName: string;
+  type: "transfer" | "collaboration";
+  accepted: boolean;
+  decidedByName: string;
+  counterpartName?: string;
+  recordUrl: string;
+}) {
+  const kind = input.type === "transfer" ? "ownership transfer" : "collaboration";
+  const outcome = input.accepted ? "accepted" : "dismissed";
+  try {
+    await deliver({
+      to: input.toEmail,
+      name: input.toName,
+      subject: `${kind} ${outcome} for ${input.personName}`,
+      intro: [
+        `The ${kind} request for ${input.personName} was ${outcome} by ${input.decidedByName}.`,
+        input.accepted && input.type === "transfer" && input.counterpartName
+          ? `New owner: ${input.counterpartName}. Prior Communication stays private; submissions and interviews remain on the record.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+      ctaLabel: "Open record",
+      ctaUrl: input.recordUrl,
+      stubLabel: "ownership-decision",
+    });
+  } catch (error) {
+    console.error("[sendgrid] ownership-decision notice failed", error);
+  }
+}

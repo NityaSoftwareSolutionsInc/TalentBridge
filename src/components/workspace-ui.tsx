@@ -955,6 +955,7 @@ export function kpiLabel(key: string) {
     openExceptions: "Open exceptions",
     openRequirements: "Open jobs",
     submissionsWaiting: "Awaiting feedback",
+    ownershipPending: "Ownership requests",
   };
   return map[key] ?? key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
 }

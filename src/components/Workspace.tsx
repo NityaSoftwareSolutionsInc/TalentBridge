@@ -105,7 +105,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [wrapRequirementId, setWrapRequirementId] = useState<string | null>(null);
   const [wrapSubmissionId, setWrapSubmissionId] = useState<string | null>(null);
   const [proposed, setProposed] = useState("");
-  const [badges, setBadges] = useState({ tasks: 0, communications: 0 });
+  const [badges, setBadges] = useState({ tasks: 0, communications: 0, ownership: 0 });
   const [menu, setMenu] = useState<"none" | "help" | "user" | "more" | "bell">("none");
   const [starred, setStarred] = useState(false);
   const [extraFilters, setExtraFilters] = useState(false);
@@ -879,6 +879,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 dash={dash}
                 onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)}
                 onExport={session?.permissions.includes("export") ? exportOps : undefined}
+                onOwnershipDecide={(requestId, accept) =>
+                  void act({ action: "ownership_decide", requestId, accept })
+                }
               />
             </div>
           ) : (
@@ -1040,17 +1043,18 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       )}
                     </div>
                   ) : null}
-                  {pendingOwnership.length && session?.permissions.includes("ownership_transfer") ? (
-                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950 space-y-2">
+                  {pendingOwnership.length && record?.canDecideOwnership ? (
+                    <div className="mt-3 border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-800 space-y-2">
                       {pendingOwnership.map((r) => (
                         <div key={r.id} className="flex flex-wrap items-center justify-between gap-2">
                           <span>
-                            {r.requester?.name || "Someone"} requested {r.type}
+                            <span className="font-medium">{r.requester?.name || "Someone"}</span> requested{" "}
+                            {r.type === "transfer" ? "ownership transfer" : r.type}
                             {r.note ? ` — ${r.note}` : ""}
                           </span>
                           <span className="flex gap-3">
                             <TextLink onClick={() => void act({ action: "ownership_decide", requestId: r.id, accept: true })}>
-                              Accept
+                              Accept / release
                             </TextLink>
                             <TextLink onClick={() => void act({ action: "ownership_decide", requestId: r.id, accept: false })}>
                               Dismiss
@@ -1058,6 +1062,13 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           </span>
                         </div>
                       ))}
+                      <p className="text-[11px] text-slate-500">
+                        You can release as the current owner. Admin / operations / sales with transfer permission can also decide.
+                      </p>
+                    </div>
+                  ) : pendingOwnership.length ? (
+                    <div className="mt-3 border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      Pending ownership request — awaiting current owner or admin.
                     </div>
                   ) : null}
                   {record?.isOwnedByOther ? (

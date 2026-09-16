@@ -17,7 +17,7 @@ import type { Session } from "./auth";
 import { canSeePoAmounts } from "./rbac";
 import { listCalendarItems, listCalendarPeople } from "./calendar";
 import { tenantSettings } from "./settings";
-import { appBaseUrl, issuePasswordEmail, sendPasswordChangedEmail, sendUserDisabledEmail, type PasswordMailKind } from "./account-mail";
+import { appBaseUrl, issuePasswordEmail, sendPasswordChangedEmail, sendUserDisabledEmail, sendOwnershipRequestEmail, sendOwnershipDecisionEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
 import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
 import { sanitizeRate, normalizeRateInput } from "./candidate-fields";
@@ -112,12 +112,23 @@ export type ModuleKey =
   | "reports"
   | "settings";
 
-export async function navBadges(tenantId: string) {
-  const [tasks, communications] = await Promise.all([
-    prisma.task.count({ where: { tenantId, status: "open" } }),
+export async function navBadges(session: Session) {
+  const tenantId = session.tenantId;
+  const canOversee = session.permissions.includes("ownership_transfer");
+  const [tasks, communications, ownership] = await Promise.all([
+    prisma.task.count({
+      where: { tenantId, status: "open", ownerId: session.userId },
+    }),
     prisma.activityEvent.count({ where: { tenantId, wrapUp: null } }),
+    prisma.ownershipRequest.count({
+      where: {
+        tenantId,
+        status: "pending",
+        ...(canOversee ? {} : { targetOwnerId: session.userId }),
+      },
+    }),
   ]);
-  return { tasks, communications };
+  return { tasks, communications, ownership };
 }
 
 export async function listUsers(tenantId: string) {
@@ -718,6 +729,7 @@ export async function dashboard(session: Session) {
     lowPo,
     openTasks,
     unmatched,
+    ownershipRequests,
   ] = await Promise.all([
     prisma.requirement.findMany({
       where: { tenantId, status: "open", openedAt: { lte: reqCutoff }, submissions: { none: {} } },
@@ -752,9 +764,33 @@ export async function dashboard(session: Session) {
     }),
     prisma.task.count({ where: { tenantId, status: "open" } }),
     prisma.exceptionItem.findMany({ where: { tenantId, status: "open" } }),
+    prisma.ownershipRequest.findMany({
+      where: {
+        tenantId,
+        status: "pending",
+        ...(session.permissions.includes("ownership_transfer")
+          ? {}
+          : { targetOwnerId: session.userId }),
+      },
+      include: {
+        requester: { select: { id: true, name: true } },
+        person: { select: { id: true, name: true, kind: true, ownerId: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
   ]);
 
+  const ownershipRisks = ownershipRequests.map((r) => ({
+    id: r.id,
+    type: "ownership_request",
+    title: `${r.requester.name} requested ${r.type} on ${r.person.name}`,
+    module: (r.person.kind === "candidate" ? "candidates" : "clients") as "candidates" | "clients",
+    recordId: r.personId,
+  }));
+
   const risks = [
+    ...ownershipRisks,
     ...agingReqs.map((r) => ({
       id: r.id,
       type: "requirement_aging",
@@ -821,11 +857,24 @@ export async function dashboard(session: Session) {
   return {
     risks,
     opportunities,
+    ownershipRequests: ownershipRequests.map((r) => ({
+      id: r.id,
+      type: r.type,
+      note: r.note,
+      createdAt: r.createdAt,
+      requester: r.requester,
+      person: r.person,
+      canDecide:
+        session.userId === r.person.ownerId ||
+        session.userId === r.targetOwnerId ||
+        session.permissions.includes("ownership_transfer"),
+    })),
     kpis: {
       openTasks,
       openExceptions: unmatched.length,
       openRequirements: await prisma.requirement.count({ where: { tenantId, status: "open" } }),
       submissionsWaiting: waitingSubs.length,
+      ownershipPending: ownershipRequests.length,
     },
     exceptions: unmatched,
   };
@@ -1726,6 +1775,19 @@ export async function requestOwnership(
     where: { id: personId, tenantId: session.tenantId },
   });
   if (!person) throw new Error("Contact not found");
+  if (person.ownerId === session.userId) throw new Error("You already own this record");
+
+  const existing = await prisma.ownershipRequest.findFirst({
+    where: {
+      tenantId: session.tenantId,
+      personId,
+      requesterId: session.userId,
+      type,
+      status: "pending",
+    },
+  });
+  if (existing) throw new Error("A pending request already exists — wait for the owner or admin to decide");
+
   const row = await prisma.ownershipRequest.create({
     data: {
       tenantId: session.tenantId,
@@ -1736,6 +1798,31 @@ export async function requestOwnership(
       note,
     },
   });
+
+  const [owner, requester, tenant] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: person.ownerId, tenantId: session.tenantId },
+      select: { id: true, name: true, email: true, enabled: true },
+    }),
+    prisma.user.findFirst({
+      where: { id: session.userId, tenantId: session.tenantId },
+      select: { id: true, name: true },
+    }),
+    prisma.tenant.findFirst({ where: { id: session.tenantId }, select: { name: true } }),
+  ]);
+
+  await prisma.activityEvent.create({
+    data: {
+      tenantId: session.tenantId,
+      kind: "ownership",
+      summary: `${requester?.name || "Teammate"} requested ${type} — awaiting ${owner?.name || "owner"} / admin`,
+      body: note || "",
+      source: "talentbridge",
+      actorId: session.userId,
+      personId,
+    },
+  });
+
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
@@ -1747,34 +1834,71 @@ export async function requestOwnership(
       type,
       note: String(note || "").slice(0, 200),
       requesterId: session.userId,
+      requesterName: requester?.name,
       targetOwnerId: person.ownerId,
+      targetOwnerName: owner?.name,
+      notifiedOwner: Boolean(owner?.enabled && owner.email),
     },
   });
-  return row;
+
+  if (owner?.enabled && owner.email) {
+    const module = person.kind === "candidate" ? "candidates" : "clients";
+    await sendOwnershipRequestEmail({
+      toEmail: owner.email,
+      toName: owner.name,
+      requesterName: requester?.name || session.email || "A teammate",
+      personName: person.name,
+      type: type === OwnershipRequestType.collaboration ? "collaboration" : "transfer",
+      note,
+      recordUrl: `${appBaseUrl()}/${module}?id=${person.id}`,
+    });
+  }
+
+  return { ...row, notifiedOwner: Boolean(owner?.enabled && owner.email), tenantName: tenant?.name };
+}
+
+function canDecideOwnershipRequest(
+  session: Session,
+  personOwnerId: string,
+  targetOwnerId: string,
+) {
+  if (session.userId === personOwnerId || session.userId === targetOwnerId) return true;
+  if (session.permissions.includes("ownership_transfer")) return true;
+  return false;
 }
 
 export async function decideOwnership(session: Session, requestId: string, accept: boolean) {
-  if (!session.permissions.includes("ownership_transfer")) {
-    throw new Error("Ownership transfer is permissioned");
-  }
   const req = await prisma.ownershipRequest.findFirst({
     where: { id: requestId, tenantId: session.tenantId },
   });
   if (!req) throw new Error("Request not found");
+  if (req.status !== "pending") throw new Error("Request already decided");
+
   const person = await prisma.person.findFirst({
     where: { id: req.personId, tenantId: session.tenantId },
-    select: { id: true, ownerId: true, name: true, createdAt: true },
+    select: { id: true, ownerId: true, name: true, createdAt: true, kind: true },
   });
   if (!person) throw new Error("Person not found");
+
+  if (!canDecideOwnershipRequest(session, person.ownerId, req.targetOwnerId)) {
+    throw new Error("Only the current owner, or admin/ops/sales with transfer permission, can Accept or Dismiss");
+  }
+
   const before = { ownerId: person.ownerId, status: req.status, type: req.type };
-  const requester = await prisma.user.findFirst({
-    where: { id: req.requesterId, tenantId: session.tenantId },
-    select: { id: true, name: true },
-  });
-  const previousOwner = await prisma.user.findFirst({
-    where: { id: person.ownerId, tenantId: session.tenantId },
-    select: { id: true, name: true },
-  });
+  const [requester, previousOwner, decider] = await Promise.all([
+    prisma.user.findFirst({
+      where: { id: req.requesterId, tenantId: session.tenantId },
+      select: { id: true, name: true, email: true, enabled: true },
+    }),
+    prisma.user.findFirst({
+      where: { id: person.ownerId, tenantId: session.tenantId },
+      select: { id: true, name: true, email: true, enabled: true },
+    }),
+    prisma.user.findFirst({
+      where: { id: session.userId, tenantId: session.tenantId },
+      select: { id: true, name: true },
+    }),
+  ]);
 
   if (accept && req.type === "transfer") {
     const transferredAt = new Date();
@@ -1807,7 +1931,7 @@ export async function decideOwnership(session: Session, requestId: string, accep
       data: {
         tenantId: session.tenantId,
         kind: "ownership",
-        summary: `Ownership transferred: ${previousOwner?.name || "previous owner"} → ${requester?.name || "new owner"}. Prior Communication stays private — submissions and interviews remain on this record with who did what.`,
+        summary: `Ownership released: ${previousOwner?.name || "previous owner"} → ${requester?.name || "new owner"} (decided by ${decider?.name || "user"}). Prior Communication stays private — submissions and interviews remain with who did what.`,
         body: req.note || "",
         source: "talentbridge",
         actorId: session.userId,
@@ -1827,7 +1951,7 @@ export async function decideOwnership(session: Session, requestId: string, accep
       data: {
         tenantId: session.tenantId,
         kind: "ownership",
-        summary: `Collaboration accepted: ${requester?.name || "teammate"} added as co-owner`,
+        summary: `Collaboration accepted: ${requester?.name || "teammate"} added as co-owner (decided by ${decider?.name || "user"})`,
         body: req.note || "",
         source: "talentbridge",
         actorId: session.userId,
@@ -1835,6 +1959,20 @@ export async function decideOwnership(session: Session, requestId: string, accep
       },
     });
   }
+  if (!accept) {
+    await prisma.activityEvent.create({
+      data: {
+        tenantId: session.tenantId,
+        kind: "ownership",
+        summary: `${req.type} request dismissed by ${decider?.name || "user"}`,
+        body: req.note || "",
+        source: "talentbridge",
+        actorId: session.userId,
+        personId: req.personId,
+      },
+    });
+  }
+
   const row = await prisma.ownershipRequest.update({
     where: { id: requestId },
     data: { status: accept ? "accepted" : "dismissed" },
@@ -1858,11 +1996,40 @@ export async function decideOwnership(session: Session, requestId: string, accep
       accepted: accept,
       requestId: req.id,
       requesterId: req.requesterId,
+      decidedById: session.userId,
+      decidedByName: decider?.name,
+      decidedByOwner: session.userId === person.ownerId,
       tasksReassigned: accept && req.type === "transfer",
       communicationPrivacy: accept && req.type === "transfer" ? "prior_communication_retained" : undefined,
       workHistory: accept && req.type === "transfer" ? "submissions_interviews_retained_with_attribution" : undefined,
     },
   });
+
+  const module = person.kind === "candidate" ? "candidates" : "clients";
+  const recordUrl = `${appBaseUrl()}/${module}?id=${person.id}`;
+  const typeLabel = req.type === OwnershipRequestType.collaboration ? "collaboration" : "transfer";
+  const notifyTargets = [
+    requester?.enabled && requester.email && requester.id !== session.userId
+      ? { email: requester.email, name: requester.name }
+      : null,
+    previousOwner?.enabled && previousOwner.email && previousOwner.id !== session.userId
+      ? { email: previousOwner.email, name: previousOwner.name }
+      : null,
+  ].filter(Boolean) as { email: string; name: string }[];
+
+  for (const target of notifyTargets) {
+    await sendOwnershipDecisionEmail({
+      toEmail: target.email,
+      toName: target.name,
+      personName: person.name,
+      type: typeLabel,
+      accepted: accept,
+      decidedByName: decider?.name || "TalentBridge",
+      counterpartName: accept && req.type === "transfer" ? requester?.name : undefined,
+      recordUrl,
+    });
+  }
+
   return row;
 }
 
@@ -4404,6 +4571,8 @@ function serializePersonDetail(
     owner: { id: c.owner.id, name: c.owner.name },
     ownerSince,
     isOwnedByOther: c.ownerId !== session.userId,
+    canDecideOwnership:
+      c.ownerId === session.userId || session.permissions.includes("ownership_transfer"),
     coOwners: c.coOwners.map((x) => x.user.name),
     titleIndex: c.titleIndex,
     tags: Array.from(new Set([c.status, ...c.affiliations.map((p) => p.roleOnOrganization), ...c.skills].filter(Boolean))),

@@ -42,7 +42,7 @@ export async function GET(req: Request) {
     segment: url.searchParams.get("segment") || undefined,
   };
 
-  const badges = await navBadges(session.tenantId);
+  const badges = await navBadges(session);
 
   if (moduleKey === "dashboard") {
     return NextResponse.json({ dashboard: await dashboard(session), badges });

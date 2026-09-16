@@ -39,7 +39,7 @@ export type { GlobalHit };
 type AppShellProps = {
   moduleKey: string;
   session: AppShellSession;
-  badges: { tasks: number; communications: number };
+  badges: { tasks: number; communications: number; ownership?: number };
   navCollapsed: boolean;
   onToggleNav: () => void;
   menu: AppShellMenu;
@@ -274,11 +274,22 @@ export function AppShell({
             <IconButton
               icon={Bell}
               label="Notifications"
-              badge={badges.communications || undefined}
+              badge={(badges.ownership || 0) + (badges.communications || 0) || undefined}
               onClick={() => onMenuChange(menu === "bell" ? "none" : "bell")}
             />
             {menu === "bell" ? (
               <div className="absolute right-0 mt-1 z-30 w-64 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)] p-1">
+                {(badges.ownership || 0) > 0 ? (
+                  <MenuItem
+                    icon={Bell}
+                    onClick={() => {
+                      onMenuChange("none");
+                      onNavigate("/dashboard");
+                    }}
+                  >
+                    Ownership requests ({badges.ownership})
+                  </MenuItem>
+                ) : null}
                 <MenuItem
                   icon={Bell}
                   onClick={() => {
