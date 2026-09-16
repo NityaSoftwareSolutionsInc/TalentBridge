@@ -1266,11 +1266,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     </div>
                   </div>
                   ) : (
-                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
-                    <div className="min-w-0 xl:col-span-5 space-y-4">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {/* Left — Contact Details / Tags / Company */}
+                    <div className="min-w-0 space-y-4">
                       <Card>
                         <CardHeader title="Contact Details" action={<TextLink onClick={() => setDrawer("edit")}>Edit</TextLink>} />
-                        <dl className="px-4 py-3 space-y-2 text-sm">
+                        <dl className="px-4 py-3 space-y-2.5 text-sm">
                           {[
                             ["Full Name", record?.name],
                             ["Job Title", record?.title],
@@ -1278,9 +1279,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             ["Company", company?.name],
                             ["Work Email", record?.email],
                             ["Phone", record?.phone],
-                            ["LinkedIn", record?.linkedIn],
                             ["Location", record?.location || locationWithTz],
                             ["Time Zone", tzLabel || "—"],
+                            ["LinkedIn", record?.linkedIn],
                             ["Contact Type", "Client"],
                             ["Status", record?.status],
                             ["Relationship Tier", record?.relationshipTier || "—"],
@@ -1290,9 +1291,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             ["Next Action", record?.nextAction],
                             ["Notes", notesSnippet || "—"],
                           ].map(([k, v]) => (
-                            <div key={String(k)} className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2">
-                              <dt className="text-slate-600">{String(k)}</dt>
-                              <dd className="sm:col-span-2 break-words text-slate-900">
+                            <div key={String(k)} className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3 gap-y-0.5 items-start">
+                              <dt className="text-[13px] text-slate-500">{String(k)}</dt>
+                              <dd className="min-w-0 break-words text-[13px] text-slate-900">
                                 {String(k) === "Status" ? (
                                   <Tag tone={String(v).toLowerCase() === "active" ? "green" : "slate"}>{String(v || "—")}</Tag>
                                 ) : (
@@ -1305,7 +1306,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       </Card>
                       <Card>
                         <CardHeader title="Tags" action={<TextLink onClick={() => setDrawer("edit")}>+ Add Tag</TextLink>} />
-                        <div className="px-4 py-3 flex flex-wrap gap-1">
+                        <div className="px-4 py-3 flex flex-wrap gap-1.5">
                           {(contactTags.length ? contactTags : []).map((t) => (
                             <Tag key={String(t)} tone={tagTone(String(t))}>{String(t)}</Tag>
                           ))}
@@ -1330,16 +1331,16 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                               <img
                                 src={company.logoUrl}
                                 alt=""
-                                className="h-10 w-10 rounded-lg border border-slate-200 object-cover bg-white shrink-0"
+                                className="h-11 w-11 rounded-lg border border-slate-200 object-cover bg-white shrink-0"
                               />
                             ) : (
-                              <div className="h-10 w-10 rounded-lg bg-slate-800 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                              <div className="h-11 w-11 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
                                 {String(company.name).slice(0, 2).toUpperCase()}
                               </div>
                             )}
                             <div className="min-w-0">
-                              <div className="font-semibold text-sm">{company.name}</div>
-                              <div className="text-xs text-slate-500">
+                              <div className="font-semibold text-sm text-slate-900">{company.name}</div>
+                              <div className="text-xs text-slate-500 mt-0.5">
                                 {[company.industry, company.sizeBand].filter(Boolean).join(" · ") || "—"}
                               </div>
                               {company.location ? (
@@ -1350,10 +1351,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                                   href={company.website.startsWith("http") ? company.website : `https://${company.website}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="text-xs text-blue-700 hover:underline"
+                                  className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline mt-1"
                                   onClick={(e) => e.stopPropagation()}
                                 >
                                   {company.website.replace(/^https?:\/\//, "")}
+                                  <ExternalLink className="h-3 w-3" />
                                 </a>
                               ) : null}
                             </div>
@@ -1361,7 +1363,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                         </Card>
                       ) : null}
                     </div>
-                    <div className="min-w-0 xl:col-span-7 space-y-4">
+
+                    {/* Center — Quick Actions / Recent Communication / Files */}
+                    <div className="min-w-0 space-y-4">
                       <Card>
                         <CardHeader title="Quick Actions" />
                         <div className="p-2.5 grid grid-cols-3 sm:grid-cols-6 gap-1.5 relative">
@@ -1406,7 +1410,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           {files.map((d) => (
                             <li key={d.name}>
                               <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-blue-700 hover:bg-blue-50 cursor-pointer" onClick={() => setTab("Files")}>
-                                <FileText className="h-4 w-4 shrink-0" />
+                                <FileText className="h-4 w-4 shrink-0 text-red-500" />
                                 <span className="min-w-0 truncate flex-1 text-left">{d.name}</span>
                                 <span className="text-[10px] text-slate-500 shrink-0">
                                   {d.source === "JobsNProfiles" ? "JNP" : "Manual"}
@@ -1417,53 +1421,66 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           {!files.length ? <li className="px-2 py-3 text-slate-400 text-sm">No files</li> : null}
                         </ul>
                       </Card>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Card>
-                          <CardHeader title="Upcoming Interviews / Follow-ups" action={<TextLink onClick={() => router.push("/tasks")}>View all</TextLink>} />
-                          <div className="px-2 pb-2">
-                            {upcoming.map((t) => (
-                              <button key={t.id} type="button" className="w-full text-left rounded-md px-2 py-2 hover:bg-slate-50 cursor-pointer flex items-start gap-2" onClick={() => router.push("/calendar")}>
-                                <CalendarDays className="h-4 w-4 mt-0.5 text-blue-600 shrink-0" />
-                                <div>
-                                  <div className="text-sm">{t.title}</div>
-                                  <div className="text-xs text-slate-500">{shortDate(t.dueAt)}</div>
-                                </div>
-                              </button>
-                            ))}
-                            {!upcoming.length ? <div className="px-2 py-3 text-sm text-slate-400">No upcoming work</div> : null}
-                          </div>
-                        </Card>
-                        <Card>
-                          <CardHeader title={`Related Contacts (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
-                          <div className="px-2 pb-2">
-                            {relatedPeople.map((p) => (
-                              <button
-                                key={p.id || p.name}
-                                type="button"
-                                className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 hover:bg-slate-50 cursor-pointer text-left"
-                                onClick={() => p.id && select(p.id, "person")}
-                                disabled={!p.id}
-                              >
-                                <Avatar name={p.name} size={28} />
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-sm font-medium truncate">{p.name}</div>
-                                  <div className="text-xs text-slate-500 truncate">{p.title}</div>
-                                </div>
-                                <Tag tone={p.tone}>{p.badge}</Tag>
-                              </button>
-                            ))}
-                            {!relatedPeople.length ? <div className="px-2 py-3 text-sm text-slate-400">None on file</div> : null}
-                          </div>
-                        </Card>
-                      </div>
+                    </div>
+
+                    {/* Right — Upcoming / Related Contacts / Internal Notes */}
+                    <div className="min-w-0 space-y-4 lg:col-span-2 xl:col-span-1">
                       <Card>
-                          <CardHeader title="Internal Notes" action={<TextLink onClick={() => setDrawer("note")}>Edit</TextLink>} />
-                        <div className="px-4 py-2">
-                          {internalNotes.map((n) => (
-                            <div key={String(n.id)} className="text-sm py-2 border-b last:border-0">
-                              {String(n.body || n.summary)}
-                            </div>
+                        <CardHeader title="Upcoming" action={<TextLink onClick={() => router.push("/tasks")}>View all</TextLink>} />
+                        <div className="px-2 pb-2">
+                          {upcoming.map((t) => (
+                            <button key={t.id} type="button" className="w-full text-left rounded-md px-2 py-2 hover:bg-slate-50 cursor-pointer flex items-start gap-2" onClick={() => router.push("/calendar")}>
+                              <CalendarDays className="h-4 w-4 mt-0.5 text-blue-600 shrink-0" />
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-900">{t.title}</div>
+                                <div className="text-xs text-slate-500">{shortDate(t.dueAt)}</div>
+                              </div>
+                            </button>
                           ))}
+                          {!upcoming.length ? <div className="px-2 py-3 text-sm text-slate-400">No upcoming work</div> : null}
+                        </div>
+                      </Card>
+                      <Card>
+                        <CardHeader title={`Related Contacts (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
+                        <div className="px-2 pb-2">
+                          {relatedPeople.map((p) => (
+                            <button
+                              key={p.id || p.name}
+                              type="button"
+                              className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 hover:bg-slate-50 cursor-pointer text-left"
+                              onClick={() => p.id && select(p.id, "person")}
+                              disabled={!p.id}
+                            >
+                              <Avatar name={p.name} size={32} />
+                              <div className="min-w-0 flex-1">
+                                <div className="text-sm font-medium truncate text-slate-900">{p.name}</div>
+                                <div className="text-xs text-slate-500 truncate">{p.title}</div>
+                              </div>
+                              <Tag tone={p.tone}>{p.badge}</Tag>
+                            </button>
+                          ))}
+                          {!relatedPeople.length ? <div className="px-2 py-3 text-sm text-slate-400">None on file</div> : null}
+                        </div>
+                      </Card>
+                      <Card>
+                        <CardHeader title="Internal Notes" action={<TextLink onClick={() => setDrawer("note")}>Add</TextLink>} />
+                        <div className="px-3 py-2 space-y-0">
+                          {internalNotes.map((n) => {
+                            const author = String((n.actor as { name?: string } | undefined)?.name || "Team");
+                            return (
+                              <div key={String(n.id)} className="flex gap-2.5 py-2.5 border-b last:border-0">
+                                <Avatar name={author} size={28} />
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-sm text-slate-800">{String(n.body || n.summary)}</div>
+                                  <div className="mt-1 text-[11px] text-slate-500">
+                                    {shortDate(n.createdAt)}
+                                    {" · "}
+                                    <span className="text-blue-700">{author}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                           {!internalNotes.length ? <div className="py-3 text-sm text-slate-400">Team-only notes appear here</div> : null}
                         </div>
                       </Card>
@@ -2511,7 +2528,8 @@ function OwnershipTrailCard({ record }: { record: Record<string, unknown> | null
     submissionCount?: number;
     interviewCount?: number;
   }[]) || [];
-  if (!trail.length) return null;
+  // Only show when ownership transferred at least once (A → B+). Skip single first-owner seed.
+  if (trail.length < 2) return null;
   return (
     <Card>
       <CardHeader title="Ownership history" />
