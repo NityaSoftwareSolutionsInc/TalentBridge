@@ -1110,11 +1110,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             ["Job Title", record?.title],
                             ["Department", record?.department],
                             ["Company", company?.name],
-                            ["Work Email", record?.email],
-                            ["Phone", record?.phone],
                             ["Location", timeZoneHint(record?.location)],
                             ["Time Zone", /pst/i.test(timeZoneHint(record?.location)) ? "PST" : /cst/i.test(timeZoneHint(record?.location)) ? "CST" : "—"],
-                            ["LinkedIn", record?.linkedIn],
                             ["Contact Type", "Client"],
                             ["Status", record?.status],
                             ["Relationship Tier", contactTags.includes("Strategic") ? "Strategic" : company?.role || "—"],
@@ -1626,18 +1623,7 @@ function CandidateDetailsCard({
   const rows: [string, React.ReactNode][] = [
     ["Primary title", String(index?.currentTitle || record?.title || "—")],
     ["Secondary title", String(record?.secondaryTitle || "—")],
-    [
-      "Skills",
-      <span key="skills" className="flex flex-wrap gap-1">
-        {((record?.skills as string[]) || []).map((s) => (
-          <Tag key={s} tone="slate">{s}</Tag>
-        ))}
-      </span>,
-    ],
     ["Experience", record?.experienceYears ? `${record.experienceYears} years` : "—"],
-    ["Email", contactLink("email", record?.email)],
-    ["Phone", contactLink("phone", record?.phone)],
-    ["LinkedIn", contactLink("linkedin", record?.linkedIn)],
     ["Current location", timeZoneHint(record?.location) || "—"],
     ["Time zone", String(record?.timezone || "—")],
     ["Citizenship", String(record?.citizenship || "—")],
