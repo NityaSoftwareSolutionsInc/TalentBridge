@@ -1020,14 +1020,14 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     <div className="min-w-0 space-y-4">
                       <Card>
                         <CardHeader title="Quick Actions" />
-                        <div className="p-2.5 flex flex-wrap items-center gap-1.5">
-                          <IconBtn compact disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : "Email"} />
-                          <IconBtn compact disabled={callBlocked} title={callWhy} onClick={onCall} label="Call" />
-                          <IconBtn compact disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn compact disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : "Schedule Meeting"} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
-                          <IconBtn compact onClick={() => setDrawer("note")} label="Add Note" />
+                        <div className="p-2.5 grid grid-cols-4 gap-1.5">
+                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
+                          <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="Call" />
+                          <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
+                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
+                          <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
                           {session?.permissions.includes("submit") ? (
-                            <IconBtn compact disabled={submitBlocked} title={submitWhy} onClick={() => setDrawer("submit")} label="Submit Profile" />
+                            <IconBtn disabled={submitBlocked} title={submitWhy} onClick={() => setDrawer("submit")} label="Submit Profile" />
                           ) : null}
                         </div>
                       </Card>
@@ -1149,12 +1149,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     <div className="min-w-0 xl:col-span-7 space-y-4">
                       <Card>
                         <CardHeader title="Quick Actions" />
-                        <div className="p-2.5 flex flex-wrap items-center gap-1.5">
-                          <IconBtn compact disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : "Email"} />
-                          <IconBtn compact disabled={callBlocked} title={callWhy} onClick={onCall} label="Call" />
-                          <IconBtn compact disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn compact disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : "Schedule Meeting"} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
-                          <IconBtn compact onClick={() => setDrawer("note")} label="Add Note" />
+                        <div className="p-2.5 grid grid-cols-4 gap-1.5">
+                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
+                          <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="Call" />
+                          <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
+                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
+                          <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
                         </div>
                       </Card>
                       <Card>
