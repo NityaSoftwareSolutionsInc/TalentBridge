@@ -141,11 +141,21 @@ function toJnpProfile(data: JnpApiProfileResponse, fallbackId: string): JnpProfi
     workAuthorization: String(data.workAuthorization || "").trim(),
     willingToRelocate: String(data.willingToRelocate || "").trim(),
     employmentType: String(data.employmentType || "").trim(),
-    currentRate: String(data.currentRate || "").trim(),
-    expectedRate: String(data.expectedRate || "").trim(),
+    currentRate: sanitizeSyncedRate(data.currentRate),
+    expectedRate: sanitizeSyncedRate(data.expectedRate),
     visaExpiry: data.visaExpiry ? String(data.visaExpiry) : null,
     timezone: String(data.timezone || "").trim(),
   };
+}
+
+/** Drop JNP placeholder zeros so TalentBridge keeps rates blank when unknown. */
+function sanitizeSyncedRate(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (/^\$?\s*0+(\.0+)?(\s*[-–]\s*\$?\s*0+(\.0+)?)?\s*(\/(hr|mo|yr|hour|month|year))?$/i.test(raw)) {
+    return "";
+  }
+  return raw;
 }
 
 export const jobsNProfilesHttp: JobsNProfilesAdapter = {

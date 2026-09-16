@@ -234,7 +234,14 @@ export async function POST(req: Request) {
           ),
         );
       case "dnc":
-        return NextResponse.json(await toggleDnc(session, String(body.personId), Boolean(body.on)));
+        return NextResponse.json(
+          await toggleDnc(
+            session,
+            String(body.personId),
+            Boolean(body.on),
+            body.reason != null ? String(body.reason) : undefined,
+          ),
+        );
       case "view_call_artifact":
         return NextResponse.json(
           await viewCallArtifact(

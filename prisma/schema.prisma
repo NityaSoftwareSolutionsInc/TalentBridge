@@ -369,6 +369,7 @@ model Person {
   ownerId         String      @map("owner_id")
   owner           User        @relation("PersonOwner", fields: [ownerId], references: [id])
   doNotReach    Boolean     @default(false) @map("do_not_reach")
+  doNotReachReason String   @default("") @map("do_not_reach_reason")
   doNotEmail      Boolean     @default(false) @map("do_not_email")
   doNotSms        Boolean     @default(false) @map("do_not_sms")
   availability    String      @default("")

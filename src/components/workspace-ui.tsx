@@ -698,6 +698,8 @@ export function WhatsAppIcon({ className }: { className?: string }) {
 }
 
 const ACTION_ICONS: Record<string, LucideIcon | React.ComponentType<{ className?: string }>> = {
+  Email: Mail,
+  Call: Phone,
   "Send Email": Mail,
   "VioTalk Call": Phone,
   "Log Call": Phone,
@@ -805,23 +807,29 @@ export function IconBtn({
   disabled,
   title,
   className,
+  compact = false,
 }: {
   label: string;
   onClick?: () => void;
   disabled?: boolean;
   title?: string;
   className?: string;
+  /** Icon only — label shown on hover via title / aria-label */
+  compact?: boolean;
 }) {
   const Icon = ACTION_ICONS[label] ?? Circle;
   const green = label === "WhatsApp";
+  const tip = title?.trim() ? title : label;
   return (
     <button
       type="button"
-      title={title || label}
+      title={tip}
+      aria-label={label}
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "group flex w-full min-h-[52px] flex-col items-center justify-center gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-1.5 py-1.5 cursor-pointer transition-colors",
+        "group flex items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface-muted)] cursor-pointer transition-colors",
+        compact ? "h-10 w-10 shrink-0" : "w-full min-h-[52px] flex-col gap-1 px-1.5 py-1.5",
         "hover:border-[var(--color-accent)] hover:bg-blue-50",
         "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[var(--color-border)] disabled:hover:bg-[var(--color-surface-muted)]",
         className,
@@ -829,13 +837,16 @@ export function IconBtn({
     >
       <span
         className={cn(
-          "flex h-6 w-6 items-center justify-center rounded-full text-white",
+          "flex items-center justify-center rounded-full text-white",
+          compact ? "h-7 w-7" : "h-6 w-6",
           green ? "bg-emerald-500 group-disabled:bg-slate-300" : "bg-[var(--color-accent)] group-disabled:bg-slate-300",
         )}
       >
         <Icon className="h-3.5 w-3.5" />
       </span>
-      <span className="text-[10px] leading-tight text-center font-medium text-[var(--color-text-secondary)]">{label}</span>
+      {!compact ? (
+        <span className="text-[10px] leading-tight text-center font-medium text-[var(--color-text-secondary)]">{label}</span>
+      ) : null}
     </button>
   );
 }

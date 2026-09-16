@@ -20,6 +20,7 @@ import { tenantSettings } from "./settings";
 import { appBaseUrl, issuePasswordEmail, sendPasswordChangedEmail, sendUserDisabledEmail, type PasswordMailKind } from "./account-mail";
 import { assertPassword, hashPassword, hashToken } from "./password";
 import { outreachChannelBlocks, normalizeEmail, normalizePhone } from "./normalize";
+import { sanitizeRate, normalizeRateInput } from "./candidate-fields";
 import { composeEmailHtml, looksLikeHtml } from "./email-signature-html";
 import { assertBusinessEmail } from "./business-email";
 import {
@@ -1713,8 +1714,8 @@ export async function syncJnp(session: Session, portalCandidateId: string) {
     workAuthorization: profile.workAuthorization || "",
     willingToRelocate: profile.willingToRelocate || "",
     employmentType: profile.employmentType || "",
-    currentRate: profile.currentRate || "",
-    expectedRate: profile.expectedRate || "",
+    currentRate: sanitizeRate(profile.currentRate),
+    expectedRate: sanitizeRate(profile.expectedRate),
     timezone: profile.timezone || "",
     visaExpiry: profile.visaExpiry ? new Date(profile.visaExpiry) : null,
     portalCandidateId,
@@ -2168,8 +2169,8 @@ export async function createPerson(
       visaExpiry: input.visaExpiry ? new Date(input.visaExpiry) : null,
       willingToRelocate: input.willingToRelocate || "",
       employmentType: input.employmentType || "",
-      currentRate: input.currentRate || "",
-      expectedRate: input.expectedRate || "",
+      currentRate: normalizeRateInput(input.currentRate),
+      expectedRate: normalizeRateInput(input.expectedRate),
       timezone: input.timezone || "",
       lastResume: resumeName,
       ownerId: session.userId,
@@ -2276,8 +2277,10 @@ export async function updatePerson(
       preferredLocation: input.preferredLocation ?? existing.preferredLocation,
       noticePeriod: input.noticePeriod ?? existing.noticePeriod,
       employmentType: input.employmentType ?? existing.employmentType,
-      currentRate: input.currentRate ?? existing.currentRate,
-      expectedRate: input.expectedRate ?? existing.expectedRate,
+      currentRate:
+        input.currentRate !== undefined ? normalizeRateInput(input.currentRate) : existing.currentRate,
+      expectedRate:
+        input.expectedRate !== undefined ? normalizeRateInput(input.expectedRate) : existing.expectedRate,
       timezone: input.timezone ?? existing.timezone,
     },
   });
@@ -2413,16 +2416,31 @@ export async function addNote(session: Session, personId: string, body: string, 
   return row;
 }
 
-export async function toggleDnc(session: Session, personId: string, on: boolean) {
+export async function toggleDnc(
+  session: Session,
+  personId: string,
+  on: boolean,
+  reason?: string,
+) {
   if (!["sales", "operations", "admin"].includes(session.role)) throw new Error("DNC change not permitted");
   const person = await prisma.person.findFirst({
     where: { id: personId, tenantId: session.tenantId },
-    select: { id: true, doNotReach: true },
+    select: { id: true, doNotReach: true, doNotReachReason: true },
   });
   if (!person) throw new Error("Person not found");
+  let doNotReachReason = person.doNotReachReason || "";
+  if (on) {
+    const trimmed = String(reason || "").trim();
+    if (trimmed.length < 3) {
+      throw new Error("A reason is required when marking Do not reach (at least 3 characters).");
+    }
+    doNotReachReason = trimmed.slice(0, 500);
+  } else {
+    doNotReachReason = "";
+  }
   const updated = await prisma.person.update({
     where: { id: personId },
-    data: { doNotReach: on },
+    data: { doNotReach: on, doNotReachReason },
   });
   await audit({
     tenantId: session.tenantId,
@@ -2430,8 +2448,8 @@ export async function toggleDnc(session: Session, personId: string, on: boolean)
     action: "toggle_dnc",
     entityType: "person",
     entityId: personId,
-    before: { doNotReach: person.doNotReach },
-    after: { doNotReach: on },
+    before: { doNotReach: person.doNotReach, doNotReachReason: person.doNotReachReason },
+    after: { doNotReach: on, doNotReachReason },
   });
   return updated;
 }
@@ -3615,6 +3633,7 @@ function serializePersonDetail(
     linkedIn: c.linkedIn,
     source: c.source,
     doNotReach: c.doNotReach,
+    doNotReachReason: c.doNotReachReason,
     doNotEmail: c.doNotEmail,
     doNotSms: c.doNotSms,
     availability: c.availability,

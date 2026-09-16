@@ -12,7 +12,7 @@ import { CalendarAgenda, CalendarPane, type CalendarItem } from "./CalendarPane"
 import { ListPager } from "./ListPager";
 import { ListToolbar, sortRecords } from "./ListToolbar";
 import { paginate, parsePageSize, readStoredPageSize, storePageSize } from "@/lib/paging";
-import { EMPLOYMENT_TYPE_OPTIONS, RELOCATE_OPTIONS, WORK_AUTH_OPTIONS } from "@/lib/candidate-fields";
+import { EMPLOYMENT_TYPE_OPTIONS, RELOCATE_OPTIONS, WORK_AUTH_OPTIONS, formatUsdRateDisplay, normalizeRateInput, rateInputValue } from "@/lib/candidate-fields";
 import { buildJnpProfileUrl } from "@/lib/jnp-links";
 import {
   Ban,
@@ -22,6 +22,7 @@ import {
   CloudUpload,
   ExternalLink,
   FileText,
+  ListTodo,
   Lock,
   Mail,
   MapPin,
@@ -59,7 +60,7 @@ type Session = {
   recordingPlaybackAllowed?: boolean;
 };
 
-type Drawer = "none" | "call" | "wrap" | "submit" | "note" | "email" | "meeting" | "jnp" | "req" | "create" | "create-user" | "edit";
+type Drawer = "none" | "call" | "wrap" | "submit" | "note" | "email" | "meeting" | "jnp" | "req" | "create" | "create-user" | "edit" | "dnc";
 
 export function Workspace({ moduleKey }: { moduleKey: string }) {
   const router = useRouter();
@@ -87,7 +88,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [wrapPersonId, setWrapPersonId] = useState<string | null>(null);
   const [proposed, setProposed] = useState("");
   const [badges, setBadges] = useState({ tasks: 0, communications: 0 });
-  const [menu, setMenu] = useState<"none" | "help" | "user" | "more" | "bell" | "qa-more">("none");
+  const [menu, setMenu] = useState<"none" | "help" | "user" | "more" | "bell">("none");
   const [starred, setStarred] = useState(false);
   const [extraFilters, setExtraFilters] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -391,7 +392,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const clearGlobalHits = useCallback(() => setGlobalHits(null), []);
 
   const dnc = Boolean(record?.doNotReach);
+  const dncReason = String(record?.doNotReachReason || "").trim();
   const canToggleDnc = ["sales", "operations", "admin"].includes(session?.role || "");
+  const toggleDoNotReach = () => {
+    if (dnc) void act({ action: "dnc", personId: selectedId, on: false });
+    else setDrawer("dnc");
+  };
   const canPlayRecording = Boolean(session?.permissions.includes("recording") && session?.recordingPlaybackAllowed);
   const canJnpSync = Boolean(session?.jnpEnabled && session?.jnpUserId);
   const canViewMsa = Boolean(session?.permissions.includes("msa"));
@@ -818,7 +824,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           ) : (
                             <Tag tone="green">{String(record?.status || "Active")}</Tag>
                           )}
-                          {dnc ? <Tag tone="red">Do not reach</Tag> : null}
+                          {dnc ? (
+                            <span title={dncReason || "Do not reach"}>
+                              <Tag tone="red">Do not reach</Tag>
+                            </span>
+                          ) : null}
                           <Button
                             variant="secondary"
                             className="!bg-transparent !border-[var(--color-accent)] !text-[var(--color-accent)] hover:!bg-blue-50 hover:!text-[var(--color-accent)]"
@@ -853,9 +863,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             />
                             {menu === "more" ? (
                               <div className="absolute right-0 mt-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
-                                <MenuItem icon={Mail} onClick={() => { setMenu("none"); setDrawer("email"); }}>Send Email</MenuItem>
-                                <MenuItem icon={Phone} disabled={callBlocked} title={callWhy} onClick={() => { setMenu("none"); onCall(); }}>VioTalk Call</MenuItem>
+                                <MenuItem icon={Mail} onClick={() => { setMenu("none"); setDrawer("email"); }}>Email</MenuItem>
+                                <MenuItem icon={Phone} disabled={callBlocked} title={callWhy} onClick={() => { setMenu("none"); onCall(); }}>Call</MenuItem>
                                 <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("meeting"); }}>Schedule Meeting</MenuItem>
+                                <MenuItem icon={ListTodo} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
                                 {isCandidate ? <MenuItem icon={CloudUpload} disabled={submitBlocked} title={submitWhy} onClick={() => { setMenu("none"); setDrawer("submit"); }}>Submit Profile</MenuItem> : null}
                                 {isCandidate && canJnpSync ? (
                                   <MenuItem
@@ -865,7 +876,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                                     JNP sync
                                   </MenuItem>
                                 ) : null}
-                                {company?.id && isCandidate ? (
+                                {company?.id ? (
                                   <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem>
                                 ) : null}
                                 {canToggleDnc && !isOrganization ? (
@@ -873,7 +884,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                                     icon={Ban}
                                     onClick={() => {
                                       setMenu("none");
-                                      void act({ action: "dnc", personId: selectedId, on: !dnc });
+                                      toggleDoNotReach();
                                     }}
                                   >
                                     {dnc ? "Clear Do not reach" : "Mark Do not reach"}
@@ -915,15 +926,25 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     </div>
                   </div>
                   {dnc || blockEmail || blockSms ? (
-                    <div className="mt-3 rounded-md bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-800">
-                      {dnc
-                        ? "Do not reach is on. VioTalk Call, WhatsApp and Send Email are disabled."
-                        : [
+                    <div className="mt-3 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-800">
+                      {dnc ? (
+                        <>
+                          <span className="font-semibold text-red-900">Do not reach</span>
+                          {dncReason ? (
+                            <span className="block mt-1 text-red-800">{dncReason}</span>
+                          ) : null}
+                          <span className="block mt-1 text-red-700/90">
+                            Call, WhatsApp, and Email are disabled for this contact.
+                          </span>
+                        </>
+                      ) : (
+                        [
                             blockEmail ? "Do Not Email" : null,
                             blockSms ? "Do Not SMS" : null,
                           ]
                             .filter(Boolean)
-                            .join(" · ") + " is on for this contact."}
+                            .join(" · ") + " is on for this contact."
+                      )}
                     </div>
                   ) : null}
                   {pendingOwnership.length && session?.permissions.includes("ownership_transfer") ? (
@@ -963,7 +984,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
 
                 {isCandidate ? (
                   <div className="px-4 sm:px-5 pb-3">
-                    <Candidate360Header record={record} />
+                    <Candidate360Header record={record} jnpUrl={jnpUrl} />
                   </div>
                 ) : null}
 
@@ -999,44 +1020,15 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     <div className="min-w-0 space-y-4">
                       <Card>
                         <CardHeader title="Quick Actions" />
-                        <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
-                          <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
-                          <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
-                          <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
-                          <IconBtn onClick={() => setDrawer("wrap")} label="Add Follow-up" />
+                        <div className="p-2.5 flex flex-wrap items-center gap-1.5">
+                          <IconBtn compact disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : "Email"} />
+                          <IconBtn compact disabled={callBlocked} title={callWhy} onClick={onCall} label="Call" />
+                          <IconBtn compact disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
+                          <IconBtn compact disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : "Schedule Meeting"} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
+                          <IconBtn compact onClick={() => setDrawer("note")} label="Add Note" />
                           {session?.permissions.includes("submit") ? (
-                            <IconBtn disabled={submitBlocked} title={submitWhy} onClick={() => setDrawer("submit")} label="Submit Profile" />
+                            <IconBtn compact disabled={submitBlocked} title={submitWhy} onClick={() => setDrawer("submit")} label="Submit Profile" />
                           ) : null}
-                          <div className="relative">
-                            <IconBtn onClick={() => setMenu(menu === "qa-more" ? "none" : "qa-more")} label="More" />
-                            {menu === "qa-more" ? (
-                              <div className="absolute left-0 bottom-full mb-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
-                                {canJnpSync ? (
-                                  <MenuItem
-                                    icon={RefreshCw}
-                                    onClick={() => { setMenu("none"); setDrawer("jnp"); }}
-                                  >
-                                    JNP sync
-                                  </MenuItem>
-                                ) : null}
-                                <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
-                                {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem> : null}
-                                {canToggleDnc ? (
-                                  <MenuItem
-                                    icon={Ban}
-                                    onClick={() => {
-                                      setMenu("none");
-                                      void act({ action: "dnc", personId: selectedId, on: !dnc });
-                                    }}
-                                  >
-                                    {dnc ? "Clear Do not reach" : "Mark Do not reach"}
-                                  </MenuItem>
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </div>
                         </div>
                       </Card>
                       <Card>
@@ -1157,33 +1149,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     <div className="min-w-0 xl:col-span-7 space-y-4">
                       <Card>
                         <CardHeader title="Quick Actions" />
-                        <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
-                          <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="VioTalk Call" />
-                          <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
-                          <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
-                          <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
-                          <IconBtn onClick={() => setDrawer("wrap")} label="Add Follow-up" />
-                          <div className="relative">
-                            <IconBtn onClick={() => setMenu(menu === "qa-more" ? "none" : "qa-more")} label="More" />
-                            {menu === "qa-more" ? (
-                              <div className="absolute left-0 bottom-full mb-1 z-30 w-52 rounded-md border border-slate-200 bg-white shadow-lg py-1">
-                                <MenuItem icon={CalendarDays} onClick={() => { setMenu("none"); setDrawer("wrap"); }}>Add Follow-up</MenuItem>
-                                {company?.id ? <MenuItem icon={Building2} onClick={() => { setMenu("none"); select(company.id, "organization"); }}>View Company</MenuItem> : null}
-                                {canToggleDnc ? (
-                                  <MenuItem
-                                    icon={Ban}
-                                    onClick={() => {
-                                      setMenu("none");
-                                      void act({ action: "dnc", personId: selectedId, on: !dnc });
-                                    }}
-                                  >
-                                    {dnc ? "Clear Do not reach" : "Mark Do not reach"}
-                                  </MenuItem>
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </div>
+                        <div className="p-2.5 flex flex-wrap items-center gap-1.5">
+                          <IconBtn compact disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : "Email"} />
+                          <IconBtn compact disabled={callBlocked} title={callWhy} onClick={onCall} label="Call" />
+                          <IconBtn compact disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
+                          <IconBtn compact disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : "Schedule Meeting"} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
+                          <IconBtn compact onClick={() => setDrawer("note")} label="Add Note" />
                         </div>
                       </Card>
                       <Card>
@@ -1539,6 +1510,16 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 }}
               />
             ) : null}
+            {drawer === "dnc" ? (
+              <DncForm
+                contactName={String(record?.name || "this contact")}
+                onClose={() => setDrawer("none")}
+                onSave={async (reason) => {
+                  await act({ action: "dnc", personId: selectedId, on: true, reason });
+                  setDrawer("none");
+                }}
+              />
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -1586,6 +1567,79 @@ function contactLink(kind: "email" | "phone" | "linkedin" | "url", value: unknow
   return href ? <TextLink href={href}>{display}</TextLink> : display;
 }
 
+type ResumeFileRef = {
+  id?: string;
+  name: string;
+  kind?: string;
+  source?: string;
+  previewable?: boolean;
+};
+
+/** JNP-synced resumes → JobsNProfiles profile; manual uploads → in-app preview. */
+function resolveResumeOpenHref(
+  record: Record<string, unknown> | null,
+  jnpUrl: string,
+  preferName?: string,
+): string {
+  const files = (record?.files as ResumeFileRef[]) || [];
+  const targetName = String(preferName ?? record?.lastResume ?? "").trim();
+  const resumeFiles = files.filter((f) => !f.kind || f.kind === "resume");
+  const match =
+    (targetName ? resumeFiles.find((f) => f.name === targetName) : null) ||
+    resumeFiles[0] ||
+    null;
+  if (match?.source === "JobsNProfiles" && jnpUrl) return jnpUrl;
+  if (match?.previewable && match.id) {
+    return `/api/files/preview?fileId=${encodeURIComponent(String(match.id))}`;
+  }
+  if (!match && record?.source === "JobsNProfiles" && jnpUrl) return jnpUrl;
+  return "";
+}
+
+function RateField({
+  value,
+  onChange,
+  placeholder = "75/hr",
+}: {
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  placeholder?: string;
+}) {
+  return (
+    <div className="flex h-8 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-focus)] focus-within:ring-2 focus-within:ring-[var(--color-focus-ring)]">
+      <span
+        className="inline-flex items-center border-r border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2.5 text-[13px] font-medium text-[var(--color-text-secondary)] select-none"
+        aria-hidden
+      >
+        $
+      </span>
+      <input
+        value={rateInputValue(value)}
+        onChange={(e) => {
+          const next = e.target.value.replace(/^\$\s*/, "");
+          onChange({
+            ...e,
+            target: { ...e.target, value: next },
+          } as React.ChangeEvent<HTMLInputElement>);
+        }}
+        onBlur={(e) => {
+          const normalized = normalizeRateInput(e.target.value);
+          if (normalized !== value) {
+            onChange({
+              ...e,
+              target: { ...e.target, value: normalized },
+            } as React.ChangeEvent<HTMLInputElement>);
+          }
+        }}
+        placeholder={placeholder}
+        inputMode="decimal"
+        className="min-w-0 flex-1 bg-transparent px-2.5 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
+        aria-label="Rate in USD"
+      />
+    </div>
+  );
+}
+
 function contactDetailValue(label: string, value: unknown) {
   if (label === "Work Email" || label === "Email") return contactLink("email", value);
   if (label === "Phone") return contactLink("phone", value);
@@ -1610,21 +1664,23 @@ function CandidateDetailsCard({
   onOpenSubmissions: () => void;
 }) {
   const index = (record?.titleIndex as { currentTitle?: string } | null) || null;
-  const rate = (value: unknown) =>
-    canSeeRates ? (
-      String(value || "—")
-    ) : (
-      <span className="inline-flex items-center gap-1 text-slate-400">
-        <Lock className="h-3.5 w-3.5" /> Restricted
-      </span>
-    );
+  const rate = (value: unknown) => {
+    const display = formatUsdRateDisplay(value);
+    if (!canSeeRates) {
+      return (
+        <span className="inline-flex items-center gap-1 text-slate-400">
+          <Lock className="h-3.5 w-3.5" /> Restricted
+        </span>
+      );
+    }
+    return display || "—";
+  };
   const auth = String(record?.workAuthorization || "");
   const visaNia = auth === "US Citizen" || auth === "Green Card" || auth === "Canadian Citizen";
   const rows: [string, React.ReactNode][] = [
     ["Primary title", String(index?.currentTitle || record?.title || "—")],
     ["Secondary title", String(record?.secondaryTitle || "—")],
     ["Experience", record?.experienceYears ? `${record.experienceYears} years` : "—"],
-    ["Current location", timeZoneHint(record?.location) || "—"],
     ["Time zone", String(record?.timezone || "—")],
     ["Citizenship", String(record?.citizenship || "—")],
     ["Work authorization", auth ? <Tag tone="blue">{auth}</Tag> : "—"],
@@ -1662,31 +1718,60 @@ function CandidateDetailsCard({
   );
 }
 
-function Candidate360Header({ record }: { record: Record<string, unknown> | null }) {
-  const items = [
-    ["Owner", (record?.owner as { name?: string } | undefined)?.name || "—"],
-    ["Last outreach", shortDate(record?.lastOutreachAt) || "—"],
-    ["Next action", String(record?.nextAction || "—")],
-    ["Status", String(record?.availability || record?.status || "—")],
-    ["Active reqs", String(record?.activeRequirements ?? 0)],
-    ["Submissions", String((record?.submissions as unknown[] | undefined)?.length ?? 0)],
-    ["Interviews", String((record?.interviews as unknown[] | undefined)?.length ?? 0)],
-    ["Source", String(record?.source || "—")],
-    ["Last resume", String(record?.lastResume || "—")],
+function Candidate360Header({
+  record,
+  jnpUrl,
+}: {
+  record: Record<string, unknown> | null;
+  jnpUrl: string;
+}) {
+  const lastResumeName = String(record?.lastResume || "").trim();
+  const resumeHref = lastResumeName ? resolveResumeOpenHref(record, jnpUrl, lastResumeName) : "";
+  const items: { label: string; value: React.ReactNode; title?: string }[] = [
+    { label: "Owner", value: (record?.owner as { name?: string } | undefined)?.name || "—" },
+    { label: "Last outreach", value: shortDate(record?.lastOutreachAt) || "—" },
+    { label: "Next action", value: String(record?.nextAction || "—") },
+    { label: "Status", value: String(record?.availability || record?.status || "—") },
+    { label: "Active reqs", value: String(record?.activeRequirements ?? 0) },
+    { label: "Submissions", value: String((record?.submissions as unknown[] | undefined)?.length ?? 0) },
+    { label: "Interviews", value: String((record?.interviews as unknown[] | undefined)?.length ?? 0) },
+    { label: "Source", value: String(record?.source || "—") },
+    {
+      label: "Last resume",
+      value: lastResumeName || "—",
+      title: lastResumeName,
+    },
   ];
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9 gap-2">
-      {items.map(([label, value]) => (
-        <div
-          key={label}
-          className="min-w-0 rounded-[var(--radius-md)] border border-blue-100 bg-blue-50/50 px-3 py-2"
-        >
-          <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
-          <div className="text-[13px] font-semibold text-[var(--color-text)] truncate" title={value}>
-            {value}
+      {items.map(({ label, value, title }) => {
+        const text = typeof value === "string" ? value : String(value ?? "—");
+        const isLastResume = label === "Last resume";
+        const showLink = isLastResume && resumeHref && lastResumeName;
+        return (
+          <div
+            key={label}
+            className="min-w-0 rounded-[var(--radius-md)] border border-blue-100 bg-blue-50/50 px-3 py-2"
+          >
+            <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{label}</div>
+            {showLink ? (
+              <a
+                href={resumeHref}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[13px] font-semibold text-[var(--color-accent)] truncate block hover:underline"
+                title={title || resumeHref}
+              >
+                {lastResumeName}
+              </a>
+            ) : (
+              <div className="text-[13px] font-semibold text-[var(--color-text)] truncate" title={title || text}>
+                {value}
+              </div>
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -2310,13 +2395,7 @@ function FilesPane({
             const fromJnp = d.source === "JobsNProfiles";
             const canPreview = Boolean(d.previewable && d.id);
             const canDelete = Boolean(onDeleteFile && d.id && !fromJnp);
-            // JNP-synced resumes open the same candidate profile deep link as "Open JobsNProfiles"
-            // (not the raw PDF preview tab).
-            const openHref = fromJnp && jnpUrl
-              ? jnpUrl
-              : canPreview
-                ? `/api/files/preview?fileId=${encodeURIComponent(String(d.id))}`
-                : "";
+            const openHref = resolveResumeOpenHref(record, jnpUrl, d.name);
             const openLabel = fromJnp && jnpUrl ? "Open JobsNProfiles" : "Preview";
             return (
               <li key={d.id || d.name} className="px-4 py-3 flex items-center gap-3">
@@ -3624,9 +3703,9 @@ function CreateForm({
             ))}
           </FieldSelect>
           <Label>Current rate</Label>
-          <FieldInput value={vals.currentRate} onChange={set("currentRate")} placeholder="$75/hr" />
+          <RateField value={vals.currentRate} onChange={set("currentRate")} placeholder="75/hr" />
           <Label>Expected rate</Label>
-          <FieldInput value={vals.expectedRate} onChange={set("expectedRate")} placeholder="$85/hr" />
+          <RateField value={vals.expectedRate} onChange={set("expectedRate")} placeholder="85/hr" />
           <Label>LinkedIn</Label>
           <FieldInput value={vals.linkedIn} onChange={set("linkedIn")} />
           <Label>Resume</Label>
@@ -3758,9 +3837,9 @@ function EditForm({
             ))}
           </FieldSelect>
           <Label>Current rate</Label>
-          <FieldInput value={vals.currentRate} onChange={set("currentRate")} placeholder="$75/hr" />
+          <RateField value={vals.currentRate} onChange={set("currentRate")} placeholder="75/hr" />
           <Label>Expected rate</Label>
-          <FieldInput value={vals.expectedRate} onChange={set("expectedRate")} placeholder="$85/hr" />
+          <RateField value={vals.expectedRate} onChange={set("expectedRate")} placeholder="85/hr" />
           <Label>LinkedIn</Label>
           <FieldInput value={vals.linkedIn} onChange={set("linkedIn")} />
         </>
@@ -4236,6 +4315,64 @@ function MeetingForm({
           Schedule
         </button>
         <button type="button" className={btnGhost} onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function DncForm({
+  contactName,
+  onClose,
+  onSave,
+}: {
+  contactName: string;
+  onClose: () => void;
+  onSave: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const trimmed = reason.trim();
+        if (trimmed.length < 3) {
+          setError("Enter a clear reason (at least 3 characters).");
+          return;
+        }
+        setSaving(true);
+        setError("");
+        void onSave(trimmed).catch((err) => {
+          setError(err instanceof Error ? err.message : "Could not update Do not reach");
+          setSaving(false);
+        });
+      }}
+    >
+      <h2 className="text-lg font-semibold text-red-900">Mark Do not reach</h2>
+      <p className="text-sm text-slate-600">
+        Outbound call, email, and WhatsApp will be disabled for {contactName}. The reason appears on the profile with a red indicator.
+      </p>
+      <label className="block text-sm">
+        Reason <span className="text-red-600">*</span>
+        <textarea
+          className="mt-1 w-full border border-slate-300 rounded-md p-2 text-sm min-h-[88px]"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Candidate requested no further contact"
+          maxLength={500}
+          required
+        />
+      </label>
+      {error ? <p className="text-xs text-red-600">{error}</p> : null}
+      <div className="flex gap-2">
+        <button type="submit" className={btnPrimary} disabled={saving}>
+          {saving ? "Saving…" : "Mark Do not reach"}
+        </button>
+        <button type="button" className={btnGhost} onClick={onClose} disabled={saving}>
           Cancel
         </button>
       </div>
