@@ -4,6 +4,7 @@ import {
   dashboard,
   globalSearch,
   listCalendar,
+  listClientContactFilterOptions,
   listCommunications,
   listRequirements,
   listTasks,
@@ -40,6 +41,9 @@ export async function GET(req: Request) {
     workAuthorization: url.searchParams.get("workAuthorization") || undefined,
     stage: url.searchParams.get("stage") || undefined,
     segment: url.searchParams.get("segment") || undefined,
+    companyId: url.searchParams.get("companyId") || undefined,
+    industry: url.searchParams.get("industry") || undefined,
+    status: url.searchParams.get("status") || undefined,
   };
 
   const badges = await navBadges(session);
@@ -75,5 +79,9 @@ export async function GET(req: Request) {
   const list = await searchPeople(session, moduleKey, filters);
   const requirements = await listRequirements(session);
   const users = await listUsers(session.tenantId);
-  return NextResponse.json({ list, requirements, users, badges });
+  const contactFilterOptions =
+    moduleKey === "clients" && filters.segment === "contacts"
+      ? await listClientContactFilterOptions(session)
+      : undefined;
+  return NextResponse.json({ list, requirements, users, badges, contactFilterOptions });
 }

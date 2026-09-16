@@ -51,6 +51,7 @@ function personAuditFields(p: {
   secondaryTitle?: string | null;
   email?: string | null;
   phone?: string | null;
+  department?: string | null;
   location?: string | null;
   preferredLocation?: string | null;
   linkedIn?: string | null;
@@ -68,6 +69,9 @@ function personAuditFields(p: {
   timezone?: string | null;
   lastResume?: string | null;
   source?: string | null;
+  stage?: string | null;
+  status?: string | null;
+  relationshipTier?: string | null;
   portalCandidateId?: string | null;
   ownerId?: string | null;
 }) {
@@ -78,6 +82,7 @@ function personAuditFields(p: {
     secondaryTitle: p.secondaryTitle || "",
     email: p.email || "",
     phone: p.phone || "",
+    department: p.department || "",
     location: p.location || "",
     preferredLocation: p.preferredLocation || "",
     linkedIn: p.linkedIn || "",
@@ -95,6 +100,9 @@ function personAuditFields(p: {
     timezone: p.timezone || "",
     lastResume: p.lastResume || "",
     source: p.source || "",
+    stage: p.stage || "",
+    status: p.status || "",
+    relationshipTier: p.relationshipTier || "",
     portalCandidateId: p.portalCandidateId || null,
     ownerId: p.ownerId || "",
   };
@@ -139,6 +147,30 @@ export async function listUsers(tenantId: string) {
   });
 }
 
+/** Dropdown options for Clients → Contacts list filters. */
+export async function listClientContactFilterOptions(session: Session) {
+  const orgs = await prisma.organization.findMany({
+    where: {
+      tenantId: session.tenantId,
+      roles: { some: { role: OrganizationRoleKind.client } },
+    },
+    select: { id: true, name: true, industry: true, location: true },
+    orderBy: { name: "asc" },
+    take: 200,
+  });
+  const industries = [
+    ...new Set(orgs.map((o) => o.industry).filter((v) => Boolean(String(v || "").trim()))),
+  ].sort((a, b) => a.localeCompare(b));
+  const locations = [
+    ...new Set(orgs.map((o) => o.location).filter((v) => Boolean(String(v || "").trim()))),
+  ].sort((a, b) => a.localeCompare(b));
+  return {
+    companies: orgs.map((o) => ({ id: o.id, name: o.name })),
+    industries,
+    locations,
+  };
+}
+
 
 
 export async function searchPeople(
@@ -159,6 +191,12 @@ export async function searchPeople(
     workAuthorization?: string;
     /** Clients/Vendors: companies (default for clients) | contacts */
     segment?: string;
+    /** Contacts segment: filter by affiliated company id */
+    companyId?: string;
+    /** Contacts segment: filter by affiliated org industry */
+    industry?: string;
+    /** Contacts segment: Active / Inactive etc. */
+    status?: string;
   },
 ) {
   const tenantId = session.tenantId;
@@ -271,6 +309,7 @@ export async function searchPeople(
         kind,
         location: filters.location ? { contains: filters.location, mode: "insensitive" } : undefined,
         stage: filters.stage || undefined,
+        status: filters.status || undefined,
         AND: [
           filters.q
             ? {
@@ -280,6 +319,18 @@ export async function searchPeople(
                   { email: { contains: filters.q, mode: "insensitive" } },
                   { affiliations: { some: { organization: { name: { contains: filters.q, mode: "insensitive" } } } } },
                 ],
+              }
+            : {},
+          filters.companyId
+            ? { affiliations: { some: { organizationId: filters.companyId } } }
+            : {},
+          filters.industry
+            ? {
+                affiliations: {
+                  some: {
+                    organization: { industry: { contains: filters.industry, mode: "insensitive" } },
+                  },
+                },
               }
             : {},
           skillNeedles.length
@@ -2301,12 +2352,13 @@ export async function addPersonFile(
   if (!name) throw new Error("Document name is required");
   if (name.length > 240) throw new Error("Document name is too long");
   const kindRaw = String(input.kind || "other").trim().toLowerCase();
-  const kind = kindRaw === "resume" ? "resume" : "other";
+  const kind = kindRaw === "resume" ? "resume" : kindRaw === "logo" ? "logo" : "other";
+  if (kind === "logo" && !organization) throw new Error("Company logo must be attached to an organization");
   const bytes = input.bytes;
   if (!bytes || !bytes.length) {
     throw new Error("A file is required to Preview later — name-only documents are not supported");
   }
-  assertUploadable(originalName || name, bytes.length);
+  assertUploadable(originalName || name, bytes.length, { images: kind === "logo" });
   const contentType = sniffContentType(bytes, originalName || name, input.contentType);
   // Prisma Bytes expects Uint8Array; Node Buffer's ArrayBufferLike typing fails under strict TS.
   const content = Uint8Array.from(bytes);
@@ -2343,10 +2395,16 @@ export async function addPersonFile(
       data: { lastResume: name },
     });
   }
+  if (kind === "logo" && organization) {
+    await prisma.organization.update({
+      where: { id: organization.id },
+      data: { logoFileId: file.id },
+    });
+  }
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
-    action: "add_person_file",
+    action: kind === "logo" ? "upload_company_logo" : "add_person_file",
     entityType: person ? "person" : "organization",
     entityId: person?.id || organization?.id || file.id,
     after: {
@@ -2564,6 +2622,10 @@ export async function createPerson(
     organizationId?: string;
     roleOnOrganization?: string;
     stage?: string;
+    department?: string;
+    status?: string;
+    relationshipTier?: string;
+    source?: string;
   },
 ) {
   const kind =
@@ -2630,6 +2692,7 @@ export async function createPerson(
       phoneNormalized: normalizePhone(input.phone),
       title,
       secondaryTitle: input.secondaryTitle || "",
+      department: String(input.department || "").trim(),
       location: input.location || "",
       preferredLocation: input.preferredLocation || input.location || "",
       linkedIn: input.linkedIn || "",
@@ -2647,7 +2710,9 @@ export async function createPerson(
       timezone: input.timezone || "",
       lastResume: resumeName,
       ownerId: session.userId,
-      source: "manual",
+      source: String(input.source || "manual").trim() || "manual",
+      relationshipTier: String(input.relationshipTier || "").trim(),
+      ...(input.status ? { status: String(input.status).trim() } : {}),
       ...(kind !== PersonKind.candidate ? { stage } : {}),
       affiliations: organizationId
         ? {
@@ -2709,6 +2774,7 @@ export async function updatePerson(
     secondaryTitle?: string;
     email?: string;
     phone?: string;
+    department?: string;
     location?: string;
     linkedIn?: string;
     availability?: string;
@@ -2724,6 +2790,10 @@ export async function updatePerson(
     currentRate?: string;
     expectedRate?: string;
     timezone?: string;
+    stage?: string;
+    status?: string;
+    relationshipTier?: string;
+    source?: string;
   },
 ) {
   const existing = await prisma.person.findFirst({ where: { id: personId, tenantId: session.tenantId } });
@@ -2739,6 +2809,15 @@ export async function updatePerson(
             .split(/[,;]/)
             .map((s) => s.trim())
             .filter(Boolean);
+
+  let nextStage = existing.stage;
+  if (input.stage !== undefined && existing.kind !== PersonKind.candidate) {
+    const settings = await tenantSettings(session.tenantId);
+    nextStage = settings.relationshipStages.includes(input.stage)
+      ? input.stage
+      : existing.stage;
+  }
+
   const person = await prisma.person.update({
     where: { id: personId },
     data: {
@@ -2749,6 +2828,7 @@ export async function updatePerson(
       phone: nextPhone,
       emailNormalized: normalizeEmail(nextEmail),
       phoneNormalized: normalizePhone(nextPhone),
+      department: input.department !== undefined ? String(input.department || "").trim() : existing.department,
       location: input.location ?? existing.location,
       linkedIn: input.linkedIn ?? existing.linkedIn,
       availability: input.availability ?? existing.availability,
@@ -2773,6 +2853,13 @@ export async function updatePerson(
       expectedRate:
         input.expectedRate !== undefined ? normalizeRateInput(input.expectedRate) : existing.expectedRate,
       timezone: input.timezone ?? existing.timezone,
+      stage: nextStage,
+      status: input.status !== undefined ? String(input.status || "").trim() || existing.status : existing.status,
+      relationshipTier:
+        input.relationshipTier !== undefined
+          ? String(input.relationshipTier || "").trim()
+          : existing.relationshipTier,
+      source: input.source !== undefined ? String(input.source || "").trim() || existing.source : existing.source,
     },
   });
 
@@ -2819,21 +2906,36 @@ export async function createOrganization(
     role: "client" | "vendor";
     industry?: string;
     location?: string;
+    countryCode?: string;
+    city?: string;
     website?: string;
     phone?: string;
+    linkedIn?: string;
+    timezone?: string;
+    sizeBand?: string;
+    primaryDomain?: string;
   },
 ) {
   if (!["sales", "operations", "admin"].includes(session.role)) {
     throw new Error("Clients/Vendors are created in TalentBridge by sales/ops/admin — not fetched from JobsNProfiles");
   }
+  const sizeBand = normalizeOrgSizeBand(input.sizeBand);
+  const primaryDomain = normalizePrimaryDomain(input.primaryDomain);
+  const placed = normalizeOrgPlace(input.countryCode, input.city, input.location);
   const organization = await prisma.organization.create({
     data: {
       tenantId: session.tenantId,
       name: input.name,
       industry: input.industry || "",
-      location: input.location || "",
+      location: placed.location,
+      countryCode: placed.countryCode,
+      city: placed.city,
       website: String(input.website || "").trim(),
       phone: String(input.phone || "").trim(),
+      linkedIn: String(input.linkedIn || "").trim(),
+      timezone: String(input.timezone || "").trim(),
+      sizeBand,
+      primaryDomain,
       ownerId: session.userId,
       roles: { create: { role: input.role === "vendor" ? OrganizationRoleKind.vendor : OrganizationRoleKind.client } },
     },
@@ -2844,8 +2946,256 @@ export async function createOrganization(
     action: "create_organization",
     entityType: "organization",
     entityId: organization.id,
+    after: {
+      name: organization.name,
+      role: input.role,
+      location: organization.location || null,
+      countryCode: organization.countryCode || null,
+      city: organization.city || null,
+      linkedIn: organization.linkedIn || null,
+      website: organization.website || null,
+      timezone: organization.timezone || null,
+      sizeBand: organization.sizeBand || null,
+      primaryDomain: organization.primaryDomain || null,
+    },
   });
   return organization;
+}
+
+export async function updateOrganization(
+  session: Session,
+  organizationId: string,
+  input: {
+    name?: string;
+    industry?: string;
+    location?: string;
+    countryCode?: string;
+    city?: string;
+    website?: string;
+    phone?: string;
+    linkedIn?: string;
+    timezone?: string;
+    sizeBand?: string;
+    primaryDomain?: string;
+  },
+) {
+  const existing = await prisma.organization.findFirst({
+    where: { id: organizationId, tenantId: session.tenantId },
+  });
+  if (!existing) throw new Error("Company not found");
+  const canEdit =
+    existing.ownerId === session.userId || ["sales", "operations", "admin"].includes(session.role);
+  if (!canEdit) {
+    throw new Error("Only the company owner, or sales/ops/admin, can edit this Client");
+  }
+
+  const name = input.name != null ? String(input.name).trim() : existing.name;
+  if (!name) throw new Error("Company name is required");
+
+  const sizeBand =
+    input.sizeBand !== undefined ? normalizeOrgSizeBand(input.sizeBand) : existing.sizeBand;
+  const primaryDomain =
+    input.primaryDomain !== undefined
+      ? normalizePrimaryDomain(input.primaryDomain)
+      : existing.primaryDomain;
+
+  const countryCode = input.countryCode !== undefined ? input.countryCode : existing.countryCode;
+  const city = input.city !== undefined ? input.city : existing.city;
+  const placed =
+    countryCode || city
+      ? normalizeOrgPlace(countryCode, city, input.location ?? existing.location)
+      : {
+          countryCode: "",
+          city: "",
+          location:
+            input.location !== undefined ? String(input.location || "").trim() : existing.location,
+        };
+
+  const before = {
+    name: existing.name,
+    industry: existing.industry,
+    location: existing.location,
+    countryCode: existing.countryCode,
+    city: existing.city,
+    website: existing.website,
+    phone: existing.phone,
+    linkedIn: existing.linkedIn,
+    timezone: existing.timezone,
+    sizeBand: existing.sizeBand,
+    primaryDomain: existing.primaryDomain,
+  };
+
+  const organization = await prisma.organization.update({
+    where: { id: existing.id },
+    data: {
+      name,
+      industry: input.industry !== undefined ? String(input.industry || "").trim() : existing.industry,
+      location: placed.location,
+      countryCode: placed.countryCode,
+      city: placed.city,
+      website: input.website !== undefined ? String(input.website || "").trim() : existing.website,
+      phone: input.phone !== undefined ? String(input.phone || "").trim() : existing.phone,
+      linkedIn: input.linkedIn !== undefined ? String(input.linkedIn || "").trim() : existing.linkedIn,
+      timezone: input.timezone !== undefined ? String(input.timezone || "").trim() : existing.timezone,
+      sizeBand,
+      primaryDomain,
+    },
+  });
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "update_organization",
+    entityType: "organization",
+    entityId: organization.id,
+    before,
+    after: {
+      name: organization.name,
+      industry: organization.industry,
+      location: organization.location,
+      countryCode: organization.countryCode,
+      city: organization.city,
+      website: organization.website,
+      phone: organization.phone,
+      linkedIn: organization.linkedIn,
+      timezone: organization.timezone,
+      sizeBand: organization.sizeBand,
+      primaryDomain: organization.primaryDomain,
+    },
+  });
+  return organization;
+}
+
+/** Country + city must come from the curated dropdown set (no free-text location). */
+function normalizeOrgPlace(countryCodeRaw: unknown, cityRaw: unknown, locationFallback?: unknown) {
+  const countryCode = String(countryCodeRaw || "").trim().toUpperCase();
+  const city = String(cityRaw || "").trim();
+  // Server-side allow-list mirrors CountryCitySelect curated hubs.
+  const allowed: Record<string, string[]> = {
+    US: [
+      "Atlanta, GA",
+      "Austin, TX",
+      "Boston, MA",
+      "Charlotte, NC",
+      "Chicago, IL",
+      "Dallas, TX",
+      "Denver, CO",
+      "Detroit, MI",
+      "Houston, TX",
+      "Los Angeles, CA",
+      "Miami, FL",
+      "Minneapolis, MN",
+      "Nashville, TN",
+      "New York, NY",
+      "Philadelphia, PA",
+      "Phoenix, AZ",
+      "Portland, OR",
+      "Raleigh, NC",
+      "Remote — US",
+      "Salt Lake City, UT",
+      "San Diego, CA",
+      "San Francisco Bay Area, CA",
+      "Seattle, WA",
+      "Tampa, FL",
+      "Washington, DC",
+    ],
+    CA: [
+      "Calgary, AB",
+      "Edmonton, AB",
+      "Halifax, NS",
+      "Montreal, QC",
+      "Ottawa, ON",
+      "Remote — Canada",
+      "Toronto, ON",
+      "Vancouver, BC",
+      "Waterloo, ON",
+    ],
+    IN: [
+      "Ahmedabad",
+      "Bengaluru",
+      "Chennai",
+      "Coimbatore",
+      "Delhi NCR",
+      "Gurgaon",
+      "Hyderabad",
+      "Indore",
+      "Jaipur",
+      "Kochi",
+      "Kolkata",
+      "Mumbai",
+      "Noida",
+      "Pune",
+      "Remote — India",
+      "Thiruvananthapuram",
+    ],
+    GB: ["Belfast", "Birmingham", "Edinburgh", "Glasgow", "Leeds", "London", "Manchester", "Remote — UK"],
+    IE: ["Cork", "Dublin", "Galway", "Limerick", "Remote — Ireland"],
+    DE: ["Berlin", "Frankfurt", "Hamburg", "Munich", "Remote — Germany", "Stuttgart"],
+    NL: ["Amsterdam", "Eindhoven", "Remote — Netherlands", "Rotterdam", "The Hague", "Utrecht"],
+    PL: ["Kraków", "Remote — Poland", "Warsaw", "Wrocław"],
+    RO: ["Bucharest", "Cluj-Napoca", "Remote — Romania", "Timișoara"],
+    AE: ["Abu Dhabi", "Dubai", "Remote — UAE", "Sharjah"],
+    SG: ["Remote — Singapore", "Singapore"],
+    AU: ["Brisbane", "Melbourne", "Perth", "Remote — Australia", "Sydney"],
+    PH: ["Cebu", "Manila", "Remote — Philippines"],
+    MX: ["Guadalajara", "Mexico City", "Monterrey", "Remote — Mexico"],
+    BR: ["Remote — Brazil", "Rio de Janeiro", "São Paulo"],
+    OTHER: ["Global / Multi-site", "Remote — Global"],
+  };
+  const names: Record<string, string> = {
+    US: "United States",
+    CA: "Canada",
+    IN: "India",
+    GB: "United Kingdom",
+    IE: "Ireland",
+    DE: "Germany",
+    NL: "Netherlands",
+    PL: "Poland",
+    RO: "Romania",
+    AE: "United Arab Emirates",
+    SG: "Singapore",
+    AU: "Australia",
+    PH: "Philippines",
+    MX: "Mexico",
+    BR: "Brazil",
+    OTHER: "Other / Multi-country",
+  };
+  if (!countryCode && !city) {
+    // Legacy import path may still pass a free location string — keep empty structured fields.
+    return { countryCode: "", city: "", location: String(locationFallback || "").trim() };
+  }
+  const cities = allowed[countryCode];
+  if (!cities || !cities.includes(city)) {
+    throw new Error("Pick Country and City from the location dropdown (avoids free-text formatting issues)");
+  }
+  return {
+    countryCode,
+    city,
+    location: `${city} · ${names[countryCode] || countryCode}`,
+  };
+}
+
+const ORG_SIZE_BANDS = ["SMB", "Mid-Market", "Enterprise"] as const;
+
+function normalizeOrgSizeBand(raw: unknown) {
+  const v = String(raw || "").trim();
+  if (!v) return "";
+  const hit = ORG_SIZE_BANDS.find((b) => b.toLowerCase() === v.toLowerCase());
+  return hit || "";
+}
+
+/** Strip protocol/paths/@ — store bare domain for mail matching. */
+function normalizePrimaryDomain(raw: unknown) {
+  let v = String(raw || "").trim().toLowerCase();
+  if (!v) return "";
+  v = v.replace(/^mailto:/i, "");
+  if (v.includes("@")) v = v.split("@").pop() || v;
+  v = v.replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+  v = v.split("/")[0].split("?")[0].trim();
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(v)) {
+    throw new Error("Primary domain looks invalid — use e.g. acme.com");
+  }
+  return v;
 }
 
 export async function createRequirement(
@@ -4545,6 +4895,7 @@ function serializePersonDetail(
     location: c.location,
     linkedIn: c.linkedIn,
     source: c.source,
+    relationshipTier: c.relationshipTier,
     doNotReach: c.doNotReach,
     doNotReachReason: c.doNotReachReason,
     doNotEmail: c.doNotEmail,
@@ -4575,13 +4926,34 @@ function serializePersonDetail(
       c.ownerId === session.userId || session.permissions.includes("ownership_transfer"),
     coOwners: c.coOwners.map((x) => x.user.name),
     titleIndex: c.titleIndex,
-    tags: Array.from(new Set([c.status, ...c.affiliations.map((p) => p.roleOnOrganization), ...c.skills].filter(Boolean))),
+    tags: Array.from(
+      new Set(
+        [
+          c.status,
+          c.relationshipTier,
+          c.stage,
+          ...c.affiliations.map((p) => p.roleOnOrganization),
+          ...c.skills,
+        ].filter(Boolean),
+      ),
+    ),
     companies: c.affiliations.map((p) => ({
       id: p.organization.id,
       name: p.organization.name,
       role: p.roleOnOrganization,
       industry: p.organization.industry,
       location: p.organization.location,
+      website: p.organization.website || "",
+      sizeBand: p.organization.sizeBand || "",
+      phone: p.organization.phone || "",
+      linkedIn: p.organization.linkedIn || "",
+      timezone: p.organization.timezone || "",
+      countryCode: p.organization.countryCode || "",
+      city: p.organization.city || "",
+      primaryDomain: p.organization.primaryDomain || "",
+      logoUrl: p.organization.logoFileId
+        ? `/api/files/preview?fileId=${encodeURIComponent(p.organization.logoFileId)}`
+        : null,
       roles: p.organization.roles.map((r) => r.role),
       hasMsa: p.organization.msaDocuments.length > 0,
       hasPo: p.organization.purchaseOrders.length > 0,
@@ -4636,8 +5008,16 @@ function serializeOrganization(
     name: a.name,
     industry: a.industry,
     location: a.location,
+    countryCode: a.countryCode,
+    city: a.city,
     website: a.website,
     phone: a.phone,
+    linkedIn: a.linkedIn,
+    timezone: a.timezone,
+    sizeBand: a.sizeBand,
+    primaryDomain: a.primaryDomain,
+    logoFileId: a.logoFileId,
+    logoUrl: a.logoFileId ? `/api/files/preview?fileId=${encodeURIComponent(a.logoFileId)}` : null,
     status: a.status,
     ownerName: a.owner.name,
     lastOutreachAt: a.lastOutreachAt,
@@ -4681,8 +5061,16 @@ function serializeOrganizationDetail(
     name: a.name,
     industry: a.industry,
     location: a.location,
+    countryCode: a.countryCode,
+    city: a.city,
     website: a.website,
     phone: a.phone,
+    linkedIn: a.linkedIn,
+    timezone: a.timezone,
+    sizeBand: a.sizeBand,
+    primaryDomain: a.primaryDomain,
+    logoFileId: a.logoFileId,
+    logoUrl: a.logoFileId ? `/api/files/preview?fileId=${encodeURIComponent(a.logoFileId)}` : null,
     status: a.status,
     owner: { id: a.owner.id, name: a.owner.name },
     lastOutreachAt: a.lastOutreachAt,

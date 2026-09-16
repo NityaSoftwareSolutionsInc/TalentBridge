@@ -315,10 +315,25 @@ model Organization {
   tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name       String
   industry   String   @default("")
+  /// Display location composed as "City · Country" from dropdowns (not free text).
   location   String   @default("")
+  /// ISO-ish country code from Location dropdown (US, IN, GB…).
+  countryCode String  @default("") @map("country_code")
+  /// Curated city label under countryCode.
+  city       String   @default("")
   /// Optional US extras (not C.9 required).
   website    String   @default("")
   phone      String   @default("")
+  linkedIn   String   @default("") @map("linkedin")
+  /// IANA-ish or display timezone for outreach scheduling (e.g. America/Chicago, CST).
+  timezone   String   @default("")
+  /// SMB | Mid-Market | Enterprise (display band, not a CRM pipeline).
+  sizeBand   String   @default("") @map("size_band")
+  /// Email domain for matching inbound Outlook (e.g. acme.com) — no @.
+  primaryDomain String @default("") @map("primary_domain")
+  /// Cropped company logo (StoredFile kind=logo).
+  logoFileId String?  @map("logo_file_id")
+  logoFile   StoredFile? @relation("OrganizationLogo", fields: [logoFileId], references: [id], onDelete: SetNull)
   status     String   @default("active")
   ownerId    String   @map("owner_id")
   owner      User     @relation("OrganizationOwner", fields: [ownerId], references: [id])
@@ -331,7 +346,7 @@ model Organization {
   submissions    Submission[]
   msaDocuments   MsaDocument[]
   purchaseOrders PurchaseOrder[]
-  files          StoredFile[]
+  files          StoredFile[] @relation("OrganizationFiles")
   activityEvents ActivityEvent[]
   tasks          Task[]
   interviews     Interview[]
@@ -375,6 +390,8 @@ model Person {
   location        String      @default("")
   linkedIn        String      @default("") @map("linkedin")
   source          String      @default("manual")
+  /// Client/vendor relationship depth — Strategic / Standard / Other (mock Relationship Tier).
+  relationshipTier String     @default("") @map("relationship_tier")
   ownerId         String      @map("owner_id")
   owner           User        @relation("PersonOwner", fields: [ownerId], references: [id])
   /// When current owner took ownership — prior Communication stays private to prior owner/actors.
@@ -806,7 +823,9 @@ model StoredFile {
   byteSize       Int?     @map("byte_size")
   version        Int      @default(1)
   organizationId String?  @map("organization_id")
-  organization   Organization? @relation(fields: [organizationId], references: [id])
+  organization   Organization? @relation("OrganizationFiles", fields: [organizationId], references: [id])
+  /// Reverse of Organization.logoFileId (logo pointer).
+  logoForOrganizations Organization[] @relation("OrganizationLogo")
   personId       String?  @map("person_id")
   person         Person?  @relation(fields: [personId], references: [id])
   createdAt      DateTime @default(now()) @map("created_at")

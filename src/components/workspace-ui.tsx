@@ -43,13 +43,29 @@ export function Avatar({
   name,
   size = 32,
   className = "",
+  src,
 }: {
   name: string;
   size?: number;
   className?: string;
+  /** Optional image (e.g. company logo). Falls back to initials. */
+  src?: string | null;
 }) {
   const colors = ["#1d4ed8", "#0f766e", "#334155", "#b45309", "#be123c"];
   const i = name.split("").reduce((n, c) => n + c.charCodeAt(0), 0) % colors.length;
+  if (src) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={src}
+        alt={name}
+        width={size}
+        height={size}
+        className={cn("inline-block shrink-0 rounded-md object-cover border border-slate-200 bg-white", className)}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
   return (
     <span
       className={cn("inline-flex items-center justify-center rounded-full text-white font-semibold shrink-0", className)}

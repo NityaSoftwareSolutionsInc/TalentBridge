@@ -31,6 +31,7 @@ import {
   submitProfile,
   syncJnp,
   toggleDnc,
+  updateOrganization,
   updatePerson,
   updateRequirement,
   upsertEmailSignature,
@@ -178,6 +179,10 @@ export async function POST(req: Request) {
             organizationId: body.organizationId as string | undefined,
             roleOnOrganization: body.roleOnOrganization as string | undefined,
             stage: body.stage as string | undefined,
+            department: body.department as string | undefined,
+            status: body.status as string | undefined,
+            relationshipTier: body.relationshipTier as string | undefined,
+            source: body.source as string | undefined,
           }),
         );
       case "update_person":
@@ -188,6 +193,7 @@ export async function POST(req: Request) {
             secondaryTitle: body.secondaryTitle as string | undefined,
             email: body.email as string | undefined,
             phone: body.phone as string | undefined,
+            department: body.department as string | undefined,
             location: body.location as string | undefined,
             linkedIn: body.linkedIn as string | undefined,
             availability: body.availability as string | undefined,
@@ -203,6 +209,10 @@ export async function POST(req: Request) {
             currentRate: body.currentRate as string | undefined,
             expectedRate: body.expectedRate as string | undefined,
             timezone: body.timezone as string | undefined,
+            stage: body.stage as string | undefined,
+            status: body.status as string | undefined,
+            relationshipTier: body.relationshipTier as string | undefined,
+            source: body.source as string | undefined,
           }),
         );
       case "create_organization":
@@ -214,6 +224,28 @@ export async function POST(req: Request) {
             location: body.location as string | undefined,
             website: body.website as string | undefined,
             phone: body.phone as string | undefined,
+            linkedIn: body.linkedIn as string | undefined,
+            timezone: body.timezone as string | undefined,
+            sizeBand: body.sizeBand as string | undefined,
+            primaryDomain: body.primaryDomain as string | undefined,
+            countryCode: body.countryCode as string | undefined,
+            city: body.city as string | undefined,
+          }),
+        );
+      case "update_organization":
+        return NextResponse.json(
+          await updateOrganization(session, String(body.organizationId), {
+            name: body.name as string | undefined,
+            industry: body.industry as string | undefined,
+            location: body.location as string | undefined,
+            website: body.website as string | undefined,
+            phone: body.phone as string | undefined,
+            linkedIn: body.linkedIn as string | undefined,
+            timezone: body.timezone as string | undefined,
+            sizeBand: body.sizeBand as string | undefined,
+            primaryDomain: body.primaryDomain as string | undefined,
+            countryCode: body.countryCode as string | undefined,
+            city: body.city as string | undefined,
           }),
         );
       case "create_requirement":

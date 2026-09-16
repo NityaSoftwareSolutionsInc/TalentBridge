@@ -18,6 +18,17 @@ export type ListFilters = {
   excludeRequirementId: string;
   workAuthorization: string;
   sort: string;
+  segment?: string;
+  stage?: string;
+  companyId?: string;
+  industry?: string;
+  status?: string;
+};
+
+export type ContactFilterOptions = {
+  companies: { id: string; name: string }[];
+  industries: string[];
+  locations: string[];
 };
 
 const FILTER_KEYS = [
@@ -32,6 +43,10 @@ const FILTER_KEYS = [
   "lastOutreach",
   "excludeRequirementId",
   "workAuthorization",
+  "stage",
+  "companyId",
+  "industry",
+  "status",
 ] as const;
 
 const CHIP_LABEL: Record<(typeof FILTER_KEYS)[number], string> = {
@@ -46,6 +61,10 @@ const CHIP_LABEL: Record<(typeof FILTER_KEYS)[number], string> = {
   lastOutreach: "Last outreach",
   excludeRequirementId: "Exclude submitted",
   workAuthorization: "Work auth",
+  stage: "Stage",
+  companyId: "Client",
+  industry: "Industry",
+  status: "Status",
 };
 
 const textControl =
@@ -74,7 +93,7 @@ export function sortRecords<T extends Record<string, unknown>>(rows: T[], sort: 
   } else if (sort === "outreach") {
     copy.sort((a, b) => time(b.lastOutreachAt) - time(a.lastOutreachAt));
   } else {
-    // Default: newest added first, then most recent outreach
+    // Default / Most Recent: newest added first, then most recent outreach
     copy.sort((a, b) => {
       const byCreated = time(b.createdAt) - time(a.createdAt);
       if (byCreated !== 0) return byCreated;
@@ -91,6 +110,7 @@ export function ListToolbar({
   extraOpen,
   users,
   requirements,
+  contactFilterOptions,
   onToggleExtra,
   onFilter,
   onClear,
@@ -101,16 +121,23 @@ export function ListToolbar({
   extraOpen: boolean;
   users: Record<string, unknown>[];
   requirements: Record<string, unknown>[];
+  contactFilterOptions?: ContactFilterOptions | null;
   onToggleExtra: () => void;
   onFilter: (key: string, value: string) => void;
   onClear: () => void;
 }) {
   const isContacts = ["candidates", "clients", "vendors"].includes(moduleKey);
   const isCandidates = moduleKey === "candidates";
+  const isClientContacts = moduleKey === "clients" && filters.segment === "contacts";
   const active = FILTER_KEYS.filter((key) => Boolean(filters[key]));
   const extraCount = (["title", "experience", "source", "lastOutreach", "excludeRequirementId"] as const).filter(
     (key) => Boolean(filters[key]),
   ).length;
+
+  const locationChoices =
+    isClientContacts && contactFilterOptions?.locations?.length
+      ? contactFilterOptions.locations
+      : LOCATION_OPTIONS;
 
   return (
     <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -129,7 +156,7 @@ export function ListToolbar({
           <DebouncedText
             id="list-search"
             className="w-full h-9 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] pl-8 pr-8 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none hover:border-[var(--color-border-strong)] focus:border-[var(--color-focus)] focus:ring-2 focus:ring-[var(--color-focus-ring)]"
-            placeholder={searchPlaceholder(moduleKey)}
+            placeholder={searchPlaceholder(moduleKey, filters.segment)}
             value={filters.q}
             onCommit={(v) => onFilter("q", v)}
           />
@@ -216,6 +243,58 @@ export function ListToolbar({
                   </FieldSelect>
                 </FilterField>
               </>
+            ) : isClientContacts ? (
+              <>
+                <FilterField label="Client" className="col-span-2">
+                  <FieldSelect
+                    className={selectControl}
+                    value={filters.companyId || ""}
+                    onChange={(e) => onFilter("companyId", e.target.value)}
+                  >
+                    <option value="">All Clients</option>
+                    {(contactFilterOptions?.companies || []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </FieldSelect>
+                </FilterField>
+                <FilterField label="Location">
+                  <FieldSelect className={selectControl} value={filters.location} onChange={(e) => onFilter("location", e.target.value)}>
+                    <option value="">All Locations</option>
+                    {locationChoices.map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </FieldSelect>
+                </FilterField>
+                <FilterField label="Industry">
+                  <FieldSelect
+                    className={selectControl}
+                    value={filters.industry || ""}
+                    onChange={(e) => onFilter("industry", e.target.value)}
+                  >
+                    <option value="">All Industries</option>
+                    {(contactFilterOptions?.industries || []).map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </FieldSelect>
+                </FilterField>
+                <FilterField label="Status" className="col-span-2">
+                  <FieldSelect
+                    className={selectControl}
+                    value={filters.status || ""}
+                    onChange={(e) => onFilter("status", e.target.value)}
+                  >
+                    <option value="">All Contacts</option>
+                    <option value="Active">Active Contacts</option>
+                    <option value="Inactive">Inactive</option>
+                  </FieldSelect>
+                </FilterField>
+              </>
             ) : (
               <FilterField label="Location" className="col-span-2">
                 <FieldSelect className={selectControl} value={filters.location} onChange={(e) => onFilter("location", e.target.value)}>
@@ -261,7 +340,7 @@ export function ListToolbar({
               value={filters.sort || "recent"}
               onChange={(e) => onFilter("sort", e.target.value === "recent" ? "" : e.target.value)}
             >
-              <option value="recent">Newest added</option>
+              <option value="recent">Most Recent</option>
               <option value="outreach">Last outreach</option>
               <option value="name">Name A–Z</option>
               <option value="followup">Next follow-up</option>
@@ -332,7 +411,7 @@ export function ListToolbar({
               .map((key) => (
                 <FilterChip
                   key={key}
-                  label={`${CHIP_LABEL[key]}: ${chipValue(key, filters, users, requirements)}`}
+                  label={`${CHIP_LABEL[key]}: ${chipValue(key, filters, users, requirements, contactFilterOptions)}`}
                   onRemove={() => onFilter(key, "")}
                 />
               ))}
@@ -394,8 +473,9 @@ function DebouncedText({
   );
 }
 
-function searchPlaceholder(moduleKey: string) {
-  if (moduleKey === "clients") return "Search client people...";
+function searchPlaceholder(moduleKey: string, segment?: string) {
+  if (moduleKey === "clients" && segment === "contacts") return "Search client contacts...";
+  if (moduleKey === "clients") return "Search clients...";
   if (moduleKey === "candidates") return "Search candidates...";
   if (moduleKey === "vendors") return "Search vendor people...";
   if (moduleKey === "calendar") return "Search TalentBridge meetings...";
@@ -408,14 +488,18 @@ function chipValue(
   filters: ListFilters,
   users: Record<string, unknown>[],
   requirements: Record<string, unknown>[],
+  contactFilterOptions?: ContactFilterOptions | null,
 ) {
-  const raw = filters[key];
+  const raw = filters[key] || "";
   if (key === "owner") {
     return String(users.find((u) => String(u.id) === raw)?.name || raw);
   }
   if (key === "excludeRequirementId") {
     const req = requirements.find((r) => String(r.id) === raw);
     return String((req as { title?: string } | undefined)?.title || "Requirement");
+  }
+  if (key === "companyId") {
+    return String(contactFilterOptions?.companies.find((c) => c.id === raw)?.name || raw);
   }
   if (key === "experience") return `${raw}+ yrs`;
   if (key === "lastOutreach") return `${raw}+ days`;

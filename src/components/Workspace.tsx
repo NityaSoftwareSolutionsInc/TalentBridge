@@ -10,10 +10,13 @@ import { SettingsPane, CreateUserForm, inviteStatusMeta } from "./SettingsPane";
 import { DashList, DashPane } from "./DashboardPane";
 import { CalendarAgenda, CalendarPane, type CalendarItem } from "./CalendarPane";
 import { ListPager } from "./ListPager";
-import { ListToolbar, sortRecords } from "./ListToolbar";
+import { ListToolbar, sortRecords, type ContactFilterOptions } from "./ListToolbar";
 import { paginate, parsePageSize, readStoredPageSize, storePageSize } from "@/lib/paging";
 import { EMPLOYMENT_TYPE_OPTIONS, RELOCATE_OPTIONS, WORK_AUTH_OPTIONS, formatUsdRateDisplay, normalizeRateInput, rateInputValue } from "@/lib/candidate-fields";
 import { buildJnpProfileUrl } from "@/lib/jnp-links";
+import { CompanyLogoCrop } from "./CompanyLogoCrop";
+import { CountryCitySelect, parseLocationToCountryCity } from "./CountryCitySelect";
+import { SearchableTimezoneSelect, TECH_TIMEZONES } from "./SearchableTimezoneSelect";
 import {
   Ban,
   Building2,
@@ -76,6 +79,7 @@ type Drawer =
   | "import-clients"
   | "create-user"
   | "edit"
+  | "edit-company"
   | "dnc";
 
 export function Workspace({ moduleKey }: { moduleKey: string }) {
@@ -93,6 +97,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [activityEvents, setActivityEvents] = useState<Record<string, unknown>[]>([]);
   const [requirements, setRequirements] = useState<Record<string, unknown>[]>([]);
   const [users, setUsers] = useState<Record<string, unknown>[]>([]);
+  const [contactFilterOptions, setContactFilterOptions] = useState<ContactFilterOptions | null>(null);
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
   const [globalHits, setGlobalHits] = useState<Record<string, GlobalHit[]> | null>(null);
   const [error, setError] = useState("");
@@ -148,6 +153,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       sort: params.get("sort") || "",
       segment: params.get("segment") || (moduleKey === "clients" ? "companies" : ""),
       stage: params.get("stage") || "",
+      companyId: params.get("companyId") || "",
+      industry: params.get("industry") || "",
+      status: params.get("status") || "",
     }),
     [params, moduleKey],
   );
@@ -176,6 +184,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       "workAuthorization",
       "sort",
       "stage",
+      "companyId",
+      "industry",
+      "status",
     ].forEach((key) => next.delete(key));
     next.delete("page");
     router.replace(`/${moduleKey}?${next.toString()}`);
@@ -275,6 +286,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     if (data.activityEvents) setActivityEvents(data.activityEvents);
     if (data.requirements) setRequirements(data.requirements);
     if (data.users) setUsers(data.users);
+    if (data.contactFilterOptions) setContactFilterOptions(data.contactFilterOptions);
+    else if (moduleKey === "clients" && params.get("segment") !== "contacts") setContactFilterOptions(null);
     if (data.settings || data.maps || data.users || data.mode) setSettings(data);
     if (data.items) setList(data.items);
     if (data.reports) setDash({ kpis: data.reports, risks: data.risks });
@@ -453,9 +466,36 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       : "Submit Profile";
   const isCandidate = record?.kind === "candidate";
   const isOrganization = record?.type === "organization";
-  const company = ((record?.companies as { id: string; name: string; role?: string; industry?: string; location?: string }[]) || [])[0];
+  const company = ((record?.companies as {
+    id: string;
+    name: string;
+    role?: string;
+    industry?: string;
+    location?: string;
+    website?: string;
+    sizeBand?: string;
+    logoUrl?: string | null;
+    phone?: string;
+    linkedIn?: string;
+    timezone?: string;
+    countryCode?: string;
+    city?: string;
+    primaryDomain?: string;
+  }[]) || [])[0];
+  const tzLabel =
+    TECH_TIMEZONES.find((z) => z.value === String(record?.timezone || ""))?.label ||
+    String(record?.timezone || "").trim() ||
+    "";
+  const locationWithTz = (() => {
+    const loc = timeZoneHint(record?.location) || String(record?.location || "").trim();
+    if (!loc) return tzLabel || "";
+    if (!tzLabel) return loc;
+    const short = tzLabel.match(/\(([^)]+)\)/)?.[1] || tzLabel.split("—")[0]?.trim() || "";
+    return short ? `${loc} (${short})` : loc;
+  })();
   const peopleOnOrganization = (record?.people as { person: { id: string; name: string; title: string; status?: string }; roleOnOrganization?: string }[]) || [];
   const internalNotes = ((record?.activityEvents as Record<string, unknown>[]) || []).filter((a) => a.kind === "internal_note");
+  const notesSnippet = String(internalNotes[0]?.body || internalNotes[0]?.summary || record?.nextAction || "").trim();
   const files = (record?.files as { name: string; source?: string; kind?: string; previewable?: boolean }[]) || [];
   const upcoming = (record?.upcoming as { id: string; title: string; dueAt?: string }[]) || [];
   const contactTags = ((record?.tags as string[]) || []).filter((t) => t && t !== record?.status);
@@ -592,6 +632,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 extraOpen={extraFilters}
                 users={users}
                 requirements={requirements}
+                contactFilterOptions={contactFilterOptions}
                 onToggleExtra={() => setExtraFilters((v) => !v)}
                 onFilter={setFilter}
                 onClear={clearFilters}
@@ -889,7 +930,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               <div className="shrink-0 bg-[var(--color-surface)]">
                 <header className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3">
                   <div className="flex flex-col gap-4 sm:flex-row">
-                    <Avatar name={String(record?.name || "")} size={72} />
+                    <Avatar
+                      name={String(record?.name || "")}
+                      size={72}
+                      src={isOrganization && record?.logoUrl ? String(record.logoUrl) : undefined}
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div className="min-w-0">
@@ -927,8 +972,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             variant="secondary"
                             className="!bg-transparent !border-[var(--color-accent)] !text-[var(--color-accent)] hover:!bg-blue-50 hover:!text-[var(--color-accent)]"
                             onClick={() => setDrawer("edit")}
-                            disabled={isOrganization}
-                            title={isOrganization ? "Edit company fields in a later slice" : "Edit contact"}
+                            title={isOrganization ? "Edit company" : "Edit contact"}
                           >
                             Edit
                           </Button>
@@ -1003,8 +1047,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             <IconOnly icon={WhatsAppIcon} label="WhatsApp" tone="green" disabled title="WhatsApp channel not live in POC" />
                           </span>
                         ) : null}
-                        {record?.location ? (
-                          <IconChip icon={MapPin}>{timeZoneHint(record.location)}</IconChip>
+                        {locationWithTz ? (
+                          <IconChip icon={MapPin}>{locationWithTz}</IconChip>
                         ) : null}
                         {record?.linkedIn ? (
                           <IconChip
@@ -1207,15 +1251,19 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             ["Job Title", record?.title],
                             ["Department", record?.department],
                             ["Company", company?.name],
-                            ["Location", timeZoneHint(record?.location)],
-                            ["Time Zone", /pst/i.test(timeZoneHint(record?.location)) ? "PST" : /cst/i.test(timeZoneHint(record?.location)) ? "CST" : "—"],
+                            ["Work Email", record?.email],
+                            ["Phone", record?.phone],
+                            ["LinkedIn", record?.linkedIn],
+                            ["Location", record?.location || locationWithTz],
+                            ["Time Zone", tzLabel || "—"],
                             ["Contact Type", "Client"],
                             ["Status", record?.status],
-                            ["Relationship Tier", contactTags.includes("Strategic") ? "Strategic" : company?.role || "—"],
+                            ["Relationship Tier", record?.relationshipTier || (contactTags.includes("Strategic") ? "Strategic" : company?.role || "—")],
                             ["Source", record?.source],
                             ["Owner", (record?.owner as { name?: string })?.name],
                             ["Last outreach", shortDate(record?.lastOutreachAt)],
                             ["Next Action", record?.nextAction],
+                            ["Notes", notesSnippet || "—"],
                           ].map(([k, v]) => (
                             <div key={String(k)} className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2">
                               <dt className="text-slate-600">{String(k)}</dt>
@@ -1230,25 +1278,61 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           {(contactTags.length ? contactTags : ((record?.skills as string[]) || [])).map((t) => (
                             <Tag key={String(t)} tone={tagTone(String(t))}>{String(t)}</Tag>
                           ))}
+                          {!contactTags.length && !((record?.skills as string[]) || []).length ? (
+                            <span className="text-sm text-slate-400">No tags yet</span>
+                          ) : null}
                         </div>
                       </Card>
                       {company ? (
-                        <button
-                          type="button"
-                          className="w-full text-left rounded-lg border border-slate-200 bg-white p-4 flex gap-3 items-center hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer"
-                          onClick={() => select(company.id, "organization")}
-                        >
-                          <div className="h-10 w-10 rounded-lg bg-slate-800 text-white flex items-center justify-center text-xs font-bold">
-                            {String(company.name).slice(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <div className="font-semibold text-sm">{company.name}</div>
-                            <div className="text-xs text-slate-500">
-                              {[company.industry, company.location].filter(Boolean).join(" · ")}
+                        <Card>
+                          <CardHeader
+                            title="Company"
+                            action={
+                              <div className="flex items-center gap-2">
+                                <TextLink onClick={() => setDrawer("edit-company")}>Edit</TextLink>
+                                <TextLink onClick={() => select(company.id, "organization")}>Open Client 360</TextLink>
+                              </div>
+                            }
+                          />
+                          <button
+                            type="button"
+                            className="w-full text-left px-4 pb-4 flex gap-3 items-start hover:bg-slate-50/80 cursor-pointer"
+                            onClick={() => select(company.id, "organization")}
+                          >
+                            {company.logoUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={company.logoUrl}
+                                alt=""
+                                className="h-10 w-10 rounded-lg border border-slate-200 object-cover bg-white shrink-0"
+                              />
+                            ) : (
+                              <div className="h-10 w-10 rounded-lg bg-slate-800 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                                {String(company.name).slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="font-semibold text-sm">{company.name}</div>
+                              <div className="text-xs text-slate-500">
+                                {[company.industry, company.sizeBand].filter(Boolean).join(" · ") || "—"}
+                              </div>
+                              {company.location ? (
+                                <div className="text-xs text-slate-500 mt-0.5">{company.location}</div>
+                              ) : null}
+                              {company.website ? (
+                                <a
+                                  href={company.website.startsWith("http") ? company.website : `https://${company.website}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-blue-700 hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {company.website.replace(/^https?:\/\//, "")}
+                                </a>
+                              ) : null}
                             </div>
-                            <span className="text-xs text-blue-700">Open Client 360</span>
-                          </div>
-                        </button>
+                          </button>
+                        </Card>
                       ) : null}
                     </div>
                     <div className="min-w-0 xl:col-span-7 space-y-4">
@@ -1260,6 +1344,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
                           <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
                           <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
+                          <IconBtn onClick={() => setDrawer("wrap")} label="Add Task" />
                         </div>
                       </Card>
                       <Card>
@@ -1310,17 +1395,23 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           </div>
                         </Card>
                         <Card>
-                          <CardHeader title={`Related people (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
+                          <CardHeader title={`Related Contacts (${relatedPeople.length})`} action={<TextLink onClick={() => setTab("Relationships")}>View all</TextLink>} />
                           <div className="px-2 pb-2">
                             {relatedPeople.map((p) => (
-                              <div key={p.name} className="flex items-center gap-2 w-full rounded-md px-2 py-1.5">
+                              <button
+                                key={p.id || p.name}
+                                type="button"
+                                className="flex items-center gap-2 w-full rounded-md px-2 py-1.5 hover:bg-slate-50 cursor-pointer text-left"
+                                onClick={() => p.id && select(p.id, "person")}
+                                disabled={!p.id}
+                              >
                                 <Avatar name={p.name} size={28} />
                                 <div className="min-w-0 flex-1">
                                   <div className="text-sm font-medium truncate">{p.name}</div>
                                   <div className="text-xs text-slate-500 truncate">{p.title}</div>
                                 </div>
                                 <Tag tone={p.tone}>{p.badge}</Tag>
-                              </div>
+                              </button>
                             ))}
                             {!relatedPeople.length ? <div className="px-2 py-3 text-sm text-slate-400">None on file</div> : null}
                           </div>
@@ -1592,7 +1683,20 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               <ClientOrgForm
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
-                  const data = await act({ action: "create_organization", role: "client", ...vals });
+                  const { logoBlob, ...fields } = vals;
+                  const data = await act({ action: "create_organization", role: "client", ...fields });
+                  if (data?.id && logoBlob) {
+                    const fd = new FormData();
+                    fd.set("organizationId", String(data.id));
+                    fd.set("kind", "logo");
+                    fd.set("name", "company-logo.png");
+                    fd.set("file", logoBlob, "company-logo.png");
+                    const res = await fetch("/api/files", { method: "POST", body: fd });
+                    if (!res.ok) {
+                      const err = await res.json().catch(() => ({}));
+                      throw new Error((err as { error?: string }).error || "Logo upload failed");
+                    }
+                  }
                   if (data?.id) {
                     const next = new URLSearchParams(params.toString());
                     next.set("segment", "companies");
@@ -1677,11 +1781,92 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               />
             ) : null}
             {drawer === "edit" ? (
-              <EditForm
-                record={record}
+              isOrganization ? (
+                <ClientOrgForm
+                  mode="edit"
+                  initial={{
+                    name: String(record?.name || ""),
+                    industry: String(record?.industry || ""),
+                    location: String(record?.location || ""),
+                    countryCode: String(record?.countryCode || ""),
+                    city: String(record?.city || ""),
+                    website: String(record?.website || ""),
+                    phone: String(record?.phone || ""),
+                    linkedIn: String(record?.linkedIn || ""),
+                    timezone: String(record?.timezone || ""),
+                    sizeBand: String(record?.sizeBand || ""),
+                    primaryDomain: String(record?.primaryDomain || ""),
+                  }}
+                  currentLogoUrl={record?.logoUrl ? String(record.logoUrl) : null}
+                  onClose={() => setDrawer("none")}
+                  onSave={async (vals) => {
+                    const { logoBlob, ...fields } = vals;
+                    await act({ action: "update_organization", organizationId: selectedId, ...fields });
+                    if (logoBlob && selectedId) {
+                      const fd = new FormData();
+                      fd.set("organizationId", String(selectedId));
+                      fd.set("kind", "logo");
+                      fd.set("name", "company-logo.png");
+                      fd.set("file", logoBlob, "company-logo.png");
+                      const res = await fetch("/api/files", { method: "POST", body: fd });
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error((err as { error?: string }).error || "Logo upload failed");
+                      }
+                      const rec = await fetch(`/api/record?type=organization&id=${selectedId}`).then((r) => r.json());
+                      setRecord(rec.record);
+                    }
+                    setDrawer("none");
+                  }}
+                />
+              ) : (
+                <EditForm
+                  record={record}
+                  onClose={() => setDrawer("none")}
+                  onSave={async (vals) => {
+                    await act({ action: "update_person", personId: selectedId, ...vals });
+                    setDrawer("none");
+                  }}
+                />
+              )
+            ) : null}
+            {drawer === "edit-company" && company ? (
+              <ClientOrgForm
+                mode="edit"
+                initial={{
+                  name: String(company.name || ""),
+                  industry: String(company.industry || ""),
+                  location: String(company.location || ""),
+                  countryCode: String(company.countryCode || ""),
+                  city: String(company.city || ""),
+                  website: String(company.website || ""),
+                  phone: String(company.phone || ""),
+                  linkedIn: String(company.linkedIn || ""),
+                  timezone: String(company.timezone || ""),
+                  sizeBand: String(company.sizeBand || ""),
+                  primaryDomain: String(company.primaryDomain || ""),
+                }}
+                currentLogoUrl={company.logoUrl || null}
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
-                  await act({ action: "update_person", personId: selectedId, ...vals });
+                  const { logoBlob, ...fields } = vals;
+                  await act({ action: "update_organization", organizationId: company.id, ...fields });
+                  if (logoBlob) {
+                    const fd = new FormData();
+                    fd.set("organizationId", String(company.id));
+                    fd.set("kind", "logo");
+                    fd.set("name", "company-logo.png");
+                    fd.set("file", logoBlob, "company-logo.png");
+                    const res = await fetch("/api/files", { method: "POST", body: fd });
+                    if (!res.ok) {
+                      const err = await res.json().catch(() => ({}));
+                      throw new Error((err as { error?: string }).error || "Logo upload failed");
+                    }
+                  }
+                  if (selectedId) {
+                    const rec = await fetch(`/api/record?type=person&id=${selectedId}`).then((r) => r.json());
+                    setRecord(rec.record);
+                  }
                   setDrawer("none");
                 }}
               />
@@ -2896,16 +3081,26 @@ function AccountOverview({ record }: { record: Record<string, unknown> | null })
     poRisk: "PO Risk",
     recentCommitments: "Recent Commitments",
   };
+  const tzLabel = TECH_TIMEZONES.find((z) => z.value === String(record?.timezone || ""))?.label;
   const extras = [
     ["Industry", record?.industry],
     ["Location", record?.location],
+    ["Timezone", tzLabel || record?.timezone],
+    ["Company size", record?.sizeBand],
+    ["Primary domain", record?.primaryDomain],
     ["Website", record?.website],
+    ["LinkedIn", record?.linkedIn],
     ["Main phone", record?.phone],
   ].filter(([, v]) => Boolean(v && String(v).trim()));
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
       {extras.map(([k, v]) => (
-        <Field key={String(k)} label={String(k)} value={String(v)} />
+        <Field
+          key={String(k)}
+          label={String(k)}
+          value={String(v)}
+          href={k === "Website" || k === "LinkedIn" ? String(v) : undefined}
+        />
       ))}
       {Object.entries(intel).map(([k, v]) => (
         <Field key={k} label={labels[k] || k} value={String(v ?? "—")} />
@@ -2913,11 +3108,19 @@ function AccountOverview({ record }: { record: Record<string, unknown> | null })
     </div>
   );
 }
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value, href }: { label: string; value: string; href?: string }) {
+  const link =
+    href && /^https?:\/\//i.test(href) ? (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline break-all">
+        {value}
+      </a>
+    ) : (
+      value
+    );
   return (
     <div>
       <div className="text-xs text-slate-500">{label}</div>
-      <div>{value}</div>
+      <div className="text-sm text-slate-900 break-words">{link}</div>
     </div>
   );
 }
@@ -4028,9 +4231,12 @@ function CreateForm({
     name: "",
     title: "",
     secondaryTitle: "",
+    department: "",
     email: "",
     phone: "",
     location: "",
+    countryCode: "",
+    city: "",
     linkedIn: "",
     timezone: "",
     availability: "",
@@ -4047,6 +4253,9 @@ function CreateForm({
     expectedRate: "",
     resumeName: "",
     stage: stages[0] || "Lead",
+    status: "Active",
+    relationshipTier: "",
+    source: "manual",
   });
   const set = (key: keyof typeof vals) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setVals((prev) => ({ ...prev, [key]: e.target.value }));
@@ -4085,12 +4294,28 @@ function CreateForm({
       <FieldInput value={vals.title} onChange={set("title")} placeholder={isCandidate ? "Primary title" : "Role"} />
       {!isCandidate ? (
         <>
+          <Label>Department</Label>
+          <FieldInput value={vals.department} onChange={set("department")} placeholder="Talent Acquisition" />
           <Label>Stage</Label>
           <FieldSelect className="w-full" value={vals.stage} onChange={set("stage")}>
             {stages.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </FieldSelect>
+          <Label>Status</Label>
+          <FieldSelect className="w-full" value={vals.status} onChange={set("status")}>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </FieldSelect>
+          <Label>Relationship Tier</Label>
+          <FieldSelect className="w-full" value={vals.relationshipTier} onChange={set("relationshipTier")}>
+            <option value="">Select</option>
+            <option value="Strategic">Strategic</option>
+            <option value="Standard">Standard</option>
+            <option value="Other">Other</option>
+          </FieldSelect>
+          <Label>Source</Label>
+          <FieldInput value={vals.source} onChange={set("source")} placeholder="Referral, LinkedIn, manual…" />
         </>
       ) : null}
       {isCandidate ? (
@@ -4103,8 +4328,34 @@ function CreateForm({
       <FieldInput type="email" value={vals.email} onChange={set("email")} />
       <Label>Phone</Label>
       <FieldInput value={vals.phone} onChange={set("phone")} />
-      <Label>Current location</Label>
-      <FieldInput value={vals.location} onChange={set("location")} placeholder="City, ST" />
+      {!isCandidate ? (
+        <>
+          <div>
+            <Label>Location <span className="text-slate-400 font-normal">(optional)</span></Label>
+            <CountryCitySelect
+              countryCode={vals.countryCode}
+              city={vals.city}
+              onChange={({ countryCode, city, location }) =>
+                setVals((p) => ({ ...p, countryCode, city, location }))
+              }
+            />
+          </div>
+          <div>
+            <Label>Timezone <span className="text-slate-400 font-normal">(optional)</span></Label>
+            <SearchableTimezoneSelect
+              value={vals.timezone}
+              onChange={(timezone) => setVals((p) => ({ ...p, timezone }))}
+            />
+          </div>
+          <Label>LinkedIn</Label>
+          <FieldInput value={vals.linkedIn} onChange={set("linkedIn")} placeholder="https://linkedin.com/in/…" />
+        </>
+      ) : (
+        <>
+          <Label>Current location</Label>
+          <FieldInput value={vals.location} onChange={set("location")} placeholder="City, ST" />
+        </>
+      )}
       {isCandidate ? (
         <>
           <Label>Skills</Label>
@@ -4190,13 +4441,17 @@ function EditForm({
   onSave: (vals: Record<string, string>) => Promise<void>;
 }) {
   const isCandidate = record?.kind === "candidate";
+  const parsedLoc = parseLocationToCountryCity(String(record?.location || ""));
   const [vals, setVals] = useState({
     name: String(record?.name || ""),
     title: String(record?.title || ""),
     secondaryTitle: String(record?.secondaryTitle || ""),
+    department: String(record?.department || ""),
     email: String(record?.email || ""),
     phone: String(record?.phone || ""),
     location: String(record?.location || ""),
+    countryCode: parsedLoc.countryCode,
+    city: parsedLoc.city,
     linkedIn: String(record?.linkedIn || ""),
     timezone: String(record?.timezone || ""),
     availability: String(record?.availability || ""),
@@ -4211,6 +4466,10 @@ function EditForm({
     employmentType: String(record?.employmentType || ""),
     currentRate: String(record?.currentRate || ""),
     expectedRate: String(record?.expectedRate || ""),
+    stage: String(record?.stage || "Lead"),
+    status: String(record?.status || "Active"),
+    relationshipTier: String(record?.relationshipTier || ""),
+    source: String(record?.source || "manual"),
   });
   const set = (key: keyof typeof vals) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setVals((prev) => ({ ...prev, [key]: e.target.value }));
@@ -4219,7 +4478,10 @@ function EditForm({
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
-        onSave(vals);
+        const payload = { ...vals };
+        delete (payload as { countryCode?: string }).countryCode;
+        delete (payload as { city?: string }).city;
+        onSave(payload);
       }}
     >
       <h2 className="text-lg font-semibold">Edit contact</h2>
@@ -4227,6 +4489,32 @@ function EditForm({
       <FieldInput value={vals.name} onChange={set("name")} required />
       <Label>Title</Label>
       <FieldInput value={vals.title} onChange={set("title")} />
+      {!isCandidate ? (
+        <>
+          <Label>Department</Label>
+          <FieldInput value={vals.department} onChange={set("department")} />
+          <Label>Stage</Label>
+          <FieldSelect className="w-full" value={vals.stage} onChange={set("stage")}>
+            {["Lead", "Suspect", "Prospect", "Customer"].map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </FieldSelect>
+          <Label>Status</Label>
+          <FieldSelect className="w-full" value={vals.status} onChange={set("status")}>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </FieldSelect>
+          <Label>Relationship Tier</Label>
+          <FieldSelect className="w-full" value={vals.relationshipTier} onChange={set("relationshipTier")}>
+            <option value="">Select</option>
+            <option value="Strategic">Strategic</option>
+            <option value="Standard">Standard</option>
+            <option value="Other">Other</option>
+          </FieldSelect>
+          <Label>Source</Label>
+          <FieldInput value={vals.source} onChange={set("source")} />
+        </>
+      ) : null}
       {isCandidate ? (
         <>
           <Label>Secondary title</Label>
@@ -4241,8 +4529,34 @@ function EditForm({
       <FieldInput type="email" value={vals.email} onChange={set("email")} />
       <Label>Phone</Label>
       <FieldInput value={vals.phone} onChange={set("phone")} />
-      <Label>Current location</Label>
-      <FieldInput value={vals.location} onChange={set("location")} placeholder="City, ST" />
+      {!isCandidate ? (
+        <>
+          <div>
+            <Label>Location</Label>
+            <CountryCitySelect
+              countryCode={vals.countryCode}
+              city={vals.city}
+              onChange={({ countryCode, city, location }) =>
+                setVals((p) => ({ ...p, countryCode, city, location }))
+              }
+            />
+          </div>
+          <div>
+            <Label>Timezone</Label>
+            <SearchableTimezoneSelect
+              value={vals.timezone}
+              onChange={(timezone) => setVals((p) => ({ ...p, timezone }))}
+            />
+          </div>
+          <Label>LinkedIn</Label>
+          <FieldInput value={vals.linkedIn} onChange={set("linkedIn")} />
+        </>
+      ) : (
+        <>
+          <Label>Current location</Label>
+          <FieldInput value={vals.location} onChange={set("location")} placeholder="City, ST" />
+        </>
+      )}
       {isCandidate ? (
         <>
           <Label>Time zone</Label>
@@ -4910,39 +5224,145 @@ function JnpForm({
 function ClientOrgForm({
   onClose,
   onSave,
+  mode = "create",
+  initial,
+  currentLogoUrl,
 }: {
   onClose: () => void;
-  onSave: (v: { name: string; industry: string; location: string; website: string; phone: string }) => Promise<void>;
+  onSave: (v: {
+    name: string;
+    industry: string;
+    location: string;
+    countryCode: string;
+    city: string;
+    website: string;
+    phone: string;
+    linkedIn: string;
+    timezone: string;
+    sizeBand: string;
+    primaryDomain: string;
+    logoBlob: Blob | null;
+  }) => Promise<void>;
+  mode?: "create" | "edit";
+  initial?: {
+    name: string;
+    industry: string;
+    location: string;
+    countryCode: string;
+    city: string;
+    website: string;
+    phone: string;
+    linkedIn: string;
+    timezone: string;
+    sizeBand: string;
+    primaryDomain: string;
+  };
+  currentLogoUrl?: string | null;
 }) {
   const [busy, setBusy] = useState(false);
-  const [vals, setVals] = useState({ name: "", industry: "", location: "", website: "", phone: "" });
+  const [error, setError] = useState("");
+  const [logoBlob, setLogoBlob] = useState<Blob | null>(null);
+  const [vals, setVals] = useState({
+    name: initial?.name || "",
+    industry: initial?.industry || "",
+    location: initial?.location || "",
+    countryCode: initial?.countryCode || "",
+    city: initial?.city || "",
+    website: initial?.website || "",
+    phone: initial?.phone || "",
+    linkedIn: initial?.linkedIn || "",
+    timezone: initial?.timezone || "",
+    sizeBand: initial?.sizeBand || "",
+    primaryDomain: initial?.primaryDomain || "",
+  });
   return (
     <form
       className="space-y-3"
       onSubmit={async (e) => {
         e.preventDefault();
         setBusy(true);
+        setError("");
         try {
-          await onSave(vals);
+          await onSave({ ...vals, logoBlob });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : mode === "edit" ? "Could not update client" : "Could not create client");
         } finally {
           setBusy(false);
         }
       }}
     >
-      <h2 className="text-lg font-semibold">Add Client</h2>
-      <p className="text-xs text-slate-500">Create the Client company in TalentBridge — not from JobsNProfiles. Then add Contacts and open a Requirement.</p>
+      <h2 className="text-lg font-semibold">{mode === "edit" ? "Edit Client" : "Add Client"}</h2>
+      <p className="text-xs text-slate-500">
+        {mode === "edit"
+          ? "Update company profile fields. Owner, sales, operations, and admin can edit."
+          : "Create the Client company in TalentBridge — not from JobsNProfiles. Then add Contacts and open a Requirement."}
+      </p>
+      <div>
+        <Label>Company logo <span className="text-slate-400 font-normal">(optional)</span></Label>
+        {currentLogoUrl && !logoBlob ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={currentLogoUrl}
+            alt="Current logo"
+            className="mb-2 h-16 w-16 rounded-md border border-slate-200 object-cover bg-white"
+          />
+        ) : null}
+        <CompanyLogoCrop value={logoBlob} onChange={setLogoBlob} />
+      </div>
       <Label>Company name *</Label>
       <FieldInput value={vals.name} onChange={(e) => setVals((p) => ({ ...p, name: e.target.value }))} required />
       <Label>Industry</Label>
       <FieldInput value={vals.industry} onChange={(e) => setVals((p) => ({ ...p, industry: e.target.value }))} placeholder="Staffing, Healthcare, FinTech…" />
-      <Label>Location</Label>
-      <FieldInput value={vals.location} onChange={(e) => setVals((p) => ({ ...p, location: e.target.value }))} placeholder="City, ST" />
+      <div>
+        <Label>Location <span className="text-slate-400 font-normal">(optional)</span></Label>
+        <CountryCitySelect
+          countryCode={vals.countryCode}
+          city={vals.city}
+          onChange={({ countryCode, city, location }) =>
+            setVals((p) => ({ ...p, countryCode, city, location }))
+          }
+        />
+        <p className="text-[11px] text-slate-500 mt-1">
+          Country + City dropdowns keep location normalized (no free-text commas / casing).
+        </p>
+      </div>
+      <div>
+        <Label>Timezone <span className="text-slate-400 font-normal">(optional)</span></Label>
+        <SearchableTimezoneSelect
+          value={vals.timezone}
+          onChange={(timezone) => setVals((p) => ({ ...p, timezone }))}
+        />
+        <p className="text-[11px] text-slate-500 mt-1">Search PST, MST, EST, CST, IST, city, or region.</p>
+      </div>
+      <Label>Company size <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldSelect value={vals.sizeBand} onChange={(e) => setVals((p) => ({ ...p, sizeBand: e.target.value }))}>
+        <option value="">—</option>
+        <option value="SMB">SMB</option>
+        <option value="Mid-Market">Mid-Market</option>
+        <option value="Enterprise">Enterprise</option>
+      </FieldSelect>
+      <Label>Primary domain <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldInput
+        value={vals.primaryDomain}
+        onChange={(e) => setVals((p) => ({ ...p, primaryDomain: e.target.value }))}
+        placeholder="acme.com"
+      />
+      <p className="text-[11px] text-slate-500 -mt-1">Used later to match inbound Outlook mail to this Client.</p>
       <Label>Website <span className="text-slate-400 font-normal">(optional)</span></Label>
       <FieldInput value={vals.website} onChange={(e) => setVals((p) => ({ ...p, website: e.target.value }))} placeholder="https://…" />
+      <Label>LinkedIn <span className="text-slate-400 font-normal">(optional)</span></Label>
+      <FieldInput
+        value={vals.linkedIn}
+        onChange={(e) => setVals((p) => ({ ...p, linkedIn: e.target.value }))}
+        placeholder="https://www.linkedin.com/company/…"
+      />
       <Label>Main phone <span className="text-slate-400 font-normal">(optional)</span></Label>
       <FieldInput value={vals.phone} onChange={(e) => setVals((p) => ({ ...p, phone: e.target.value }))} placeholder="(555) 555-5555" />
+      {error ? <InlineError title={error} /> : null}
       <div className="flex gap-2">
-        <button className={btnPrimary} disabled={busy}>{busy ? "Creating…" : "Create"}</button>
+        <button className={btnPrimary} disabled={busy}>
+          {busy ? (mode === "edit" ? "Saving…" : "Creating…") : mode === "edit" ? "Save" : "Create"}
+        </button>
         <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>Cancel</button>
       </div>
     </form>
