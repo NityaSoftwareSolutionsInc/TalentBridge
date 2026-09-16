@@ -19,6 +19,7 @@ type Risk = {
   title: string;
   module: string;
   recordId?: string | null;
+  recordType?: "person" | "organization";
 };
 
 type Opportunity = {
@@ -90,7 +91,7 @@ export function DashList({
   onOpen,
 }: {
   dash: Record<string, unknown> | null;
-  onOpen: (module: string, id?: string | null) => void;
+  onOpen: (module: string, id?: string | null, recordType?: "person" | "organization") => void;
 }) {
   const risks = (dash?.risks as Risk[]) || [];
   if (!risks.length) {
@@ -111,7 +112,7 @@ export function DashList({
             key={r.id}
             type="button"
             className="w-full text-left px-3.5 py-3 border-b border-[var(--color-border)] hover:bg-[var(--color-surface-muted)] cursor-pointer transition-colors"
-            onClick={() => onOpen(r.module, r.recordId)}
+            onClick={() => onOpen(r.module, r.recordId, r.recordType)}
           >
             <div className="flex items-start gap-2.5">
               <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[var(--color-danger-bg)] text-[var(--color-danger)]">
@@ -136,7 +137,7 @@ export function DashPane({
   onOwnershipDecide,
 }: {
   dash: Record<string, unknown> | null;
-  onOpen: (module: string, id?: string | null) => void;
+  onOpen: (module: string, id?: string | null, recordType?: "person" | "organization") => void;
   onExport?: () => void;
   onOwnershipDecide?: (requestId: string, accept: boolean) => void;
 }) {
@@ -223,7 +224,7 @@ export function DashPane({
                   <button
                     type="button"
                     className="text-left min-w-0 cursor-pointer"
-                    onClick={() => onOpen(recordModule, r.person?.id)}
+                      onClick={() => onOpen(recordModule, r.person?.id, "person")}
                   >
                     <div className="text-[13px] font-medium text-[var(--color-text)]">
                       {r.requester?.name || "Teammate"} requested {r.type || "transfer"} on {r.person?.name || "record"}
@@ -277,7 +278,7 @@ export function DashPane({
                     <button
                       type="button"
                       className="w-full flex items-start gap-3 px-5 py-3 text-left hover:bg-[var(--color-surface-muted)] cursor-pointer transition-colors"
-                      onClick={() => onOpen(r.module, r.recordId)}
+                      onClick={() => onOpen(r.module, r.recordId, r.recordType)}
                     >
                       <span className="mt-1 h-8 w-1 shrink-0 rounded-full bg-[var(--color-danger)]" />
                       <span className="min-w-0 flex-1">

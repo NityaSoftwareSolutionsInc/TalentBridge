@@ -80,7 +80,7 @@ export async function GET(req: Request) {
   const requirements = await listRequirements(session);
   const users = await listUsers(session.tenantId);
   const contactFilterOptions =
-    moduleKey === "clients" && filters.segment === "contacts"
+    moduleKey === "clients" && filters.segment !== "companies"
       ? await listClientContactFilterOptions(session)
       : undefined;
   return NextResponse.json({ list, requirements, users, badges, contactFilterOptions });

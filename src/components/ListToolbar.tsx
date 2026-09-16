@@ -131,7 +131,7 @@ export function ListToolbar({
 }) {
   const isContacts = ["candidates", "clients", "vendors"].includes(moduleKey);
   const isCandidates = moduleKey === "candidates";
-  const isClientContacts = moduleKey === "clients" && filters.segment === "contacts";
+  const isClientContacts = moduleKey === "clients" && filters.segment !== "companies";
   const heading = listLabel || moduleLabel(moduleKey);
   const active = FILTER_KEYS.filter((key) => Boolean(filters[key]));
   const extraCount = (["title", "experience", "source", "lastOutreach", "excludeRequirementId"] as const).filter(
@@ -478,8 +478,8 @@ function DebouncedText({
 }
 
 function searchPlaceholder(moduleKey: string, segment?: string) {
-  if (moduleKey === "clients" && segment === "contacts") return "Search client contacts...";
-  if (moduleKey === "clients") return "Search clients...";
+  if (moduleKey === "clients" && segment === "companies") return "Search client companies...";
+  if (moduleKey === "clients") return "Search client contacts...";
   if (moduleKey === "candidates") return "Search candidates...";
   if (moduleKey === "vendors") return "Search vendor people...";
   if (moduleKey === "calendar") return "Search TalentBridge meetings...";

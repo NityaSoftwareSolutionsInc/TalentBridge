@@ -28,12 +28,12 @@ function personHref(kind?: string | null, personId?: string | null) {
   if (!personId) return undefined;
   if (kind === "candidate") return `/candidates?id=${personId}&type=person`;
   if (kind === "vendor_person") return `/vendors?id=${personId}&type=person`;
-  return `/clients?id=${personId}&type=person`;
+  return `/clients?id=${personId}&type=person&segment=contacts`;
 }
 
 function orgHref(organizationId?: string | null) {
   if (!organizationId) return undefined;
-  return `/clients?id=${organizationId}&type=organization`;
+  return `/clients?id=${organizationId}&type=organization&segment=companies`;
 }
 
 /** TalentBridge Calendar is not Outlook. Only meetings created from this hub. */

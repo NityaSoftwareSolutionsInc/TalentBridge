@@ -151,7 +151,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       excludeRequirementId: params.get("excludeRequirementId") || "",
       workAuthorization: params.get("workAuthorization") || "",
       sort: params.get("sort") || "",
-      segment: params.get("segment") || (moduleKey === "clients" ? "companies" : ""),
+      segment: params.get("segment") || (moduleKey === "clients" ? "contacts" : ""),
       stage: params.get("stage") || "",
       companyId: params.get("companyId") || "",
       industry: params.get("industry") || "",
@@ -263,6 +263,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       next.set("id", id);
       if (type) next.set("type", type);
       else next.delete("type");
+      if (moduleKey === "clients") {
+        next.set("segment", type === "organization" ? "companies" : "contacts");
+      }
     }
     router.replace(`/${moduleKey}?${next.toString()}`);
   };
@@ -287,7 +290,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     if (data.requirements) setRequirements(data.requirements);
     if (data.users) setUsers(data.users);
     if (data.contactFilterOptions) setContactFilterOptions(data.contactFilterOptions);
-    else if (moduleKey === "clients" && params.get("segment") !== "contacts") setContactFilterOptions(null);
+    else if (moduleKey === "clients" && params.get("segment") === "companies") setContactFilterOptions(null);
     if (data.settings || data.maps || data.users || data.mode) setSettings(data);
     if (data.items) setList(data.items);
     if (data.reports) setDash({ kpis: data.reports, risks: data.risks });
@@ -329,7 +332,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
     const next = new URLSearchParams(params.toString());
     next.set("id", String(list[0].id));
     const firstType =
-      list[0].type === "organization" || (moduleKey === "clients" && (params.get("segment") || "companies") === "companies")
+      list[0].type === "organization" || (moduleKey === "clients" && (params.get("segment") || "contacts") === "companies")
         ? "organization"
         : "person";
     next.set("type", firstType);
@@ -522,7 +525,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   })();
 
   const canManageClients = ["sales", "operations", "admin"].includes(session?.role || "");
-  const clientsSegment = moduleKey === "clients" ? (filters.segment === "contacts" ? "contacts" : "companies") : "";
+  const clientsSegment = moduleKey === "clients" ? (filters.segment === "companies" ? "companies" : "contacts") : "";
   const orgContactCount = ((record?.people as unknown[]) || []).length;
 
   const primaryAction =
@@ -608,8 +611,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 <div className="px-3 pt-2 flex gap-1 border-b border-[var(--color-border)] bg-[var(--color-surface)]">
                   {(
                     [
-                      ["companies", "Companies"],
                       ["contacts", "Contacts"],
+                      ["companies", "Companies"],
                     ] as const
                   ).map(([key, label]) => (
                     <button
@@ -657,7 +660,25 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
           )}
           <div className="flex-1 overflow-auto">
             {moduleKey === "dashboard" || moduleKey === "reports" ? (
-              <DashList dash={dash ? { ...dash, risks: pageSlice.items } : dash} onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)} />
+              <DashList
+                dash={dash ? { ...dash, risks: pageSlice.items } : dash}
+                onOpen={(m, id, recordType) => {
+                  if (!id) {
+                    router.push(`/${m}`);
+                    return;
+                  }
+                  if (m === "clients" || m === "msa-po") {
+                    const isOrg = recordType === "organization" || m === "msa-po";
+                    router.push(
+                      isOrg
+                        ? `/clients?id=${id}&type=organization&segment=companies`
+                        : `/clients?id=${id}&type=person&segment=contacts`,
+                    );
+                    return;
+                  }
+                  router.push(`/${m}?id=${id}`);
+                }}
+              />
             ) : moduleKey === "calendar" ? (
               <CalendarAgenda
                 events={pageSlice.items as CalendarItem[]}
@@ -780,7 +801,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   onClick={() => select(String(row.id), rowType)}
                   className="flex-1 min-w-0 text-left px-3 py-3 flex gap-3 cursor-pointer transition-colors"
                 >
-                  <Avatar name={String(row.name)} size={40} />
+                  <Avatar
+                    name={String(row.name)}
+                    size={40}
+                    src={rowType === "organization" && row.logoUrl ? String(row.logoUrl) : undefined}
+                  />
                   <div className="min-w-0 flex-1">
                     <div className="flex justify-between gap-2 items-start">
                       <div className="font-semibold text-sm truncate">{String(row.name)}</div>
@@ -930,7 +955,22 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
             <div className="flex-1 min-h-0 overflow-auto">
               <DashPane
                 dash={dash}
-                onOpen={(m, id) => router.push(id ? `/${m}?id=${id}` : `/${m}`)}
+                onOpen={(m, id, recordType) => {
+                  if (!id) {
+                    router.push(`/${m}`);
+                    return;
+                  }
+                  if (m === "clients" || m === "msa-po") {
+                    const isOrg = recordType === "organization" || m === "msa-po";
+                    router.push(
+                      isOrg
+                        ? `/clients?id=${id}&type=organization&segment=companies`
+                        : `/clients?id=${id}&type=person&segment=contacts`,
+                    );
+                    return;
+                  }
+                  router.push(`/${m}?id=${id}`);
+                }}
                 onExport={session?.permissions.includes("export") ? exportOps : undefined}
                 onOwnershipDecide={(requestId, accept) =>
                   void act({ action: "ownership_decide", requestId, accept })

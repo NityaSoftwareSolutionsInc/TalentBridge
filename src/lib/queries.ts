@@ -189,7 +189,7 @@ export async function searchPeople(
     excludeRequirementId?: string;
     stage?: string;
     workAuthorization?: string;
-    /** Clients/Vendors: companies (default for clients) | contacts */
+    /** Clients/Vendors: contacts (default for clients) | companies */
     segment?: string;
     /** Contacts segment: filter by affiliated company id */
     companyId?: string;
@@ -246,9 +246,7 @@ export async function searchPeople(
     const segment =
       filters.segment === "contacts" || filters.segment === "companies"
         ? filters.segment
-        : module === "clients"
-          ? "companies"
-          : "contacts";
+        : "contacts";
 
     if (segment === "companies") {
       const orgs = await prisma.organization.findMany({
@@ -300,6 +298,9 @@ export async function searchPeople(
         openRequirements: o.requirements.length,
         peopleCount: o._count.affiliations,
         submissionsCount: o._count.submissions,
+        logoUrl: o.logoFileId
+          ? `/api/files/preview?fileId=${encodeURIComponent(o.logoFileId)}`
+          : null,
       }));
     }
 
@@ -839,6 +840,7 @@ export async function dashboard(session: Session) {
     title: `${r.requester.name} requested ${r.type} on ${r.person.name}`,
     module: (r.person.kind === "candidate" ? "candidates" : "clients") as "candidates" | "clients",
     recordId: r.personId,
+    recordType: "person" as const,
   }));
 
   const risks = [
@@ -849,6 +851,7 @@ export async function dashboard(session: Session) {
       title: `${r.title} open ${settings.slaRequirementNoSubDays}+ days with no submissions`,
       module: "clients" as const,
       recordId: r.organizationId,
+      recordType: "organization" as const,
     })),
     ...waitingSubs.map((s) => ({
       id: s.id,
@@ -856,6 +859,7 @@ export async function dashboard(session: Session) {
       title: `${s.candidate.name} submitted ${settings.slaSubmissionFeedbackDays}+ days ago — no client feedback`,
       module: "candidates" as const,
       recordId: s.candidateId,
+      recordType: "person" as const,
     })),
     ...pendingInterviews.map((i) => ({
       id: i.id,
@@ -863,6 +867,7 @@ export async function dashboard(session: Session) {
       title: `Interview for ${i.candidate.name} pending feedback`,
       module: "candidates" as const,
       recordId: i.candidateId,
+      recordType: "person" as const,
     })),
     ...staleClients.map((a) => ({
       id: a.id,
@@ -870,6 +875,7 @@ export async function dashboard(session: Session) {
       title: `${a.name} no outreach in ${settings.slaClientLastOutreachDays}+ days`,
       module: "clients" as const,
       recordId: a.id,
+      recordType: "organization" as const,
     })),
     ...callbacks.map((t) => ({
       id: t.id,
@@ -877,6 +883,7 @@ export async function dashboard(session: Session) {
       title: t.title,
       module: "tasks" as const,
       recordId: t.personId ?? t.id,
+      recordType: "person" as const,
     })),
     ...expiringMsa.map((m) => ({
       id: m.id,
@@ -884,6 +891,7 @@ export async function dashboard(session: Session) {
       title: `${m.organization.name} MSA ${m.number} expires within ${settings.slaMsaExpiryDays} days`,
       module: "msa-po" as const,
       recordId: m.organizationId,
+      recordType: "organization" as const,
     })),
     ...lowPo.map((p) => ({
       id: p.id,
@@ -893,6 +901,7 @@ export async function dashboard(session: Session) {
         : `${p.organization.name} has a PO that needs attention`,
       module: "msa-po" as const,
       recordId: p.organizationId,
+      recordType: "organization" as const,
     })),
   ];
 
