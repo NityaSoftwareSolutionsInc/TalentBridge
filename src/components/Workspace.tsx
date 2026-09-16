@@ -2152,6 +2152,7 @@ function FilesPane({
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const jnpUrl = buildJnpProfileUrl(record?.portalCandidateId);
 
   const rows = [...files].sort((a, b) => {
     const aT = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -2309,6 +2310,14 @@ function FilesPane({
             const fromJnp = d.source === "JobsNProfiles";
             const canPreview = Boolean(d.previewable && d.id);
             const canDelete = Boolean(onDeleteFile && d.id && !fromJnp);
+            // JNP-synced resumes open the same candidate profile deep link as "Open JobsNProfiles"
+            // (not the raw PDF preview tab).
+            const openHref = fromJnp && jnpUrl
+              ? jnpUrl
+              : canPreview
+                ? `/api/files/preview?fileId=${encodeURIComponent(String(d.id))}`
+                : "";
+            const openLabel = fromJnp && jnpUrl ? "Open JobsNProfiles" : "Preview";
             return (
               <li key={d.id || d.name} className="px-4 py-3 flex items-center gap-3">
                 <FileText className="h-4 w-4 text-[var(--color-accent)] shrink-0" />
@@ -2323,21 +2332,26 @@ function FilesPane({
                   </div>
                 </div>
                 <div className="flex items-center gap-3 shrink-0">
-                  {canPreview ? (
+                  {openHref ? (
                     <a
-                      href={`/api/files/preview?fileId=${encodeURIComponent(String(d.id))}`}
+                      href={openHref}
                       target="_blank"
                       rel="noreferrer"
                       className="text-[12px] font-medium text-[var(--color-accent)] hover:underline"
+                      title={fromJnp && jnpUrl ? jnpUrl : undefined}
                     >
-                      Preview
+                      {openLabel}
                     </a>
                   ) : (
                     <span
                       className="text-[11px] text-[var(--color-text-muted)]"
-                      title="Only the file name was saved. Use Add file and upload the PDF again to Preview it."
+                      title={
+                        fromJnp
+                          ? "JobsNProfiles profile link is unavailable for this candidate."
+                          : "Only the file name was saved. Use Add file and upload the PDF again to Preview it."
+                      }
                     >
-                      Name only — re-upload
+                      {fromJnp ? "JNP link unavailable" : "Name only — re-upload"}
                     </span>
                   )}
                   {canDelete ? (

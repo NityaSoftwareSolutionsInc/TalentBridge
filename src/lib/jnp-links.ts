@@ -42,7 +42,7 @@ export function buildJnpProfileUrl(portalCandidateId: unknown): string {
   const id = normalizeJnpPortalId(portalCandidateId);
   if (!id) return "";
 
-  const configured = String(process.env.NEXT_PUBLIC_JNP_PROFILE_BASE_URL || "https://jobsnprofiles.com").trim();
+  const configured = String(process.env.NEXT_PUBLIC_JNP_PROFILE_BASE_URL || "https://jobsnprofiles.com/employer/candidate-profile").trim();
   if (!configured) return "";
 
   let candidate = configured;

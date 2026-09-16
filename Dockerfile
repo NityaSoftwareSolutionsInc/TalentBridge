@@ -13,7 +13,7 @@ FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NEXT_PUBLIC_JNP_PROFILE_BASE_URL=https://jobsnprofiles.com
+ENV NEXT_PUBLIC_JNP_PROFILE_BASE_URL=https://jobsnprofiles.com/employer/candidate-profile
 RUN npx prisma generate
 RUN npm run build
 
