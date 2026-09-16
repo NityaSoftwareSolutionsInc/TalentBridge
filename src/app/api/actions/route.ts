@@ -183,6 +183,7 @@ export async function POST(req: Request) {
             status: body.status as string | undefined,
             relationshipTier: body.relationshipTier as string | undefined,
             source: body.source as string | undefined,
+            tags: body.tags as string | string[] | undefined,
           }),
         );
       case "update_person":
@@ -213,6 +214,7 @@ export async function POST(req: Request) {
             status: body.status as string | undefined,
             relationshipTier: body.relationshipTier as string | undefined,
             source: body.source as string | undefined,
+            tags: body.tags as string | string[] | undefined,
           }),
         );
       case "create_organization":

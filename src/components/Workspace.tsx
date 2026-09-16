@@ -501,7 +501,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const notesSnippet = String(internalNotes[0]?.body || internalNotes[0]?.summary || record?.nextAction || "").trim();
   const files = (record?.files as { name: string; source?: string; kind?: string; previewable?: boolean }[]) || [];
   const upcoming = (record?.upcoming as { id: string; title: string; dueAt?: string }[]) || [];
-  const contactTags = ((record?.tags as string[]) || []).filter((t) => t && t !== record?.status);
+  const contactTags = ((record?.tags as string[]) || []).filter((t) => Boolean(String(t || "").trim()));
   const avail = availabilityBadge(record?.availability, record?.status);
   const canSeeRates = Boolean(session?.permissions.includes("submit") || session?.permissions.includes("po"));
   const jnpUrl = buildJnpProfileUrl(record?.portalCandidateId);
@@ -804,7 +804,13 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   <Avatar
                     name={String(row.name)}
                     size={40}
-                    src={rowType === "organization" && row.logoUrl ? String(row.logoUrl) : undefined}
+                    src={
+                      rowType === "organization" && row.logoUrl
+                        ? String(row.logoUrl)
+                        : row.avatarUrl
+                          ? String(row.avatarUrl)
+                          : undefined
+                    }
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex justify-between gap-2 items-start">
@@ -985,7 +991,13 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     <Avatar
                       name={String(record?.name || "")}
                       size={72}
-                      src={isOrganization && record?.logoUrl ? String(record.logoUrl) : undefined}
+                      src={
+                        isOrganization && record?.logoUrl
+                          ? String(record.logoUrl)
+                          : !isOrganization && record?.avatarUrl
+                            ? String(record.avatarUrl)
+                            : undefined
+                      }
                     />
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1323,6 +1335,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             ["Time Zone", tzLabel || "—"],
                             ["LinkedIn", record?.linkedIn],
                             ["Contact Type", "Client"],
+                            ["Stage", record?.stage || "—"],
                             ["Status", record?.status],
                             ["Relationship Tier", record?.relationshipTier || "—"],
                             ["Source", record?.source],
@@ -1336,6 +1349,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                               <dd className="min-w-0 break-words text-[13px] text-slate-900">
                                 {String(k) === "Status" ? (
                                   <Tag tone={String(v).toLowerCase() === "active" ? "green" : "slate"}>{String(v || "—")}</Tag>
+                                ) : String(k) === "Stage" ? (
+                                  <Tag tone={tagTone(String(v || "Lead"))}>{String(v || "—")}</Tag>
                                 ) : (
                                   contactDetailValue(String(k), v)
                                 )}
@@ -1363,7 +1378,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           />
                           <button
                             type="button"
-                            className="w-full text-left px-4 pb-4 flex gap-3 items-start hover:bg-slate-50/80 cursor-pointer"
+                            className="w-full text-left px-4 py-3 flex gap-3 items-start hover:bg-slate-50/80 cursor-pointer"
                             onClick={() => select(company.id, "organization")}
                           >
                             {company.logoUrl ? (
@@ -1371,31 +1386,33 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                               <img
                                 src={company.logoUrl}
                                 alt=""
-                                className="h-11 w-11 rounded-lg border border-slate-200 object-cover bg-white shrink-0"
+                                className="mt-0.5 h-11 w-11 rounded-md border border-slate-200 object-cover bg-white shrink-0"
                               />
                             ) : (
-                              <div className="h-11 w-11 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-bold shrink-0">
+                              <div className="mt-0.5 h-11 w-11 rounded-md bg-blue-600 text-white flex items-center justify-center text-[11px] font-bold shrink-0">
                                 {String(company.name).slice(0, 2).toUpperCase()}
                               </div>
                             )}
-                            <div className="min-w-0">
-                              <div className="font-semibold text-sm text-slate-900">{company.name}</div>
-                              <div className="text-xs text-slate-500 mt-0.5">
-                                {[company.industry, company.sizeBand].filter(Boolean).join(" · ") || "—"}
-                              </div>
+                            <div className="min-w-0 flex-1 pt-0.5 space-y-0.5">
+                              <div className="font-semibold text-sm text-slate-900 leading-tight">{company.name}</div>
+                              {(company.industry || company.sizeBand) ? (
+                                <div className="text-xs text-slate-500 leading-snug">
+                                  {[company.industry, company.sizeBand].filter(Boolean).join(" · ")}
+                                </div>
+                              ) : null}
                               {company.location ? (
-                                <div className="text-xs text-slate-500 mt-0.5">{company.location}</div>
+                                <div className="text-xs text-slate-500 leading-snug">{company.location}</div>
                               ) : null}
                               {company.website ? (
                                 <a
                                   href={company.website.startsWith("http") ? company.website : `https://${company.website}`}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline mt-1"
+                                  className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline leading-snug"
                                   onClick={(e) => e.stopPropagation()}
                                 >
                                   {company.website.replace(/^https?:\/\//, "")}
-                                  <ExternalLink className="h-3 w-3" />
+                                  <ExternalLink className="h-3 w-3 shrink-0" />
                                 </a>
                               ) : null}
                             </div>
@@ -1825,7 +1842,8 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
                   const resumeFile = vals.resumeFile instanceof File ? vals.resumeFile : null;
-                  const { resumeFile: _drop, ...payload } = vals;
+                  const avatarBlob = vals.avatarBlob instanceof Blob ? vals.avatarBlob : null;
+                  const { resumeFile: _drop, avatarBlob: _dropAvatar, ...payload } = vals;
                   const data = await act(payload);
                   if (!data?.id) return data;
                   if (resumeFile) {
@@ -1850,14 +1868,36 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       setBusy(false);
                     }
                   }
+                  if (avatarBlob) {
+                    const fd = new FormData();
+                    fd.set("personId", String(data.id));
+                    fd.set("kind", "avatar");
+                    fd.set("name", "contact-photo.png");
+                    fd.set("file", avatarBlob, "contact-photo.png");
+                    setBusy(true);
+                    try {
+                      const res = await fetch("/api/files", { method: "POST", body: fd });
+                      if (!res.ok) {
+                        const uploaded = await res.json().catch(() => ({}));
+                        setError(
+                          (uploaded as { error?: string }).error ||
+                            "Contact created, but photo upload failed. Edit the contact to retry.",
+                        );
+                      }
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Photo upload failed");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }
                   if (isOrganization) {
                     setTab("Contacts");
                     const rec = await fetch(`/api/record?type=organization&id=${selectedId}`).then((r) => r.json());
                     setRecord(rec.record);
                   } else if (data.id) {
                     select(String(data.id), "person");
-                    if (resumeFile) {
-                      setTab("Files");
+                    if (resumeFile || avatarBlob) {
+                      if (resumeFile) setTab("Files");
                       const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
                       setRecord(rec.record);
                     }
@@ -1922,7 +1962,23 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   record={record}
                   onClose={() => setDrawer("none")}
                   onSave={async (vals) => {
-                    await act({ action: "update_person", personId: selectedId, ...vals });
+                    const { avatarBlob, ...fields } = vals;
+                    await act({ action: "update_person", personId: selectedId, ...fields });
+                    if (avatarBlob && selectedId) {
+                      const fd = new FormData();
+                      fd.set("personId", String(selectedId));
+                      fd.set("kind", "avatar");
+                      fd.set("name", "contact-photo.png");
+                      fd.set("file", avatarBlob, "contact-photo.png");
+                      const res = await fetch("/api/files", { method: "POST", body: fd });
+                      if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error((err as { error?: string }).error || "Photo upload failed");
+                      }
+                      const rec = await fetch(`/api/record?type=person&id=${selectedId}`).then((r) => r.json());
+                      setRecord(rec.record);
+                      await load();
+                    }
                     setDrawer("none");
                   }}
                 />
@@ -4362,6 +4418,7 @@ function CreateForm({
     kind === "vendor_person" ? "Vendor person" : kind === "client_person" ? "Client contact" : "Candidate";
   const [busy, setBusy] = useState(false);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [avatarBlob, setAvatarBlob] = useState<Blob | null>(null);
   const [pickedOrgId, setPickedOrgId] = useState(organizationId || "");
   const [vals, setVals] = useState({
     name: "",
@@ -4378,6 +4435,7 @@ function CreateForm({
     availability: "",
     experienceYears: "",
     skills: "",
+    tags: "",
     citizenship: "",
     workAuthorization: "",
     visaExpiry: "",
@@ -4414,6 +4472,7 @@ function CreateForm({
             preferredLocation: vals.preferredLocation || vals.location,
             resumeName: resumeFile?.name || vals.resumeName || "",
             resumeFile,
+            avatarBlob,
             ...(resolvedOrgId ? { organizationId: resolvedOrgId, stage: vals.stage } : !isCandidate ? { stage: vals.stage } : {}),
           });
         } finally {
@@ -4437,6 +4496,12 @@ function CreateForm({
           <p className="text-xs text-amber-800">Add a Client company first, then add Contacts.</p>
         )
       ) : null}
+      {!isCandidate ? (
+        <div>
+          <Label>Profile photo <span className="text-slate-400 font-normal">(optional)</span></Label>
+          <CompanyLogoCrop value={avatarBlob} onChange={setAvatarBlob} />
+        </div>
+      ) : null}
       <Label>Name</Label>
       <FieldInput value={vals.name} onChange={set("name")} required />
       <Label>Title</Label>
@@ -4451,6 +4516,13 @@ function CreateForm({
               <option key={s} value={s}>{s}</option>
             ))}
           </FieldSelect>
+          <p className="text-[11px] text-slate-500 -mt-1">Pipeline stage (Lead → Customer) — separate from Tags.</p>
+          <Label>Tags <span className="text-slate-400 font-normal">(comma-separated)</span></Label>
+          <FieldInput
+            value={vals.tags}
+            onChange={set("tags")}
+            placeholder="Decision Maker, Tech, Strategic, High Value"
+          />
           <Label>Status</Label>
           <FieldSelect className="w-full" value={vals.status} onChange={set("status")}>
             <option value="Active">Active</option>
@@ -4587,10 +4659,13 @@ function EditForm({
 }: {
   record: Record<string, unknown> | null;
   onClose: () => void;
-  onSave: (vals: Record<string, string>) => Promise<void>;
+  onSave: (vals: Record<string, string> & { avatarBlob?: Blob | null }) => Promise<void>;
 }) {
   const isCandidate = record?.kind === "candidate";
   const parsedLoc = parseLocationToCountryCity(String(record?.location || ""));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [avatarBlob, setAvatarBlob] = useState<Blob | null>(null);
   const [vals, setVals] = useState({
     name: String(record?.name || ""),
     title: String(record?.title || ""),
@@ -4606,6 +4681,7 @@ function EditForm({
     availability: String(record?.availability || ""),
     experienceYears: String(record?.experienceYears || ""),
     skills: Array.isArray(record?.skills) ? (record?.skills as string[]).join(", ") : String(record?.skills || ""),
+    tags: Array.isArray(record?.tags) ? (record?.tags as string[]).join(", ") : "",
     citizenship: String(record?.citizenship || ""),
     workAuthorization: String(record?.workAuthorization || ""),
     visaExpiry: record?.visaExpiry ? new Date(String(record.visaExpiry)).toISOString().slice(0, 10) : "",
@@ -4625,15 +4701,36 @@ function EditForm({
   return (
     <form
       className="space-y-3"
-      onSubmit={(e) => {
+      onSubmit={async (e) => {
         e.preventDefault();
-        const payload = { ...vals };
-        delete (payload as { countryCode?: string }).countryCode;
-        delete (payload as { city?: string }).city;
-        onSave(payload);
+        setBusy(true);
+        setError("");
+        try {
+          const payload = { ...vals };
+          delete (payload as { countryCode?: string }).countryCode;
+          delete (payload as { city?: string }).city;
+          await onSave({ ...payload, avatarBlob });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Could not save contact");
+        } finally {
+          setBusy(false);
+        }
       }}
     >
       <h2 className="text-lg font-semibold">Edit contact</h2>
+      {error ? <p className="text-xs text-red-700">{error}</p> : null}
+      <div>
+        <Label>Profile photo <span className="text-slate-400 font-normal">(optional)</span></Label>
+        {record?.avatarUrl && !avatarBlob ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={String(record.avatarUrl)}
+            alt="Current photo"
+            className="mb-2 h-16 w-16 rounded-full border border-slate-200 object-cover bg-white"
+          />
+        ) : null}
+        <CompanyLogoCrop value={avatarBlob} onChange={setAvatarBlob} />
+      </div>
       <Label>Name</Label>
       <FieldInput value={vals.name} onChange={set("name")} required />
       <Label>Title</Label>
@@ -4648,6 +4745,13 @@ function EditForm({
               <option key={s} value={s}>{s}</option>
             ))}
           </FieldSelect>
+          <p className="text-[11px] text-slate-500 -mt-1">Pipeline stage (Lead → Customer) — separate from Tags.</p>
+          <Label>Tags <span className="text-slate-400 font-normal">(comma-separated)</span></Label>
+          <FieldInput
+            value={vals.tags}
+            onChange={set("tags")}
+            placeholder="Decision Maker, Tech, Strategic, High Value"
+          />
           <Label>Status</Label>
           <FieldSelect className="w-full" value={vals.status} onChange={set("status")}>
             <option value="Active">Active</option>
@@ -4750,8 +4854,8 @@ function EditForm({
         </>
       ) : null}
       <div className="flex gap-2">
-        <button className={btnPrimary}>Save</button>
-        <button type="button" className={btnGhost} onClick={onClose}>
+        <button className={btnPrimary} disabled={busy}>{busy ? "Saving…" : "Save"}</button>
+        <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>
           Cancel
         </button>
       </div>

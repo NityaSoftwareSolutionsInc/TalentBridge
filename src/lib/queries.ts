@@ -108,6 +108,15 @@ function personAuditFields(p: {
   };
 }
 
+function parseTagList(value: unknown): string[] {
+  const parts = Array.isArray(value)
+    ? value.map((s) => String(s).trim())
+    : String(value || "")
+        .split(/[,;]/)
+        .map((s) => s.trim());
+  return [...new Set(parts.filter(Boolean))].slice(0, 24);
+}
+
 export type ModuleKey =
   | "dashboard"
   | "candidates"
@@ -215,6 +224,8 @@ export async function searchPeople(
     stage: true,
     source: true,
     relationshipTier: true,
+    tags: true,
+    avatarFileId: true,
     createdAt: true,
     lastOutreachAt: true,
     nextAction: true,
@@ -2362,13 +2373,21 @@ export async function addPersonFile(
   if (!name) throw new Error("Document name is required");
   if (name.length > 240) throw new Error("Document name is too long");
   const kindRaw = String(input.kind || "other").trim().toLowerCase();
-  const kind = kindRaw === "resume" ? "resume" : kindRaw === "logo" ? "logo" : "other";
+  const kind =
+    kindRaw === "resume"
+      ? "resume"
+      : kindRaw === "logo"
+        ? "logo"
+        : kindRaw === "avatar" || kindRaw === "photo"
+          ? "avatar"
+          : "other";
   if (kind === "logo" && !organization) throw new Error("Company logo must be attached to an organization");
+  if (kind === "avatar" && !person) throw new Error("Contact photo must be attached to a person");
   const bytes = input.bytes;
   if (!bytes || !bytes.length) {
     throw new Error("A file is required to Preview later — name-only documents are not supported");
   }
-  assertUploadable(originalName || name, bytes.length, { images: kind === "logo" });
+  assertUploadable(originalName || name, bytes.length, { images: kind === "logo" || kind === "avatar" });
   const contentType = sniffContentType(bytes, originalName || name, input.contentType);
   // Prisma Bytes expects Uint8Array; Node Buffer's ArrayBufferLike typing fails under strict TS.
   const content = Uint8Array.from(bytes);
@@ -2411,10 +2430,21 @@ export async function addPersonFile(
       data: { logoFileId: file.id },
     });
   }
+  if (kind === "avatar" && person) {
+    await prisma.person.update({
+      where: { id: person.id },
+      data: { avatarFileId: file.id },
+    });
+  }
   await audit({
     tenantId: session.tenantId,
     actorId: session.userId,
-    action: kind === "logo" ? "upload_company_logo" : "add_person_file",
+    action:
+      kind === "logo"
+        ? "upload_company_logo"
+        : kind === "avatar"
+          ? "upload_contact_photo"
+          : "add_person_file",
     entityType: person ? "person" : "organization",
     entityId: person?.id || organization?.id || file.id,
     after: {
@@ -2636,6 +2666,7 @@ export async function createPerson(
     status?: string;
     relationshipTier?: string;
     source?: string;
+    tags?: string | string[];
   },
 ) {
   const kind =
@@ -2651,6 +2682,7 @@ export async function createPerson(
         .split(/[,;]/)
         .map((s) => s.trim())
         .filter(Boolean);
+  const tags = parseTagList(input.tags);
 
   const resumeName = String(input.resumeName || "").trim();
   const title = String(input.title || "").trim();
@@ -2722,6 +2754,7 @@ export async function createPerson(
       ownerId: session.userId,
       source: String(input.source || "manual").trim() || "manual",
       relationshipTier: String(input.relationshipTier || "").trim(),
+      tags,
       ...(input.status ? { status: String(input.status).trim() } : {}),
       ...(kind !== PersonKind.candidate ? { stage } : {}),
       affiliations: organizationId
@@ -2804,6 +2837,7 @@ export async function updatePerson(
     status?: string;
     relationshipTier?: string;
     source?: string;
+    tags?: string | string[];
   },
 ) {
   const existing = await prisma.person.findFirst({ where: { id: personId, tenantId: session.tenantId } });
@@ -2819,6 +2853,7 @@ export async function updatePerson(
             .split(/[,;]/)
             .map((s) => s.trim())
             .filter(Boolean);
+  const tags = input.tags === undefined ? undefined : parseTagList(input.tags);
 
   let nextStage = existing.stage;
   if (input.stage !== undefined && existing.kind !== PersonKind.candidate) {
@@ -2870,6 +2905,7 @@ export async function updatePerson(
           ? String(input.relationshipTier || "").trim()
           : existing.relationshipTier,
       source: input.source !== undefined ? String(input.source || "").trim() || existing.source : existing.source,
+      ...(tags !== undefined ? { tags } : {}),
     },
   });
 
@@ -4613,6 +4649,8 @@ function serializePersonList(c: {
   stage?: string;
   source: string;
   relationshipTier?: string;
+  tags?: string[];
+  avatarFileId?: string | null;
   createdAt: Date;
   lastOutreachAt: Date | null;
   nextAction: string;
@@ -4625,11 +4663,9 @@ function serializePersonList(c: {
   affiliations: { roleOnOrganization: string; organization: { id?: string; name: string } }[];
 }) {
   const company = c.affiliations[0];
-  const role = String(company?.roleOnOrganization || "").trim();
-  const title = String(c.title || "").trim();
-  // Avoid treating job title as a tag/tier when affiliation role was copied from title.
-  const roleTag = role && role.toLowerCase() !== title.toLowerCase() ? role : "";
-  const tags = [c.status, c.relationshipTier, roleTag, c.stage]
+  const ownTags = (c.tags || []).filter(Boolean);
+  // List chips: real tags first; fall back to status/stage only when no tags yet.
+  const tags = (ownTags.length ? ownTags : [c.status, c.stage].filter(Boolean))
     .filter((t, i, a) => Boolean(t) && a.indexOf(t) === i)
     .slice(0, 3);
   return {
@@ -4654,6 +4690,9 @@ function serializePersonList(c: {
     roleOnOrganization: company?.roleOnOrganization ?? "",
     skills: c.skills,
     tags,
+    avatarUrl: c.avatarFileId
+      ? `/api/files/preview?fileId=${encodeURIComponent(c.avatarFileId)}`
+      : null,
     previousSubmissions: c.candidateSubs.map((s) => ({
       client: s.organization.name,
       job: s.requirement.title,
@@ -4915,6 +4954,11 @@ function serializePersonDetail(
     linkedIn: c.linkedIn,
     source: c.source,
     relationshipTier: c.relationshipTier,
+    tags: c.tags || [],
+    avatarFileId: c.avatarFileId || null,
+    avatarUrl: c.avatarFileId
+      ? `/api/files/preview?fileId=${encodeURIComponent(c.avatarFileId)}`
+      : null,
     doNotReach: c.doNotReach,
     doNotReachReason: c.doNotReachReason,
     doNotEmail: c.doNotEmail,
@@ -4945,22 +4989,7 @@ function serializePersonDetail(
       c.ownerId === session.userId || session.permissions.includes("ownership_transfer"),
     coOwners: c.coOwners.map((x) => x.user.name),
     titleIndex: c.titleIndex,
-    tags: Array.from(
-      new Set(
-        [
-          c.status,
-          c.relationshipTier,
-          c.stage,
-          ...c.affiliations
-            .map((p) => p.roleOnOrganization)
-            .filter((role) => {
-              const r = String(role || "").trim();
-              const title = String(c.title || "").trim();
-              return r && r.toLowerCase() !== title.toLowerCase();
-            }),
-        ].filter(Boolean),
-      ),
-    ),
+    tags: c.tags || [],
     companies: c.affiliations.map((p) => ({
       id: p.organization.id,
       name: p.organization.name,
@@ -4988,7 +5017,7 @@ function serializePersonDetail(
     meetings: visibleMeetings,
     placements: c.placements,
     requirements: c.hiringManagerReqs,
-    files: c.files.map(serializeStoredFile),
+    files: c.files.filter((f) => f.kind !== "avatar" && f.kind !== "logo").map(serializeStoredFile),
     upcoming: c.tasks.filter((t) => t.status === "open"),
     tasks: c.tasks.filter(
       (t) =>

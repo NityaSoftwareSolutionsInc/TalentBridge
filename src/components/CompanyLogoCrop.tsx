@@ -102,7 +102,7 @@ export function CompanyLogoCrop({ value, onChange }: Props) {
           </button>
         ) : null}
       </div>
-      <p className="text-[11px] text-slate-500">Square crop · exports {OUTPUT_SIZE}×{OUTPUT_SIZE}px PNG for Client 360.</p>
+      <p className="text-[11px] text-slate-500">Square crop · exports {OUTPUT_SIZE}×{OUTPUT_SIZE}px PNG.</p>
       {src ? (
         <div className="space-y-2">
           <div

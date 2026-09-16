@@ -392,6 +392,8 @@ model Person {
   source          String      @default("manual")
   /// Client/vendor relationship depth — Strategic / Standard / Other (mock Relationship Tier).
   relationshipTier String     @default("") @map("relationship_tier")
+  /// Free-form labels (Decision Maker, Tech, …) — not Stage / Status.
+  tags            String[]    @default([])
   ownerId         String      @map("owner_id")
   owner           User        @relation("PersonOwner", fields: [ownerId], references: [id])
   /// When current owner took ownership — prior Communication stays private to prior owner/actors.
@@ -416,6 +418,9 @@ model Person {
   currentRate     String      @default("") @map("current_rate")
   expectedRate    String      @default("") @map("expected_rate")
   timezone        String      @default("")
+  /// Optional contact profile photo (256×256 crop), same pattern as Organization.logoFileId.
+  avatarFileId    String?     @map("avatar_file_id")
+  avatarFile      StoredFile? @relation("PersonAvatar", fields: [avatarFileId], references: [id], onDelete: SetNull)
   lastOutreachAt   DateTime?   @map("last_outreach_at")
   nextAction      String      @default("")
   nextActionDueAt DateTime?   @map("next_action_due_at")
@@ -449,6 +454,7 @@ model Person {
   @@index([tenantId, experienceYears])
   /// Array containment (`skills has …`)
   @@index([skills], type: Gin, map: "people_skills_gin_idx")
+  @@index([tags], type: Gin, map: "people_tags_gin_idx")
   @@map("people")
   @@schema("talentbridge")
 }
@@ -826,6 +832,8 @@ model StoredFile {
   organization   Organization? @relation("OrganizationFiles", fields: [organizationId], references: [id])
   /// Reverse of Organization.logoFileId (logo pointer).
   logoForOrganizations Organization[] @relation("OrganizationLogo")
+  /// Reverse of Person.avatarFileId (contact photo pointer).
+  avatarForPeople Person[] @relation("PersonAvatar")
   personId       String?  @map("person_id")
   person         Person?  @relation(fields: [personId], references: [id])
   createdAt      DateTime @default(now()) @map("created_at")
