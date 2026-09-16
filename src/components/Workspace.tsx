@@ -5295,7 +5295,7 @@ function ClientOrgForm({
       <p className="text-xs text-slate-500">
         {mode === "edit"
           ? "Update company profile fields. Owner, sales, operations, and admin can edit."
-          : "Create the Client company in TalentBridge — not from JobsNProfiles. Then add Contacts and open a Requirement."}
+          : "Create the Client company in TalentBridge. Then add Contacts and open a Requirement."}
       </p>
       <div>
         <Label>Company logo <span className="text-slate-400 font-normal">(optional)</span></Label>
