@@ -214,6 +214,7 @@ export async function searchPeople(
     status: true,
     stage: true,
     source: true,
+    relationshipTier: true,
     createdAt: true,
     lastOutreachAt: true,
     nextAction: true,
@@ -4602,6 +4603,7 @@ function serializePersonList(c: {
   status: string;
   stage?: string;
   source: string;
+  relationshipTier?: string;
   createdAt: Date;
   lastOutreachAt: Date | null;
   nextAction: string;
@@ -4614,6 +4616,13 @@ function serializePersonList(c: {
   affiliations: { roleOnOrganization: string; organization: { id?: string; name: string } }[];
 }) {
   const company = c.affiliations[0];
+  const role = String(company?.roleOnOrganization || "").trim();
+  const title = String(c.title || "").trim();
+  // Avoid treating job title as a tag/tier when affiliation role was copied from title.
+  const roleTag = role && role.toLowerCase() !== title.toLowerCase() ? role : "";
+  const tags = [c.status, c.relationshipTier, roleTag, c.stage]
+    .filter((t, i, a) => Boolean(t) && a.indexOf(t) === i)
+    .slice(0, 3);
   return {
     id: c.id,
     name: c.name,
@@ -4623,6 +4632,7 @@ function serializePersonList(c: {
     status: c.status,
     stage: c.stage || "",
     source: c.source,
+    relationshipTier: c.relationshipTier || "",
     createdAt: c.createdAt,
     lastOutreachAt: c.lastOutreachAt,
     nextAction: c.nextAction,
@@ -4634,7 +4644,7 @@ function serializePersonList(c: {
     companyId: company?.organization.id ?? "",
     roleOnOrganization: company?.roleOnOrganization ?? "",
     skills: c.skills,
-    tags: [company?.roleOnOrganization, c.stage || c.status, ...c.skills].filter((t, i, a) => Boolean(t) && a.indexOf(t) === i).slice(0, 3),
+    tags,
     previousSubmissions: c.candidateSubs.map((s) => ({
       client: s.organization.name,
       job: s.requirement.title,
@@ -4932,8 +4942,13 @@ function serializePersonDetail(
           c.status,
           c.relationshipTier,
           c.stage,
-          ...c.affiliations.map((p) => p.roleOnOrganization),
-          ...c.skills,
+          ...c.affiliations
+            .map((p) => p.roleOnOrganization)
+            .filter((role) => {
+              const r = String(role || "").trim();
+              const title = String(c.title || "").trim();
+              return r && r.toLowerCase() !== title.toLowerCase();
+            }),
         ].filter(Boolean),
       ),
     ),

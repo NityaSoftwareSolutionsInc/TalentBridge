@@ -111,6 +111,7 @@ export function ListToolbar({
   users,
   requirements,
   contactFilterOptions,
+  listLabel,
   onToggleExtra,
   onFilter,
   onClear,
@@ -122,6 +123,8 @@ export function ListToolbar({
   users: Record<string, unknown>[];
   requirements: Record<string, unknown>[];
   contactFilterOptions?: ContactFilterOptions | null;
+  /** Override list heading (e.g. Client Contacts). */
+  listLabel?: string;
   onToggleExtra: () => void;
   onFilter: (key: string, value: string) => void;
   onClear: () => void;
@@ -129,6 +132,7 @@ export function ListToolbar({
   const isContacts = ["candidates", "clients", "vendors"].includes(moduleKey);
   const isCandidates = moduleKey === "candidates";
   const isClientContacts = moduleKey === "clients" && filters.segment === "contacts";
+  const heading = listLabel || moduleLabel(moduleKey);
   const active = FILTER_KEYS.filter((key) => Boolean(filters[key]));
   const extraCount = (["title", "experience", "source", "lastOutreach", "excludeRequirementId"] as const).filter(
     (key) => Boolean(filters[key]),
@@ -143,7 +147,7 @@ export function ListToolbar({
     <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="px-3.5 pt-3 pb-3 space-y-2.5">
         <div className="flex items-center gap-2 min-h-7">
-          <h2 className="font-semibold text-[15px] leading-none text-[var(--color-text)]">{moduleLabel(moduleKey)}</h2>
+          <h2 className="font-semibold text-[15px] leading-none text-[var(--color-text)]">{heading}</h2>
           {moduleKey !== "settings" ? (
             <span className="shrink-0 inline-flex items-center rounded-[var(--radius-md)] bg-[var(--color-surface-muted)] px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-[var(--color-text-muted)]">
               {total}

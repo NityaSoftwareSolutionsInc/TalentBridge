@@ -12,7 +12,7 @@ import { CalendarAgenda, CalendarPane, type CalendarItem } from "./CalendarPane"
 import { ListPager } from "./ListPager";
 import { ListToolbar, sortRecords, type ContactFilterOptions } from "./ListToolbar";
 import { paginate, parsePageSize, readStoredPageSize, storePageSize } from "@/lib/paging";
-import { EMPLOYMENT_TYPE_OPTIONS, RELOCATE_OPTIONS, WORK_AUTH_OPTIONS, formatUsdRateDisplay, normalizeRateInput, rateInputValue } from "@/lib/candidate-fields";
+import { EMPLOYMENT_TYPE_OPTIONS, RELOCATE_OPTIONS, WORK_AUTH_OPTIONS, RATE_PERIOD_OPTIONS, formatUsdRateDisplay, normalizeRateInput, parseRatePeriod, rateInputValue, type RatePeriod } from "@/lib/candidate-fields";
 import { buildJnpProfileUrl } from "@/lib/jnp-links";
 import { CompanyLogoCrop } from "./CompanyLogoCrop";
 import { CountryCitySelect, parseLocationToCountryCity } from "./CountryCitySelect";
@@ -111,7 +111,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [wrapSubmissionId, setWrapSubmissionId] = useState<string | null>(null);
   const [proposed, setProposed] = useState("");
   const [badges, setBadges] = useState({ tasks: 0, communications: 0, ownership: 0 });
-  const [menu, setMenu] = useState<"none" | "help" | "user" | "more" | "bell">("none");
+  const [menu, setMenu] = useState<"none" | "help" | "user" | "more" | "qa-more" | "bell">("none");
   const [starred, setStarred] = useState(false);
   const [extraFilters, setExtraFilters] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
@@ -542,13 +542,22 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
       </Button>
     ) : moduleKey === "clients" && canManageClients ? (
       <div className="flex items-center gap-2">
-        <Button variant="secondary" onClick={() => setDrawer("import-clients")}>
-          Import
-        </Button>
-        <Button onClick={() => setDrawer("create-org")}>
-          <Plus className="h-4 w-4" />
-          Add Client
-        </Button>
+        {clientsSegment === "contacts" ? (
+          <Button onClick={() => setDrawer("create")}>
+            <Plus className="h-4 w-4" />
+            Add Client Contact
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={() => setDrawer("import-clients")}>
+              Import
+            </Button>
+            <Button onClick={() => setDrawer("create-org")}>
+              <Plus className="h-4 w-4" />
+              Add Client
+            </Button>
+          </>
+        )}
       </div>
     ) : moduleKey === "candidates" ? (
       <Button onClick={() => setDrawer("create")}>
@@ -633,6 +642,13 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                 users={users}
                 requirements={requirements}
                 contactFilterOptions={contactFilterOptions}
+                listLabel={
+                  moduleKey === "clients"
+                    ? clientsSegment === "contacts"
+                      ? "Client Contacts"
+                      : "Client Companies"
+                    : undefined
+                }
                 onToggleExtra={() => setExtraFilters((v) => !v)}
                 onFilter={setFilter}
                 onClear={clearFilters}
@@ -774,7 +790,9 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           <Tag tone={rowAvail.tone}>{rowAvail.label}</Tag>
                         </div>
                       ) : (
-                        <div className="text-[11px] text-slate-500 shrink-0">{shortDate(row.lastOutreachAt, true)}</div>
+                        <div className="text-[11px] text-slate-500 shrink-0">
+                          {shortDate(row.lastOutreachAt || row.createdAt, true)}
+                        </div>
                       )}
                     </div>
                     {rowType === "organization" ? (
@@ -802,18 +820,12 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           {shortDate(row.nextActionDueAt, true) || shortDate(row.lastOutreachAt, true) || "—"}
                         </span>
                       </div>
-                    ) : (
+                    ) : rowType === "organization" ? (
                       <div className="text-[11px] text-slate-600 truncate">
                         {String(row.ownerName || "")}
-                        {rowType === "organization" && row.openRequirements != null
-                          ? ` · ${String(row.openRequirements)} open jobs`
-                          : row.nextAction
-                            ? ` · Next: ${String(row.nextAction)}`
-                            : row.stage
-                              ? ` · ${String(row.stage)}`
-                              : ""}
+                        {row.openRequirements != null ? ` · ${String(row.openRequirements)} open jobs` : ""}
                       </div>
-                    )}
+                    ) : null}
                     {moduleKey !== "candidates" ? (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {((row.tags as string[]) || []).filter(Boolean).slice(0, 3).map((t) => (
@@ -960,8 +972,21 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                               {avail.label}
                               <ChevronDown className="h-3.5 w-3.5" />
                             </button>
-                          ) : (
+                          ) : isOrganization ? (
                             <Tag tone="green">{String(record?.status || "Active")}</Tag>
+                          ) : (
+                            <FieldSelect
+                              className="h-8 w-auto min-w-[7rem] text-[13px] font-medium text-emerald-800 !border-emerald-200 !bg-emerald-50"
+                              value={String(record?.status || "Active")}
+                              onChange={(e) => {
+                                if (!selectedId) return;
+                                void act({ action: "update_person", personId: selectedId, status: e.target.value });
+                              }}
+                              title="Status"
+                            >
+                              <option value="Active">Active</option>
+                              <option value="Inactive">Inactive</option>
+                            </FieldSelect>
                           )}
                           {dnc ? (
                             <span title={dncReason || "Do not reach"}>
@@ -1059,7 +1084,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           >
                             {linkedInLabel(record.linkedIn)}
                           </IconChip>
-                        ) : isCandidate ? (
+                        ) : !isOrganization ? (
                           <IconOnly icon={LinkedInIcon} label="LinkedIn" tone="blue" disabled title="No LinkedIn on file" />
                         ) : null}
                       </div>
@@ -1258,7 +1283,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                             ["Time Zone", tzLabel || "—"],
                             ["Contact Type", "Client"],
                             ["Status", record?.status],
-                            ["Relationship Tier", record?.relationshipTier || (contactTags.includes("Strategic") ? "Strategic" : company?.role || "—")],
+                            ["Relationship Tier", record?.relationshipTier || "—"],
                             ["Source", record?.source],
                             ["Owner", (record?.owner as { name?: string })?.name],
                             ["Last outreach", shortDate(record?.lastOutreachAt)],
@@ -1267,7 +1292,13 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                           ].map(([k, v]) => (
                             <div key={String(k)} className="grid grid-cols-1 sm:grid-cols-3 gap-1 sm:gap-2">
                               <dt className="text-slate-600">{String(k)}</dt>
-                              <dd className="sm:col-span-2 break-words text-slate-900">{contactDetailValue(String(k), v)}</dd>
+                              <dd className="sm:col-span-2 break-words text-slate-900">
+                                {String(k) === "Status" ? (
+                                  <Tag tone={String(v).toLowerCase() === "active" ? "green" : "slate"}>{String(v || "—")}</Tag>
+                                ) : (
+                                  contactDetailValue(String(k), v)
+                                )}
+                              </dd>
                             </div>
                           ))}
                         </dl>
@@ -1275,10 +1306,10 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                       <Card>
                         <CardHeader title="Tags" action={<TextLink onClick={() => setDrawer("edit")}>+ Add Tag</TextLink>} />
                         <div className="px-4 py-3 flex flex-wrap gap-1">
-                          {(contactTags.length ? contactTags : ((record?.skills as string[]) || [])).map((t) => (
+                          {(contactTags.length ? contactTags : []).map((t) => (
                             <Tag key={String(t)} tone={tagTone(String(t))}>{String(t)}</Tag>
                           ))}
-                          {!contactTags.length && !((record?.skills as string[]) || []).length ? (
+                          {!contactTags.length ? (
                             <span className="text-sm text-slate-400">No tags yet</span>
                           ) : null}
                         </div>
@@ -1287,12 +1318,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                         <Card>
                           <CardHeader
                             title="Company"
-                            action={
-                              <div className="flex items-center gap-2">
-                                <TextLink onClick={() => setDrawer("edit-company")}>Edit</TextLink>
-                                <TextLink onClick={() => select(company.id, "organization")}>Open Client 360</TextLink>
-                              </div>
-                            }
+                            action={<TextLink onClick={() => setDrawer("edit-company")}>Edit</TextLink>}
                           />
                           <button
                             type="button"
@@ -1338,13 +1364,26 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     <div className="min-w-0 xl:col-span-7 space-y-4">
                       <Card>
                         <CardHeader title="Quick Actions" />
-                        <div className="p-2.5 grid grid-cols-4 gap-1.5">
-                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
-                          <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="Call" />
-                          <IconBtn disabled title="WhatsApp channel not live in POC" label="WhatsApp" />
+                        <div className="p-2.5 grid grid-cols-3 sm:grid-cols-6 gap-1.5 relative">
+                          <IconBtn disabled={blockEmail || !session?.mailbox} onClick={() => setDrawer("email")} label="Send Email" title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : blockEmail ? "Do not reach / Do Not Email" : ""} />
+                          <IconBtn disabled={callBlocked} title={callWhy} onClick={onCall} label="Log Call" />
                           <IconBtn disabled={!session?.mailbox} title={!session?.mailbox ? "Outlook not connected — Settings → Connect Outlook" : ""} onClick={() => setDrawer("meeting")} label="Schedule Meeting" />
                           <IconBtn onClick={() => setDrawer("note")} label="Add Note" />
                           <IconBtn onClick={() => setDrawer("wrap")} label="Add Task" />
+                          <IconBtn onClick={() => setMenu(menu === "qa-more" ? "none" : "qa-more")} label="More" title="More actions" />
+                          {menu === "qa-more" ? (
+                            <div className="absolute right-2 top-full z-20 mt-1 w-48 rounded-md border border-slate-200 bg-white shadow-lg py-1">
+                              <MenuItem icon={MessageCircle} disabled title="WhatsApp channel not live in POC" onClick={() => setMenu("none")}>
+                                WhatsApp
+                              </MenuItem>
+                              <MenuItem icon={Building2} disabled={!company?.id} onClick={() => { setMenu("none"); if (company?.id) select(company.id, "organization"); }}>
+                                View Company
+                              </MenuItem>
+                              <MenuItem icon={Ban} disabled={!canToggleDnc} onClick={() => { setMenu("none"); toggleDoNotReach(); }}>
+                                {dnc ? "Clear Do not reach" : "Mark Do not reach"}
+                              </MenuItem>
+                            </div>
+                          ) : null}
                         </div>
                       </Card>
                       <Card>
@@ -1724,6 +1763,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
               <CreateForm
                 moduleKey={moduleKey}
                 organizationId={isOrganization ? selectedId : undefined}
+                companies={contactFilterOptions?.companies || []}
                 stages={["Lead", "Suspect", "Prospect", "Customer"]}
                 onClose={() => setDrawer("none")}
                 onSave={async (vals) => {
@@ -1757,13 +1797,14 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                     setTab("Contacts");
                     const rec = await fetch(`/api/record?type=organization&id=${selectedId}`).then((r) => r.json());
                     setRecord(rec.record);
-                  } else {
+                  } else if (data.id) {
                     select(String(data.id), "person");
-                    setTab("Files");
-                    const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
-                    setRecord(rec.record);
+                    if (resumeFile) {
+                      setTab("Files");
+                      const rec = await fetch(`/api/record?type=person&id=${data.id}`).then((r) => r.json());
+                      setRecord(rec.record);
+                    }
                   }
-                  await load();
                   setDrawer("none");
                   return data;
                 }}
@@ -1962,12 +2003,23 @@ function resolveResumeOpenHref(
 function RateField({
   value,
   onChange,
-  placeholder = "75/hr",
+  placeholder = "75",
+  showPeriod = false,
+  period,
+  onPeriodChange,
 }: {
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   placeholder?: string;
+  /** When true, show Hourly / Daily / Yearly beside the amount. */
+  showPeriod?: boolean;
+  period?: RatePeriod;
+  onPeriodChange?: (period: RatePeriod) => void;
 }) {
+  const activePeriod = period || parseRatePeriod(value, "hr");
+  const placeholderForPeriod =
+    activePeriod === "yr" ? "145000" : activePeriod === "day" ? "750" : placeholder;
+
   return (
     <div className="flex h-8 w-full overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] focus-within:border-[var(--color-focus)] focus-within:ring-2 focus-within:ring-[var(--color-focus-ring)]">
       <span
@@ -1986,7 +2038,7 @@ function RateField({
           } as React.ChangeEvent<HTMLInputElement>);
         }}
         onBlur={(e) => {
-          const normalized = normalizeRateInput(e.target.value);
+          const normalized = normalizeRateInput(e.target.value, showPeriod ? activePeriod : undefined);
           if (normalized !== value) {
             onChange({
               ...e,
@@ -1994,11 +2046,34 @@ function RateField({
             } as React.ChangeEvent<HTMLInputElement>);
           }
         }}
-        placeholder={placeholder}
+        placeholder={placeholderForPeriod}
         inputMode="decimal"
         className="min-w-0 flex-1 bg-transparent px-2.5 text-[13px] text-[var(--color-text)] outline-none placeholder:text-[var(--color-text-muted)]"
         aria-label="Rate in USD"
       />
+      {showPeriod ? (
+        <select
+          aria-label="Rate period"
+          value={activePeriod}
+          onChange={(e) => {
+            const next = e.target.value as RatePeriod;
+            onPeriodChange?.(next);
+            const amount = rateInputValue(value);
+            if (amount) {
+              onChange({
+                target: { value: normalizeRateInput(amount, next) },
+              } as React.ChangeEvent<HTMLInputElement>);
+            }
+          }}
+          className="shrink-0 border-l border-[var(--color-border)] bg-[var(--color-surface-muted)] px-2 text-[12px] font-medium text-[var(--color-text-secondary)] outline-none cursor-pointer"
+        >
+          {RATE_PERIOD_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      ) : null}
     </div>
   );
 }
@@ -4209,12 +4284,14 @@ function SubmitForm({
 function CreateForm({
   moduleKey,
   organizationId,
+  companies = [],
   stages = ["Lead", "Suspect", "Prospect", "Customer"],
   onClose,
   onSave,
 }: {
   moduleKey: string;
   organizationId?: string;
+  companies?: { id: string; name: string }[];
   stages?: string[];
   onClose: () => void;
   onSave: (vals: Record<string, unknown>) => Promise<{ id?: string } | null | void>;
@@ -4227,6 +4304,7 @@ function CreateForm({
     kind === "vendor_person" ? "Vendor person" : kind === "client_person" ? "Client contact" : "Candidate";
   const [busy, setBusy] = useState(false);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [pickedOrgId, setPickedOrgId] = useState(organizationId || "");
   const [vals, setVals] = useState({
     name: "",
     title: "",
@@ -4259,13 +4337,14 @@ function CreateForm({
   });
   const set = (key: keyof typeof vals) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setVals((prev) => ({ ...prev, [key]: e.target.value }));
+  const resolvedOrgId = organizationId || pickedOrgId;
 
   return (
     <form
       className="space-y-3"
       onSubmit={async (e) => {
         e.preventDefault();
-        if (needsCompany && !organizationId) {
+        if (needsCompany && !resolvedOrgId) {
           return;
         }
         setBusy(true);
@@ -4277,7 +4356,7 @@ function CreateForm({
             preferredLocation: vals.preferredLocation || vals.location,
             resumeName: resumeFile?.name || vals.resumeName || "",
             resumeFile,
-            ...(organizationId ? { organizationId, stage: vals.stage } : !isCandidate ? { stage: vals.stage } : {}),
+            ...(resolvedOrgId ? { organizationId: resolvedOrgId, stage: vals.stage } : !isCandidate ? { stage: vals.stage } : {}),
           });
         } finally {
           setBusy(false);
@@ -4286,7 +4365,19 @@ function CreateForm({
     >
       <h2 className="text-lg font-semibold">Add {label}</h2>
       {needsCompany && !organizationId ? (
-        <p className="text-xs text-amber-800">Open a Client company first, then add Contacts from the Contacts tab.</p>
+        companies.length ? (
+          <>
+            <Label>Client company *</Label>
+            <FieldSelect className="w-full" value={pickedOrgId} onChange={(e) => setPickedOrgId(e.target.value)} required>
+              <option value="">Select company…</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </FieldSelect>
+          </>
+        ) : (
+          <p className="text-xs text-amber-800">Add a Client company first, then add Contacts.</p>
+        )
       ) : null}
       <Label>Name</Label>
       <FieldInput value={vals.name} onChange={set("name")} required />
@@ -4423,7 +4514,7 @@ function CreateForm({
         </>
       ) : null}
       <div className="flex gap-2 pt-1">
-        <button className={btnPrimary} disabled={busy || (needsCompany && !organizationId)}>{busy ? "Creating…" : "Create"}</button>
+        <button className={btnPrimary} disabled={busy || (needsCompany && !resolvedOrgId)}>{busy ? "Creating…" : "Create"}</button>
         <button type="button" className={btnGhost} onClick={onClose} disabled={busy}>
           Cancel
         </button>
@@ -5535,6 +5626,8 @@ function ReqForm({
   );
   const [billRate, setBillRate] = useState(rateInputValue(initial?.billRate));
   const [payRate, setPayRate] = useState(rateInputValue(initial?.payRate));
+  const [billPeriod, setBillPeriod] = useState<RatePeriod>(parseRatePeriod(initial?.billRate, "hr"));
+  const [payPeriod, setPayPeriod] = useState<RatePeriod>(parseRatePeriod(initial?.payRate, "hr"));
   const [employmentType, setEmploymentType] = useState(String(initial?.employmentType || ""));
   const [duration, setDuration] = useState(String(initial?.duration || ""));
   const [clearance, setClearance] = useState(String(initial?.clearance || ""));
@@ -5562,8 +5655,8 @@ function ReqForm({
             assignedRecruiterIds,
             status,
             targetFillAt,
-            billRate,
-            payRate,
+            billRate: normalizeRateInput(billRate, billPeriod),
+            payRate: normalizeRateInput(payRate, payPeriod),
             employmentType,
             duration,
             clearance,
@@ -5627,10 +5720,24 @@ function ReqForm({
           <option key={o} value={o}>{o}</option>
         ))}
       </FieldSelect>
-      <Label>Bill rate <span className="text-slate-400 font-normal">(optional)</span></Label>
-      <RateField value={billRate} onChange={(e) => setBillRate(e.target.value)} placeholder="95/hr" />
-      <Label>Pay rate <span className="text-slate-400 font-normal">(optional)</span></Label>
-      <RateField value={payRate} onChange={(e) => setPayRate(e.target.value)} placeholder="75/hr" />
+      <Label>Bill rate <span className="text-slate-400 font-normal">(optional — hourly, daily, or yearly)</span></Label>
+      <RateField
+        value={billRate}
+        onChange={(e) => setBillRate(e.target.value)}
+        showPeriod
+        period={billPeriod}
+        onPeriodChange={setBillPeriod}
+        placeholder="95"
+      />
+      <Label>Pay rate <span className="text-slate-400 font-normal">(optional — hourly, daily, or yearly)</span></Label>
+      <RateField
+        value={payRate}
+        onChange={(e) => setPayRate(e.target.value)}
+        showPeriod
+        period={payPeriod}
+        onPeriodChange={setPayPeriod}
+        placeholder="75"
+      />
       <Label>Duration <span className="text-slate-400 font-normal">(optional)</span></Label>
       <FieldInput value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="6 months / 12 months / Perm" />
       <Label>Clearance <span className="text-slate-400 font-normal">(optional)</span></Label>
