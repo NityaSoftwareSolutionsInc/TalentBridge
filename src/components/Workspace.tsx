@@ -1964,7 +1964,7 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   onSave={async (vals) => {
                     const { avatarBlob, ...fields } = vals;
                     await act({ action: "update_person", personId: selectedId, ...fields });
-                    if (avatarBlob && selectedId) {
+                    if (avatarBlob instanceof Blob && selectedId) {
                       const fd = new FormData();
                       fd.set("personId", String(selectedId));
                       fd.set("kind", "avatar");
@@ -4659,7 +4659,7 @@ function EditForm({
 }: {
   record: Record<string, unknown> | null;
   onClose: () => void;
-  onSave: (vals: Record<string, string> & { avatarBlob?: Blob | null }) => Promise<void>;
+  onSave: (vals: { [key: string]: string | Blob | null | undefined; avatarBlob?: Blob | null }) => Promise<void>;
 }) {
   const isCandidate = record?.kind === "candidate";
   const parsedLoc = parseLocationToCountryCity(String(record?.location || ""));
@@ -4706,10 +4706,8 @@ function EditForm({
         setBusy(true);
         setError("");
         try {
-          const payload = { ...vals };
-          delete (payload as { countryCode?: string }).countryCode;
-          delete (payload as { city?: string }).city;
-          await onSave({ ...payload, avatarBlob });
+          const { countryCode: _c, city: _city, ...fields } = vals;
+          await onSave({ ...fields, avatarBlob });
         } catch (err) {
           setError(err instanceof Error ? err.message : "Could not save contact");
         } finally {

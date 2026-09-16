@@ -4989,7 +4989,6 @@ function serializePersonDetail(
       c.ownerId === session.userId || session.permissions.includes("ownership_transfer"),
     coOwners: c.coOwners.map((x) => x.user.name),
     titleIndex: c.titleIndex,
-    tags: c.tags || [],
     companies: c.affiliations.map((p) => ({
       id: p.organization.id,
       name: p.organization.name,
