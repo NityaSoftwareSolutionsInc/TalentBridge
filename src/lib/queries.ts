@@ -1095,50 +1095,240 @@ export async function placeCall(session: Session, personId: string) {
   });
   if (!person) throw new Error("Contact not found");
   if (outreachChannelBlocks(person).call) throw new Error("Do not reach is on — outbound call disabled.");
+  if (!person.phone?.trim()) throw new Error("Contact has no phone number.");
 
-  const result = await integrations.vioTalk.placeCall({
-    personId,
-    phone: person.phone,
-    userId: session.userId,
+  const agentMap = await prisma.vioTalkAgentMap.findFirst({
+    where: { userId: session.userId, tenantId: session.tenantId },
+  });
+  if (!agentMap?.vioTalkUserId) {
+    throw new Error("No VioTalk agent mapping. Users with no mapping cannot use VioTalk Call.");
+  }
+
+  const settings = await prisma.tenantSettings.findUnique({
+    where: { tenantId: session.tenantId },
   });
 
-  const activity = await prisma.activityEvent.create({
-    data: {
+  const { isVioTalkLiveConfigured, remoteDial, vioTalkStub } = await import("@/integrations/vioTalk");
+
+  if (!isVioTalkLiveConfigured(settings ?? undefined)) {
+    // Demo stub when partner API is not configured.
+    const result = await vioTalkStub.placeCall({
+      personId,
+      phone: person.phone,
+      userId: session.userId,
+    });
+    const activity = await prisma.activityEvent.create({
+      data: {
+        tenantId: session.tenantId,
+        kind: "call",
+        summary: `VioTalk call – ${Math.round(result.durationSeconds / 60)} minutes.`,
+        body: result.aiSummary,
+        source: "viotalk",
+        externalId: result.callId,
+        actorId: session.userId,
+        personId,
+        recordingRef: result.recordingRef,
+        transcriptRef: result.transcriptRef,
+        aiSummary: result.aiSummary,
+      },
+    });
+    await prisma.person.update({
+      where: { id: personId },
+      data: { lastOutreachAt: new Date() },
+    });
+    await audit({
       tenantId: session.tenantId,
-      kind: "call",
-      summary: `VioTalk call – ${Math.round(result.durationSeconds / 60)} minutes.`,
-      body: result.aiSummary,
-      source: "viotalk",
-      externalId: result.callId,
       actorId: session.userId,
-      personId,
-      recordingRef: result.recordingRef,
-      transcriptRef: result.transcriptRef,
-      aiSummary: result.aiSummary,
-    },
-  });
-
-  await prisma.person.update({
-    where: { id: personId },
-    data: { lastOutreachAt: new Date() },
-  });
-
-  await audit({
-    tenantId: session.tenantId,
-    actorId: session.userId,
-    action: "viotalk_call",
-    entityType: "activity_event",
-    entityId: activity.id,
-    after: {
-      personId,
-      personName: person.name,
+      action: "viotalk_call",
+      entityType: "activity_event",
+      entityId: activity.id,
+      after: {
+        personId,
+        personName: person.name,
+        callId: result.callId,
+        durationSeconds: result.durationSeconds,
+        channel: "call",
+        mode: "stub",
+      },
+    });
+    return {
+      status: "stub" as const,
+      activityId: activity.id,
+      proposedFollowUp: result.proposedFollowUp,
       callId: result.callId,
-      durationSeconds: result.durationSeconds,
-      channel: "call",
-    },
-  });
+      openWrapUp: true,
+    };
+  }
 
-  return { activityId: activity.id, proposedFollowUp: result.proposedFollowUp, callId: result.callId };
+  const apiBaseUrl =
+    (settings?.viotalkApiBaseUrl || process.env.VIOTALK_API_BASE_URL || "").trim();
+  const partnerApiKey =
+    (settings?.viotalkPartnerApiKey || process.env.VIOTALK_PARTNER_API_KEY || "").trim();
+
+  try {
+    const dial = await remoteDial({
+      apiBaseUrl,
+      partnerApiKey,
+      agentUserId: agentMap.vioTalkUserId,
+      destination: person.phone,
+      correlationId: personId,
+      displayName: person.name,
+      externalTenantId: session.tenantId,
+    });
+
+    await audit({
+      tenantId: session.tenantId,
+      actorId: session.userId,
+      action: "viotalk_remote_dial",
+      entityType: "person",
+      entityId: personId,
+      after: {
+        personId,
+        personName: person.name,
+        status: dial.status,
+        destination: dial.destination,
+        fallbackUrl: dial.fallbackUrl,
+      },
+    });
+
+    return {
+      status: dial.status,
+      accepted: dial.accepted,
+      fallbackUrl: dial.fallbackUrl,
+      message: dial.message,
+      personId,
+      openWrapUp: false,
+    };
+  } catch (err) {
+    const e = err as Error & { fallbackUrl?: string; code?: string };
+    throw Object.assign(new Error(e.message || "VioTalk dial failed"), {
+      fallbackUrl: e.fallbackUrl,
+      code: e.code,
+    });
+  }
+}
+
+export async function ingestVioTalkWebhook(
+  tenantId: string,
+  event: string,
+  payload: Record<string, unknown>,
+) {
+  const correlationId = String(payload.correlationId ?? "").trim();
+  const callId = String(payload.callId ?? "").trim();
+  const messageId = String(payload.messageId ?? "").trim();
+  const agentUserId = String(payload.agentUserId ?? "").trim();
+
+  const actor = agentUserId
+    ? await prisma.vioTalkAgentMap.findFirst({
+        where: { tenantId, vioTalkUserId: agentUserId },
+      })
+    : null;
+
+  if (event === "call.completed" && callId && correlationId) {
+    const durationSeconds = Number(payload.durationSeconds ?? 0) || 0;
+    const direction = String(payload.direction ?? "outbound");
+    const status = String(payload.status ?? "completed");
+    const minutes = Math.max(0, Math.round(durationSeconds / 60));
+    const summary =
+      direction === "inbound"
+        ? `VioTalk inbound call – ${minutes} min (${status}).`
+        : `VioTalk call – ${minutes} min (${status}).`;
+
+    const existing = await prisma.activityEvent.findFirst({
+      where: { tenantId, source: "viotalk", externalId: callId },
+    });
+
+    const data = {
+      tenantId,
+      kind: "call",
+      summary,
+      body: "",
+      source: "viotalk",
+      externalId: callId,
+      actorId: actor?.userId ?? null,
+      personId: correlationId,
+      recordingRef: payload.recordingRef ? String(payload.recordingRef) : null,
+      transcriptRef: payload.transcriptRef ? String(payload.transcriptRef) : null,
+    };
+
+    const activity = existing
+      ? await prisma.activityEvent.update({
+          where: { id: existing.id },
+          data: {
+            summary: data.summary,
+            recordingRef: data.recordingRef ?? existing.recordingRef,
+            transcriptRef: data.transcriptRef ?? existing.transcriptRef,
+            actorId: data.actorId ?? existing.actorId,
+          },
+        })
+      : await prisma.activityEvent.create({ data });
+
+    await prisma.person.updateMany({
+      where: { id: correlationId, tenantId },
+      data: { lastOutreachAt: new Date() },
+    });
+
+    return { activityId: activity.id, personId: correlationId, needsWrapUp: !activity.wrapUp };
+  }
+
+  if (event === "recording.ready" && callId) {
+    const activity = await prisma.activityEvent.findFirst({
+      where: { tenantId, source: "viotalk", externalId: callId },
+    });
+    if (activity) {
+      await prisma.activityEvent.update({
+        where: { id: activity.id },
+        data: { recordingRef: String(payload.recordingRef ?? callId) },
+      });
+      return { activityId: activity.id, personId: activity.personId };
+    }
+  }
+
+  if (event === "transcript.ready" && callId) {
+    const text = String(payload.transcriptText ?? "");
+    const activity = await prisma.activityEvent.findFirst({
+      where: { tenantId, source: "viotalk", externalId: callId },
+    });
+    if (activity) {
+      await prisma.activityEvent.update({
+        where: { id: activity.id },
+        data: {
+          transcriptRef: String(payload.transcriptRef ?? callId),
+          body: text || activity.body,
+          aiSummary: activity.aiSummary,
+        },
+      });
+      return { activityId: activity.id, personId: activity.personId };
+    }
+  }
+
+  if (event === "message.created" && messageId && correlationId) {
+    const direction = String(payload.direction ?? "inbound");
+    const body = String(payload.body ?? "");
+    const existing = await prisma.activityEvent.findFirst({
+      where: { tenantId, source: "viotalk", externalId: `msg:${messageId}` },
+    });
+    if (existing) return { activityId: existing.id, personId: correlationId };
+
+    const activity = await prisma.activityEvent.create({
+      data: {
+        tenantId,
+        kind: "sms",
+        summary:
+          direction === "inbound"
+            ? "VioTalk SMS received"
+            : "VioTalk SMS sent",
+        body,
+        source: "viotalk",
+        externalId: `msg:${messageId}`,
+        actorId: actor?.userId ?? null,
+        personId: correlationId,
+      },
+    });
+    return { activityId: activity.id, personId: correlationId };
+  }
+
+  return { ignored: true };
 }
 
 export async function submitProfile(
@@ -3991,6 +4181,7 @@ export async function settingsPayload(session: Session) {
       createdAt: e.createdAt.toISOString(),
     })),
     settings: {
+      tenantId: session.tenantId,
       recordingPlaybackAllowed: settings.recordingPlaybackAllowed,
       slaRequirementNoSubDays: settings.slaRequirementNoSubDays,
       slaSubmissionFeedbackDays: settings.slaSubmissionFeedbackDays,
@@ -3998,6 +4189,19 @@ export async function settingsPayload(session: Session) {
       slaClientLastOutreachDays: settings.slaClientLastOutreachDays,
       slaMsaExpiryDays: settings.slaMsaExpiryDays,
       jnpAccountUserId: settings.jnpAccountUserId || "",
+      viotalkApiBaseUrl: settings.viotalkApiBaseUrl || process.env.VIOTALK_API_BASE_URL || "",
+      viotalkCompanyId: settings.viotalkCompanyId || "",
+      viotalkPartnerApiKeySet: Boolean(
+        (settings.viotalkPartnerApiKey || process.env.VIOTALK_PARTNER_API_KEY || "").trim(),
+      ),
+      viotalkWebhookHmacSecretSet: Boolean(
+        (settings.viotalkWebhookHmacSecret || process.env.VIOTALK_WEBHOOK_HMAC_SECRET || "").trim(),
+      ),
+      viotalkWebhookPath: "/api/webhooks/viotalk",
+      viotalkLive: Boolean(
+        (settings.viotalkApiBaseUrl || process.env.VIOTALK_API_BASE_URL || "").trim() &&
+          (settings.viotalkPartnerApiKey || process.env.VIOTALK_PARTNER_API_KEY || "").trim(),
+      ),
     },
     jnp: {
       oneWayIn: true,
@@ -4035,6 +4239,9 @@ export async function settingsPayload(session: Session) {
         { name: "MICROSOFT_GRAPH_CLIENT_SECRET", present: Boolean(process.env.MICROSOFT_GRAPH_CLIENT_SECRET) },
         { name: "MICROSOFT_GRAPH_REDIRECT_URI", present: Boolean(process.env.MICROSOFT_GRAPH_REDIRECT_URI) },
         { name: "MICROSOFT_GRAPH_AUTHORITY", present: Boolean(process.env.MICROSOFT_GRAPH_AUTHORITY) },
+        { name: "VIOTALK_API_BASE_URL", present: Boolean(process.env.VIOTALK_API_BASE_URL) },
+        { name: "VIOTALK_PARTNER_API_KEY", present: Boolean(process.env.VIOTALK_PARTNER_API_KEY) },
+        { name: "VIOTALK_WEBHOOK_HMAC_SECRET", present: Boolean(process.env.VIOTALK_WEBHOOK_HMAC_SECRET) },
       ],
       adapterStatus: jnpLive
         ? "Live HTTP adapter. API key authenticates TalentBridge; the mapped recruiter id is checked against a live JobsNProfiles employer subscription."
@@ -4637,6 +4844,217 @@ export async function adminSetRecordingPolicy(session: Session, allowed: boolean
     after: { recordingPlaybackAllowed: allowed },
   });
   return { recordingPlaybackAllowed: updated.recordingPlaybackAllowed };
+}
+
+export async function adminSetVioTalkPartnerSettings(
+  session: Session,
+  input: {
+    viotalkApiBaseUrl?: string;
+    viotalkCompanyId?: string;
+    viotalkPartnerApiKey?: string;
+    viotalkWebhookHmacSecret?: string;
+    clearApiKey?: boolean;
+    clearWebhookSecret?: boolean;
+  },
+) {
+  requireAdmin(session);
+  const before = await tenantSettings(session.tenantId);
+
+  const data: {
+    viotalkApiBaseUrl?: string;
+    viotalkCompanyId?: string;
+    viotalkPartnerApiKey?: string;
+    viotalkWebhookHmacSecret?: string;
+  } = {};
+
+  if (input.viotalkApiBaseUrl !== undefined) {
+    data.viotalkApiBaseUrl = String(input.viotalkApiBaseUrl || "")
+      .trim()
+      .replace(/\/$/, "");
+  }
+  if (input.viotalkCompanyId !== undefined) {
+    data.viotalkCompanyId = String(input.viotalkCompanyId || "").trim();
+  }
+  if (input.clearApiKey) {
+    data.viotalkPartnerApiKey = "";
+  } else if (
+    input.viotalkPartnerApiKey !== undefined &&
+    String(input.viotalkPartnerApiKey).trim()
+  ) {
+    data.viotalkPartnerApiKey = String(input.viotalkPartnerApiKey).trim();
+  }
+  if (input.clearWebhookSecret) {
+    data.viotalkWebhookHmacSecret = "";
+  } else if (
+    input.viotalkWebhookHmacSecret !== undefined &&
+    String(input.viotalkWebhookHmacSecret).trim()
+  ) {
+    data.viotalkWebhookHmacSecret = String(input.viotalkWebhookHmacSecret).trim();
+  }
+
+  const updated = await prisma.tenantSettings.update({
+    where: { tenantId: session.tenantId },
+    data,
+  });
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "admin_set_viotalk_partner",
+    entityType: "tenant_settings",
+    entityId: updated.id,
+    before: {
+      viotalkApiBaseUrl: before.viotalkApiBaseUrl,
+      viotalkCompanyId: before.viotalkCompanyId,
+      apiKeySet: Boolean(before.viotalkPartnerApiKey),
+      hmacSet: Boolean(before.viotalkWebhookHmacSecret),
+    },
+    after: {
+      viotalkApiBaseUrl: updated.viotalkApiBaseUrl,
+      viotalkCompanyId: updated.viotalkCompanyId,
+      apiKeySet: Boolean(updated.viotalkPartnerApiKey),
+      hmacSet: Boolean(updated.viotalkWebhookHmacSecret),
+    },
+  });
+
+  return {
+    viotalkApiBaseUrl: updated.viotalkApiBaseUrl,
+    viotalkCompanyId: updated.viotalkCompanyId,
+    viotalkPartnerApiKeySet: Boolean(updated.viotalkPartnerApiKey),
+    viotalkWebhookHmacSecretSet: Boolean(updated.viotalkWebhookHmacSecret),
+    viotalkLive: Boolean(
+      updated.viotalkApiBaseUrl.trim() && updated.viotalkPartnerApiKey.trim(),
+    ),
+  };
+}
+
+function resolveVioTalkPartnerCreds(settings: {
+  viotalkApiBaseUrl: string;
+  viotalkPartnerApiKey: string;
+}) {
+  const apiBaseUrl = (
+    settings.viotalkApiBaseUrl ||
+    process.env.VIOTALK_API_BASE_URL ||
+    ""
+  )
+    .trim()
+    .replace(/\/$/, "");
+  const partnerApiKey = (
+    settings.viotalkPartnerApiKey ||
+    process.env.VIOTALK_PARTNER_API_KEY ||
+    ""
+  ).trim();
+  return { apiBaseUrl, partnerApiKey };
+}
+
+export async function adminTestVioTalkPartner(session: Session) {
+  requireAdmin(session);
+  const settings = await tenantSettings(session.tenantId);
+  const { apiBaseUrl, partnerApiKey } = resolveVioTalkPartnerCreds(settings);
+  if (!apiBaseUrl || !partnerApiKey) {
+    throw new Error("Configure VioTalk API base URL and partner API key first.");
+  }
+  const res = await fetch(`${apiBaseUrl}/api/partner/agents`, {
+    headers: { Authorization: `Bearer ${partnerApiKey}` },
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    agents?: unknown[];
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `VioTalk connection failed (${res.status})`);
+  }
+  return {
+    ok: true,
+    agentCount: Array.isArray(data.agents) ? data.agents.length : 0,
+  };
+}
+
+export async function adminSyncVioTalkAgents(session: Session) {
+  requireAdmin(session);
+  const settings = await tenantSettings(session.tenantId);
+  const { apiBaseUrl, partnerApiKey } = resolveVioTalkPartnerCreds(settings);
+  if (!apiBaseUrl || !partnerApiKey) {
+    throw new Error("Configure VioTalk API base URL and partner API key first.");
+  }
+
+  const res = await fetch(`${apiBaseUrl}/api/partner/agents`, {
+    headers: { Authorization: `Bearer ${partnerApiKey}` },
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    agents?: {
+      id: string;
+      name: string;
+      email: string;
+      extension: string | null;
+      assignedNumbers: string[];
+    }[];
+  };
+  if (!res.ok) {
+    throw new Error(data.error || `Could not list VioTalk agents (${res.status})`);
+  }
+
+  const agents = data.agents || [];
+  const users = await prisma.user.findMany({
+    where: { tenantId: session.tenantId, enabled: true },
+    include: { agentMap: true },
+  });
+
+  let matched = 0;
+  let updated = 0;
+  const byEmail = new Map(agents.map((a) => [a.email.trim().toLowerCase(), a]));
+
+  for (const user of users) {
+    const agent = byEmail.get(user.email.trim().toLowerCase());
+    if (!agent) continue;
+    matched += 1;
+    const assignedNumber = agent.assignedNumbers[0] || "";
+    if (
+      user.agentMap?.vioTalkUserId === agent.id &&
+      (user.agentMap?.assignedNumber || "") === assignedNumber
+    ) {
+      continue;
+    }
+    if (user.agentMap) {
+      await prisma.vioTalkAgentMap.update({
+        where: { id: user.agentMap.id },
+        data: { vioTalkUserId: agent.id, assignedNumber },
+      });
+    } else {
+      await prisma.vioTalkAgentMap.create({
+        data: {
+          tenantId: session.tenantId,
+          userId: user.id,
+          vioTalkUserId: agent.id,
+          assignedNumber,
+        },
+      });
+    }
+    updated += 1;
+  }
+
+  await audit({
+    tenantId: session.tenantId,
+    actorId: session.userId,
+    action: "admin_sync_viotalk_agents",
+    entityType: "viotalk_map",
+    entityId: session.tenantId,
+    after: { agentCount: agents.length, matched, updated },
+  });
+
+  return {
+    agentCount: agents.length,
+    matched,
+    updated,
+    agents: agents.map((a) => ({
+      id: a.id,
+      name: a.name,
+      email: a.email,
+      extension: a.extension,
+      assignedNumber: a.assignedNumbers[0] || "",
+    })),
+  };
 }
 
 function serializePersonList(c: {

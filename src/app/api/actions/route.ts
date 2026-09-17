@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { OwnershipRequestType, WrapUpOutcome } from "@prisma/client";
 import { getSession } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import {
   addNote,
   addPersonFile,
@@ -11,6 +12,9 @@ import {
   adminSetJnpEnabled,
   adminSetPassword,
   adminSetRecordingPolicy,
+  adminSetVioTalkPartnerSettings,
+  adminSyncVioTalkAgents,
+  adminTestVioTalkPartner,
   adminUpdateUser,
   adminUpsertJnpMap,
   adminUpsertMailboxMap,
@@ -63,6 +67,25 @@ export async function POST(req: Request) {
         );
       case "call":
         return NextResponse.json(await placeCall(session, String(body.personId)));
+      case "poll_viotalk_call": {
+        const personId = String(body.personId);
+        const activity = await prisma.activityEvent.findFirst({
+          where: {
+            tenantId: session.tenantId,
+            personId,
+            source: "viotalk",
+            kind: "call",
+            externalId: { not: null },
+            createdAt: { gte: new Date(Date.now() - 30 * 60_000) },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        return NextResponse.json({
+          ready: Boolean(activity && !activity.wrapUp),
+          activityId: activity?.id ?? null,
+          wrapUp: activity?.wrapUp ?? null,
+        });
+      }
       case "submit":
         return NextResponse.json(
           await submitProfile(session, {
@@ -426,6 +449,33 @@ export async function POST(req: Request) {
         return NextResponse.json(await adminResolveException(session, String(body.exceptionId || "")));
       case "admin_set_recording_policy":
         return NextResponse.json(await adminSetRecordingPolicy(session, Boolean(body.allowed)));
+      case "admin_set_viotalk_partner":
+        return NextResponse.json(
+          await adminSetVioTalkPartnerSettings(session, {
+            viotalkApiBaseUrl:
+              body.viotalkApiBaseUrl !== undefined
+                ? String(body.viotalkApiBaseUrl)
+                : undefined,
+            viotalkCompanyId:
+              body.viotalkCompanyId !== undefined
+                ? String(body.viotalkCompanyId)
+                : undefined,
+            viotalkPartnerApiKey:
+              body.viotalkPartnerApiKey !== undefined
+                ? String(body.viotalkPartnerApiKey)
+                : undefined,
+            viotalkWebhookHmacSecret:
+              body.viotalkWebhookHmacSecret !== undefined
+                ? String(body.viotalkWebhookHmacSecret)
+                : undefined,
+            clearApiKey: Boolean(body.clearApiKey),
+            clearWebhookSecret: Boolean(body.clearWebhookSecret),
+          }),
+        );
+      case "admin_test_viotalk_partner":
+        return NextResponse.json(await adminTestVioTalkPartner(session));
+      case "admin_sync_viotalk_agents":
+        return NextResponse.json(await adminSyncVioTalkAgents(session));
       default:
         return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }

@@ -88,7 +88,16 @@ type JnpStatus = {
   allowed?: boolean;
 };
 
-const ADMIN_TABS = ["User details", "VioTalk map", "Mailbox map", "Email signature", "JNP map", "Queues", "Audit"] as const;
+const ADMIN_TABS = [
+  "User details",
+  "VioTalk connect",
+  "VioTalk map",
+  "Mailbox map",
+  "Email signature",
+  "JNP map",
+  "Queues",
+  "Audit",
+] as const;
 const PERSONAL_TABS = ["Outlook", "Email signature"] as const;
 type SettingsTab = (typeof ADMIN_TABS)[number] | (typeof PERSONAL_TABS)[number];
 const ROLES = ["recruiter", "sales", "operations", "leadership", "admin"] as const;
@@ -182,6 +191,12 @@ export function SettingsPane({
   const [sigEditId, setSigEditId] = useState<string | "new" | null>(null);
   const [sigDraft, setSigDraft] = useState({ name: "Default", body: "", isDefault: false });
   const [jnpUserDrafts, setJnpUserDrafts] = useState<Record<string, string>>({});
+  const [vioPartnerDraft, setVioPartnerDraft] = useState({
+    apiBaseUrl: "",
+    companyId: "",
+    partnerApiKey: "",
+    webhookHmacSecret: "",
+  });
   const [jnpAccountDraft, setJnpAccountDraft] = useState("");
   const [jnpAuthNotice, setJnpAuthNotice] = useState("");
   const [inviteNotice, setInviteNotice] = useState("");
@@ -197,7 +212,19 @@ export function SettingsPane({
   const isSelf = Boolean(session?.userId && selected?.id === session.userId);
   const exceptions = (Array.isArray(data?.exceptions) ? data.exceptions : []) as ExceptionRow[];
   const auditEvents = (Array.isArray(data?.auditEvents) ? data.auditEvents : []) as AuditRow[];
-  const settings = (data?.settings || {}) as { recordingPlaybackAllowed?: boolean; jnpAccountUserId?: string };
+  const settings = (data?.settings || {}) as {
+    tenantId?: string;
+    recordingPlaybackAllowed?: boolean;
+    jnpAccountUserId?: string;
+    viotalkApiBaseUrl?: string;
+    viotalkCompanyId?: string;
+    viotalkPartnerApiKeySet?: boolean;
+    viotalkWebhookHmacSecretSet?: boolean;
+    viotalkWebhookPath?: string;
+    viotalkLive?: boolean;
+  };
+  const [vioPartnerNotice, setVioPartnerNotice] = useState("");
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const jnp = (data?.jnp || {}) as JnpStatus;
   const jnpAllowed = Boolean(session?.jnpAllowed ?? jnp.allowed);
   const graph = (data?.graph || {}) as GraphStatus;
@@ -244,6 +271,18 @@ export function SettingsPane({
     setJnpUserDrafts(Object.fromEntries(users.map((u) => [u.id, u.jnpUserId])));
     setSigEditId(null);
     setJnpAccountDraft(String((data?.settings as { jnpAccountUserId?: string } | undefined)?.jnpAccountUserId || (data?.jnp as JnpStatus | undefined)?.jnpAccountUserId || ""));
+    const s = (data?.settings || {}) as {
+      viotalkApiBaseUrl?: string;
+      viotalkCompanyId?: string;
+    };
+    setVioPartnerDraft((prev) => ({
+      ...prev,
+      apiBaseUrl: String(s.viotalkApiBaseUrl || ""),
+      companyId: String(s.viotalkCompanyId || ""),
+      // Keep secret fields blank so we don't echo stored values into the DOM.
+      partnerApiKey: "",
+      webhookHmacSecret: "",
+    }));
   }, [data]);
 
   useEffect(() => {
@@ -641,6 +680,204 @@ export function SettingsPane({
               <p className="text-sm text-slate-500">Select a user from the list, or click Add user in the header.</p>
             )}
           </div>
+        ) : null}
+
+        {tab === "VioTalk connect" ? (
+          <section className="max-w-xl space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">VioTalk partner connection</h2>
+              <p className="mt-1 text-xs text-slate-600">
+                TalentBridge dials the already-Registered softphone via VioTalk’s partner API. SIP registration stays
+                in VioTalk only. Create the binding in VioTalk admin, then paste the API base URL, partner key, and
+                webhook HMAC here.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Tag tone={settings.viotalkLive ? "green" : "slate"}>
+                {settings.viotalkLive ? "Live remote dial" : "Stub / not configured"}
+              </Tag>
+              <Tag tone={settings.viotalkPartnerApiKeySet ? "green" : "slate"}>
+                API key {settings.viotalkPartnerApiKeySet ? "set" : "missing"}
+              </Tag>
+              <Tag tone={settings.viotalkWebhookHmacSecretSet ? "green" : "slate"}>
+                Webhook HMAC {settings.viotalkWebhookHmacSecretSet ? "set" : "missing"}
+              </Tag>
+            </div>
+            {vioPartnerNotice ? (
+              <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+                {vioPartnerNotice}
+              </div>
+            ) : null}
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p>
+                  TalentBridge tenant ID (use as{" "}
+                  <span className="font-mono">externalTenantId</span> in VioTalk):
+                </p>
+                <Button
+                  variant="secondary"
+                  disabled={!settings.tenantId}
+                  onClick={async () => {
+                    if (!settings.tenantId) return;
+                    await navigator.clipboard.writeText(settings.tenantId);
+                    setCopiedField("tenantId");
+                    setTimeout(() => setCopiedField(null), 1500);
+                  }}
+                >
+                  {copiedField === "tenantId" ? "Copied" : "Copy ID"}
+                </Button>
+              </div>
+              <p className="font-mono break-all text-slate-900">{settings.tenantId || "—"}</p>
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <p>Webhook URL to register in VioTalk:</p>
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    const url =
+                      typeof window !== "undefined"
+                        ? `${window.location.origin}${settings.viotalkWebhookPath || "/api/webhooks/viotalk"}`
+                        : settings.viotalkWebhookPath || "/api/webhooks/viotalk";
+                    await navigator.clipboard.writeText(url);
+                    setCopiedField("webhook");
+                    setTimeout(() => setCopiedField(null), 1500);
+                  }}
+                >
+                  {copiedField === "webhook" ? "Copied" : "Copy URL"}
+                </Button>
+              </div>
+              <p className="font-mono break-all text-slate-900">
+                {typeof window !== "undefined"
+                  ? `${window.location.origin}${settings.viotalkWebhookPath || "/api/webhooks/viotalk"}`
+                  : settings.viotalkWebhookPath || "/api/webhooks/viotalk"}
+              </p>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div>
+                <Label>VioTalk API base URL</Label>
+                <FieldInput
+                  value={vioPartnerDraft.apiBaseUrl}
+                  onChange={(e) =>
+                    setVioPartnerDraft({ ...vioPartnerDraft, apiBaseUrl: e.target.value })
+                  }
+                  placeholder="https://api.viotalk.com"
+                />
+              </div>
+              <div>
+                <Label>VioTalk company ID (optional)</Label>
+                <FieldInput
+                  value={vioPartnerDraft.companyId}
+                  onChange={(e) =>
+                    setVioPartnerDraft({ ...vioPartnerDraft, companyId: e.target.value })
+                  }
+                  placeholder="VioTalk company UUID"
+                />
+              </div>
+              <div>
+                <Label>Partner API key</Label>
+                <FieldInput
+                  type="password"
+                  autoComplete="new-password"
+                  value={vioPartnerDraft.partnerApiKey}
+                  onChange={(e) =>
+                    setVioPartnerDraft({ ...vioPartnerDraft, partnerApiKey: e.target.value })
+                  }
+                  placeholder={
+                    settings.viotalkPartnerApiKeySet
+                      ? "Leave blank to keep current key"
+                      : "vtpart_…"
+                  }
+                />
+              </div>
+              <div>
+                <Label>Webhook HMAC secret</Label>
+                <FieldInput
+                  type="password"
+                  autoComplete="new-password"
+                  value={vioPartnerDraft.webhookHmacSecret}
+                  onChange={(e) =>
+                    setVioPartnerDraft({ ...vioPartnerDraft, webhookHmacSecret: e.target.value })
+                  }
+                  placeholder={
+                    settings.viotalkWebhookHmacSecretSet
+                      ? "Leave blank to keep current secret"
+                      : "HMAC secret from VioTalk"
+                  }
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  disabled={busy}
+                  onClick={async () => {
+                    setVioPartnerNotice("");
+                    await onAction({
+                      action: "admin_set_viotalk_partner",
+                      viotalkApiBaseUrl: vioPartnerDraft.apiBaseUrl,
+                      viotalkCompanyId: vioPartnerDraft.companyId,
+                      ...(vioPartnerDraft.partnerApiKey.trim()
+                        ? { viotalkPartnerApiKey: vioPartnerDraft.partnerApiKey.trim() }
+                        : {}),
+                      ...(vioPartnerDraft.webhookHmacSecret.trim()
+                        ? { viotalkWebhookHmacSecret: vioPartnerDraft.webhookHmacSecret.trim() }
+                        : {}),
+                    });
+                    setVioPartnerNotice("Connection settings saved.");
+                  }}
+                >
+                  Save connection
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy || !settings.viotalkLive}
+                  onClick={async () => {
+                    setVioPartnerNotice("");
+                    const result = (await onAction({ action: "admin_test_viotalk_partner" })) as
+                      | { ok?: boolean; agentCount?: number }
+                      | null;
+                    if (result?.ok) {
+                      setVioPartnerNotice(
+                        `Connected. VioTalk returned ${result.agentCount ?? 0} agent(s).`,
+                      );
+                    }
+                  }}
+                >
+                  Test connection
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy || !settings.viotalkLive}
+                  onClick={async () => {
+                    setVioPartnerNotice("");
+                    const result = (await onAction({ action: "admin_sync_viotalk_agents" })) as
+                      | { agentCount?: number; matched?: number; updated?: number }
+                      | null;
+                    if (result) {
+                      setVioPartnerNotice(
+                        `Synced from VioTalk: ${result.agentCount ?? 0} agents, matched ${result.matched ?? 0} by email, updated ${result.updated ?? 0} map(s).`,
+                      );
+                    }
+                  }}
+                >
+                  Sync agents by email
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy || !settings.viotalkPartnerApiKeySet}
+                  onClick={() => onAction({ action: "admin_set_viotalk_partner", clearApiKey: true })}
+                >
+                  Clear API key
+                </Button>
+                <Button
+                  variant="secondary"
+                  disabled={busy || !settings.viotalkWebhookHmacSecretSet}
+                  onClick={() =>
+                    onAction({ action: "admin_set_viotalk_partner", clearWebhookSecret: true })
+                  }
+                >
+                  Clear HMAC
+                </Button>
+              </div>
+            </div>
+          </section>
         ) : null}
 
         {tab === "VioTalk map" ? (

@@ -216,6 +216,11 @@ model TenantSettings {
   recordingPlaybackAllowed Boolean  @default(false) @map("recording_playback_allowed")
   /// JobsNProfiles employer account (jnp_users.id) used when a TalentBridge user has no personal JNP map.
   jnpAccountUserId         String   @default("") @map("jnp_account_user_id")
+  /// VioTalk partner API (Talent → voice platform). Secrets stay server-side.
+  viotalkApiBaseUrl        String   @default("") @map("viotalk_api_base_url")
+  viotalkPartnerApiKey     String   @default("") @map("viotalk_partner_api_key")
+  viotalkWebhookHmacSecret String   @default("") @map("viotalk_webhook_hmac_secret")
+  viotalkCompanyId         String   @default("") @map("viotalk_company_id")
 
   @@map("tenant_settings")
   @@schema("talentbridge")

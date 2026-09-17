@@ -46,6 +46,7 @@ type Session = {
   name: string;
   title: string;
   role: string;
+  tenantId: string;
   tenantName: string;
   permissions: string[];
   landing: string;
@@ -101,6 +102,11 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null);
   const [globalHits, setGlobalHits] = useState<Record<string, GlobalHit[]> | null>(null);
   const [error, setError] = useState("");
+  const [callStatus, setCallStatus] = useState<{
+    tone: "info" | "warn";
+    message: string;
+    fallbackUrl?: string;
+  } | null>(null);
   const [drawer, setDrawer] = useState<Drawer>("none");
   const [tab, setTab] = useState("Overview");
   const [commFocusId, setCommFocusId] = useState<string | null>(null);
@@ -399,13 +405,65 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
 
   async function onCall() {
     if (!selectedId) return;
+    setCallStatus(null);
     const data = await act({ action: "call", personId: selectedId });
-    if (data) {
+    if (!data) return;
+
+    if (data.openWrapUp && data.activityId) {
       setCallActivityId(data.activityId);
       setWrapPersonId(selectedId);
       setProposed(data.proposedFollowUp || "");
       setDrawer("wrap");
+      return;
     }
+
+    if (data.fallbackUrl) {
+      setCallStatus({
+        tone: "warn",
+        message:
+          data.message ||
+          "VioTalk softphone is not open or not Registered. Open VioTalk, wait until Registered, then the call can dial.",
+        fallbackUrl: String(data.fallbackUrl),
+      });
+    } else {
+      setCallStatus({
+        tone: "info",
+        message: data.message || "Calling on VioTalk… Wrap-up opens when the call completes.",
+      });
+    }
+
+    const personId = selectedId;
+    const started = Date.now();
+    const poll = async () => {
+      while (Date.now() - started < 15 * 60_000) {
+        await new Promise((r) => setTimeout(r, 4000));
+        try {
+          const res = await fetch("/api/actions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "poll_viotalk_call", personId }),
+          });
+          const pollData = await res.json();
+          if (res.ok && pollData?.activityId && pollData?.ready) {
+            setCallStatus(null);
+            setCallActivityId(pollData.activityId);
+            setWrapPersonId(personId);
+            setProposed("");
+            setDrawer("wrap");
+            await load();
+            return;
+          }
+        } catch {
+          // keep polling
+        }
+      }
+      setCallStatus({
+        tone: "warn",
+        message:
+          "Still waiting for VioTalk call completion. Check the person timeline or try Call again when Registered.",
+      });
+    };
+    void poll();
   }
 
   async function signOut() {
@@ -906,6 +964,34 @@ export function Workspace({ moduleKey }: { moduleKey: string }) {
                   </Button>
                 }
               />
+            </div>
+          ) : null}
+          {callStatus ? (
+            <div
+              className={`mx-4 mt-4 shrink-0 rounded-md border px-3 py-2 text-sm ${
+                callStatus.tone === "warn"
+                  ? "border-amber-200 bg-amber-50 text-amber-950"
+                  : "border-sky-200 bg-sky-50 text-sky-950"
+              }`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="min-w-0 flex-1 text-xs leading-relaxed">{callStatus.message}</p>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {callStatus.fallbackUrl ? (
+                    <Button
+                      variant="secondary"
+                      onClick={() =>
+                        window.open(callStatus.fallbackUrl, "_blank", "noopener,noreferrer")
+                      }
+                    >
+                      Open VioTalk
+                    </Button>
+                  ) : null}
+                  <Button variant="ghost" onClick={() => setCallStatus(null)}>
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
             </div>
           ) : null}
           {moduleKey === "settings" ? (
